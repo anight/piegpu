@@ -1684,6 +1684,8 @@ static void self_test_7 (void)
 
 /* ---- replies ----------------------------------------------------------------- */
 
+void gl_self_test (void);	/* gltest.c */
+
 static unsigned choose_reply_phase (void)
 {
 	unsigned ok[2] = {0, 0};
@@ -1742,6 +1744,8 @@ int main (void)
 	self_test_5 ();
 	self_test_6 ();
 	self_test_7 ();
+	gl_self_test ();		/* gltest.c: resets the Zero */
+	setup ();
 
 	uint32_t frames = 0, timeouts = 0, frame_done = 0, last_frame_number = 0, render_us = 0;
 	absolute_time_t next_report = make_timeout_time_ms (1000);

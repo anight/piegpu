@@ -69,7 +69,8 @@ public:
 	u32 ReadRGBA (u32 nId, unsigned nFace, unsigned x, unsigned y);
 	void Invalidate (u32 nId);
 
-	/// \brief Write RGBA8888 texels to a level (copy-on-write as TEXTURE_DATA)
+	/// \brief Write RGBA8888 texels to a level, taken as the texture's base format
+	/// (glCopyTexImage2D; copy-on-write as TEXTURE_DATA)
 	u32 WriteRGBA (u32 nId, unsigned nLevel, unsigned nFace, unsigned x, unsigned y,
 		       unsigned nWidth, unsigned nHeight, const u32 *pPixels);
 

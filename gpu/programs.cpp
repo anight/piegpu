@@ -135,7 +135,7 @@ u32 CPrograms::Load (TProgram *p, u32 *pDetail)
 	CHECK (w + p->nAttributes + 2 * p->nVariants <= n, w);
 	for (unsigned i = 0; i < p->nAttributes; i++, w++)
 	{
-		CHECK (   PGPU_ATTR_TYPE (b[w]) <= PGPU_USHORT_NORM
+		CHECK (   PGPU_ATTR_TYPE (b[w]) <= PGPU_FIXED
 		       && PGPU_ATTR_SIZE (b[w]) >= 1 && PGPU_ATTR_SIZE (b[w]) <= 4, w);
 		p->Attributes[i] = b[w];
 	}

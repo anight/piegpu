@@ -10,9 +10,10 @@ set(CMAKE_C_STANDARD 11)
 
 pico_sdk_init()
 
-add_executable(gpulink main.c pgpu.c)
+add_executable(gpulink main.c pgpu.c gltest.c gles/pgl.c)
 pico_generate_pio_header(gpulink ${CMAKE_CURRENT_LIST_DIR}/pcm_out.pio)
-target_include_directories(gpulink PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../../protocol)
+target_include_directories(gpulink PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../../protocol
+	${CMAKE_CURRENT_LIST_DIR} ${CMAKE_CURRENT_LIST_DIR}/gles)
 target_link_libraries(gpulink pico_stdlib hardware_pio hardware_dma)
 
 # GLSL programs, precompiled by tools/glslc (needs the host Mesa built by
@@ -37,6 +38,7 @@ glsl_program(sparks -a a_pos:float:3 -a a_color:ubyte_norm:4 -v points)
 glsl_program(solid -a a_pos:float:2 -v triangles -v lines)
 glsl_program(builtin -a a_pos:float:2 -v triangles -v points)
 glsl_program(texview -a a_pos:float:2 -v triangles)
+glsl_program(gltest -a a_pos:float:2 -a a_uv:float:2 -a a_color:ubyte_norm:4 -v triangles)
 target_include_directories(gpulink PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
 # console on UART0 (GP0/GP1) -> Debugprobe UART bridge

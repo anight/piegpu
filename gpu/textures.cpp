@@ -646,7 +646,19 @@ u32 CTextures::WriteRGBA (u32 nId, unsigned nLevel, unsigned nFace, unsigned x, 
 	{
 		for (unsigned i = 0; i < nWidth; i++)
 		{
-			*TexelAddress (&T, nFace, nLevel, x + i, y + row) = pPixels[row * nWidth + i];
+			u32 nPixel = pPixels[row * nWidth + i];
+			u32 r = nPixel & 0xFF, a = nPixel >> 24;
+			switch (T.nFormat)		// as glCopyTexImage2D to this base format
+			{
+			case FORMAT_RGB565:
+			case FORMAT_RGB888:
+			case FORMAT_ETC1:	nPixel |= 0xFF000000;		break;
+			case FORMAT_L8:		nPixel = RGBA (r, r, r, 255);	break;
+			case FORMAT_A8:		nPixel = RGBA (0, 0, 0, a);	break;
+			case FORMAT_LA88:	nPixel = RGBA (r, r, r, a);	break;
+			default:						break;
+			}
+			*TexelAddress (&T, nFace, nLevel, x + i, y + row) = nPixel;
 		}
 	}
 	CV3D::Flush (T.Storage.pBase, T.nBytes);

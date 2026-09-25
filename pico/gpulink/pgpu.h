@@ -31,6 +31,7 @@ typedef struct
 	uint32_t reply_overruns;	/* the parser fell behind the DMA ring */
 	uint32_t replies_lost;		/* reply queue full */
 	uint32_t zero_errors;		/* ERROR replies */
+	uint32_t errors_lost;		/* error queue full */
 	uint32_t last_error[3];		/* code, opcode, detail */
 } pgpu_stats_t;
 
@@ -70,8 +71,9 @@ pgpu_stats_t pgpu_get_stats (void);		/* and reset the counters */
 
 /* replies */
 void pgpu_set_reply_phase (unsigned phase);	/* 0: sample at BCLK rise, 1: at BCLK fall */
-bool pgpu_poll_reply (pgpu_reply_t *reply);
-/* wait for a reply with this opcode; other replies are discarded (ERROR is counted) */
+bool pgpu_poll_reply (pgpu_reply_t *reply);		/* other than ERROR and PIXELS */
+bool pgpu_poll_error (uint32_t error[3]);		/* ERROR reply: code, opcode, detail */
+/* wait for a reply with this opcode; other replies are discarded */
 bool pgpu_wait_reply (uint8_t opcode, pgpu_reply_t *reply, uint32_t timeout_ms);
 bool pgpu_get_info (pgpu_info_t *info, uint32_t timeout_ms);
 bool pgpu_get_status (pgpu_status_t *status, uint32_t timeout_ms);
@@ -114,6 +116,10 @@ void pgpu_texture_create_cube (uint32_t id, uint32_t size, uint32_t format);
 /* upload to a mip level (0 = base) and cube face (0-5: +X, -X, +Y, -Y, +Z, -Z) */
 void pgpu_texture_data_level (uint32_t id, uint32_t level, uint32_t face, uint32_t x, uint32_t y,
 			      uint32_t width, uint32_t height, uint32_t format, const void *pixels);
+/* the same with rows src_stride bytes apart (GL_UNPACK_ALIGNMENT) */
+void pgpu_texture_data_stride (uint32_t id, uint32_t level, uint32_t face, uint32_t x, uint32_t y,
+			       uint32_t width, uint32_t height, uint32_t format, const void *pixels,
+			       uint32_t src_stride);
 void pgpu_generate_mipmap (uint32_t id);
 void pgpu_texture_data (uint32_t id, uint32_t x, uint32_t y, uint32_t width, uint32_t height,
 			uint32_t format, const void *pixels);

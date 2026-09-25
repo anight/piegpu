@@ -12,7 +12,7 @@ usage:
            [-v PRIM:BLEND ...] -o OUT.h
 
   TYPE   float, short, short_norm, ubyte_norm, byte_norm, ubyte, byte,
-         ushort, ushort_norm (docs/protocol.md 10.5)
+         ushort, ushort_norm, fixed (docs/protocol.md 10.5)
   PRIM   triangles, lines, points
   BLEND  none, alpha, add, premul, multiply
   Default variants: triangles:none triangles:alpha.
@@ -20,7 +20,7 @@ usage:
 The attribute formats are compiled into the vertex shaders: arrays used with
 the program must have exactly these types and sizes.
 """
-import argparse, json, os, re, struct, subprocess, sys, tempfile
+import argparse, json, math, os, re, struct, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -45,11 +45,21 @@ TYPES = {
     'byte':        (6, 'byte', 0),
     'ushort':      (7, 'ushort', 0),
     'ushort_norm': (8, 'ushort', 1),
+    'fixed':       (9, 'fixed', 0),
 }
 PRIMS = {'triangles': 0, 'lines': 1, 'points': 2}
 BLEND_PLAIN, BLEND_GENERIC = 0, 1	# fragment shader endings (protocol/pgpu_program.h)
 U_BLEND = 35				# uniform kind: blend coefficient (data 0-47)
 STAGES = {'fs': 0, 'vs': 1, 'cs': 2}
+
+# GL uniform types: (rows, columns); float, int and bool types
+GL_TYPE_SHAPE = {0x1406: (1, 1), 0x8B50: (2, 1), 0x8B51: (3, 1), 0x8B52: (4, 1),
+                 0x1404: (1, 1), 0x8B53: (2, 1), 0x8B54: (3, 1), 0x8B55: (4, 1),
+                 0x8B56: (1, 1), 0x8B57: (2, 1), 0x8B58: (3, 1), 0x8B59: (4, 1),
+                 0x8B5A: (2, 2), 0x8B5B: (3, 3), 0x8B5C: (4, 4)}
+FLOAT_TYPES = {0x1406, 0x8B50, 0x8B51, 0x8B52, 0x8B5A, 0x8B5B, 0x8B5C}
+INT_TYPES = {0x1404, 0x8B53, 0x8B54, 0x8B55}
+BOOL_TYPES = {0x8B56, 0x8B57, 0x8B58, 0x8B59}
 
 # Mesa built-in state variables the Zero provides -> pgpu uniform kind
 STATE_KINDS = {
@@ -101,10 +111,14 @@ def build_harness():
         fail('host Mesa not built: run tools/glslc/build-mesa.sh')
     if not os.path.exists(exe) or os.path.getmtime(exe) < os.path.getmtime(src):
         os.makedirs(BUILD, exist_ok=True)
-        subprocess.check_call(['gcc', '-O1', '-Wall', '-o', exe, src,
+        # parallel builds run several glslc at once: build privately, then
+        # rename (atomic)
+        tmp = f'{exe}.{os.getpid()}'
+        subprocess.check_call(['gcc', '-O1', '-Wall', '-o', tmp, src,
                                '-I' + os.path.join(MESA_PREFIX, 'include'),
                                '-L' + MESA_LIB, '-Wl,-rpath-link,' + MESA_LIB,
                                '-lEGL', '-lGLESv2'])
+        os.replace(tmp, exe)
     return exe
 
 
@@ -179,7 +193,8 @@ def fs_ending(code, stream, generic):
             p.fmax(S[ch], 'ra0.' + byte, 'ra0.' + byte)
         for ch, byte in (('r', '8a'), ('g', '8b'), ('b', '8c'), ('a', '8d')):
             p.fmax(D[ch], 'r4.' + byte, 'r4.' + byte)
-        p.fsub('r0', 1.0, D['a'])
+        p.mov('r1', D['a'])			# (1.0 and rb4 would both need the B port)
+        p.fsub('r0', 1.0, 'r1')
         p.fmin('ra5', S['a'], 'r0')		# SRC_ALPHA_SATURATE
         k = 0
         for ch, pack in (('r', '8a'), ('g', '8b'), ('b', '8c'), ('a', '8d')):
@@ -271,9 +286,12 @@ def main():
     uniforms = {}		# index -> (name, gl type, array size)
     markers = {}		# marker -> (uniform index, element, component)
     samplers = {}		# unit (= harness order) -> name
+    active_attribs = {}		# name -> (gl type, size)
     for l in out:
         p = l.split()
-        if p[0] == 'uniform':
+        if p[0] == 'attribute':
+            active_attribs[p[1]] = (int(p[2], 16), int(p[3]))
+        elif p[0] == 'uniform':
             uniforms[int(p[1])] = (p[2], int(p[3], 16), int(p[4]))
         elif p[0] == 'marker':
             markers[int(p[1])] = tuple(int(x) for x in p[2:5])
@@ -287,13 +305,38 @@ def main():
             for k in range(o['size']):
                 state_words[o['stage']][o['offset'] + k] = (o['param'], k)
 
+    # where Mesa put the uniforms: one parameter per array element and matrix
+    # column (in order), components in consecutive words. Bool uniforms can't
+    # carry markers (Mesa stores true as ~0, the driver has native integers):
+    # their words come from this layout, which the markers of the other
+    # uniforms check.
+    uniform_params = {'v': {}, 'f': {}}	# name -> [offset of each parameter]
+    for o in records:
+        if 'uniform_param' in o:
+            offsets = uniform_params[o['stage']].setdefault(o['uniform_param'], [])
+            if o['offset'] not in offsets:
+                offsets.append(o['offset'])
+    layout_words = {'v': {}, 'f': {}}	# constant buffer word -> (uniform, element, component)
+    for u, (name, gltype, size) in uniforms.items():
+        rows, cols = GL_TYPE_SHAPE.get(gltype, (0, 0))
+        for stage in ('v', 'f'):
+            offsets = sorted(uniform_params[stage].get(name, []))
+            if not offsets:
+                continue
+            if len(offsets) != size * cols:
+                fail(f'uniform {name}: {len(offsets)} constant buffer parameters, expected {size * cols}')
+            for e in range(size):
+                for col in range(cols):
+                    for row in range(rows):
+                        layout_words[stage][offsets[e * cols + col] + row] = (u, e, col * rows + row)
+
     # the shaders used by each variant draw (fs, vs, cs); a draw that didn't
     # re-emit its shader state uses the previous one
     per_variant = []
     current = {}
     pending = None
     for o in records:
-        if 'param' in o:
+        if 'param' in o or 'uniform_param' in o:
             continue
         if 'variant' in o:
             if pending is not None:
@@ -331,12 +374,23 @@ def main():
                     fail(f'the {stage.upper()} uses {kname}, which the Zero does not implement')
                 if kname == 'QUNIFORM_UNIFORM':
                     f = struct.unpack('<f', struct.pack('<I', value))[0]
+                    layout = layout_words['f' if stage == 'fs' else 'v'].get(data)
                     m = None
-                    if f == int(f) and int(f) - MARKER_BASE in markers:
+                    if math.isfinite(f) and f == int(f) and int(f) - MARKER_BASE in markers:
                         m = int(f) - MARKER_BASE
+                        if uniforms[markers[m][0]][1] not in FLOAT_TYPES:
+                            fail(f'{stage} uniform word {data}: a float marker for a non-float uniform')
                     elif value - MARKER_BASE in markers:
-                        m = value - MARKER_BASE
-                        print(f'glslc: warning: uniform word {data} holds an integer', file=sys.stderr)
+                        m = value - MARKER_BASE	# int uniforms are integers (native integers)
+                        if uniforms[markers[m][0]][1] not in INT_TYPES:
+                            fail(f'{stage} uniform word {data}: an integer marker for a non-int uniform')
+                    elif layout is not None and uniforms[layout[0]][1] in BOOL_TYPES:
+                        if value != 0xFFFFFFFF:
+                            fail(f'{stage} uniform word {data}: bool uniform word holds {value:#x}')
+                        m = next(k for k, v in markers.items() if v == layout)
+                    if m is not None and layout != markers[m]:
+                        fail(f'{stage} uniform word {data}: Mesa\'s parameter layout says {layout}, '
+                             f'the marker {markers[m]}')
                     if m is None:
                         param = state_words['f' if stage == 'fs' else 'v'].get(data)
                         if param is None:
@@ -453,7 +507,32 @@ def main():
     lines += ['', '/* samplers: index for pgpu_program_sampler () (default texture unit = index) */']
     for s in sorted(sampler_names):
         lines.append(f'#define {ident.upper()}_{cname(sampler_names[s]).upper()} {s}')
-    lines += ['', '#endif', '']
+
+    # names and types for the GL layer (gles/pgl.c)
+    lines += ['', '/* for glProgramBinaryOES (gles/pgl.h) */', '#include "pgpu_program_info.h"', '',
+              f'static const pgpu_attrib_info_t {ident}_attribs[] =', '{']
+    for i, (name, t, size) in enumerate(attribs):
+        gltype, gsize = active_attribs.get(name, (0x1406, 1))	# inactive: GL_FLOAT
+        lines.append(f'\t{{"{name}", {i}, 0x{gltype:04x}, {gsize}}},')
+    lines += ['};', '', f'static const pgpu_uniform_info_t {ident}_uniforms[] =', '{']
+    sampler_index = {n: s for s, n in sampler_names.items()}
+    n_uniform_info = 0
+    for u in sorted(uniforms):
+        name, gltype, size = uniforms[u]
+        if name in samplers.values():
+            s = sampler_index.get(name, -1)
+            lines.append(f'\t{{"{name}", 0x{gltype:04x}, {size}, 0, {s}, 0}},')
+        else:
+            comps = sum(1 for m in markers.values() if m[0] == u and m[1] == 0)
+            lines.append(f'\t{{"{name}", 0x{gltype:04x}, {size}, {comps}, -1, {ident}_{cname(name)}}},')
+        n_uniform_info += 1
+    if not n_uniform_info:
+        lines.append('\t{0}')
+    lines += ['};', '',
+              f'static const pgpu_program_info_t {ident}_info =', '{',
+              f'\tPGPU_PROGRAM_INFO_MAGIC, {ident}_program, {len(blob)},',
+              f'\t{ident}_attribs, {len(attribs)}, {ident}_uniforms, {n_uniform_info}', '};',
+              '', '#endif', '']
     open(args.output, 'w').write('\n'.join(lines))
 
     print(f'glslc: {args.output}: {len(blob)} words, {n_variants} variants, '

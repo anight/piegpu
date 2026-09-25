@@ -50,6 +50,11 @@ static volatile uint32_t pixel_words_received;
 static pgpu_reply_t reply_queue[REPLY_QUEUE];
 static volatile uint32_t reply_head, reply_tail;	/* tail written by the parser */
 
+/* ERROR replies go to their own queue (pgpu_poll_error) */
+#define ERROR_QUEUE	16
+static uint32_t error_queue[ERROR_QUEUE][3];
+static volatile uint32_t error_head, error_tail;
+
 static void frame_irq (uint gpio, uint32_t events)
 {
 	if (gpio == PIN_FRAME)
@@ -149,6 +154,18 @@ static void rx_parse (void)
 		{
 			stats.zero_errors++;
 			memcpy (stats.last_error, &words[1], sizeof stats.last_error);
+
+			uint32_t tail = error_tail;
+			if ((tail + 1) % ERROR_QUEUE == error_head)
+			{
+				stats.errors_lost++;
+			}
+			else
+			{
+				memcpy (error_queue[tail], &words[1], sizeof error_queue[tail]);
+				error_tail = (tail + 1) % ERROR_QUEUE;
+			}
+			continue;
 		}
 
 		uint32_t tail = reply_tail;
@@ -180,6 +197,18 @@ bool pgpu_poll_reply (pgpu_reply_t *reply)
 	}
 	*reply = reply_queue[head];
 	reply_head = (head + 1) % REPLY_QUEUE;
+	return true;
+}
+
+bool pgpu_poll_error (uint32_t error[3])
+{
+	uint32_t head = error_head;
+	if (head == error_tail)
+	{
+		return false;
+	}
+	memcpy (error, error_queue[head], sizeof error_queue[head]);
+	error_head = (head + 1) % ERROR_QUEUE;
 	return true;
 }
 
@@ -631,12 +660,21 @@ void pgpu_texture_data (uint32_t id, uint32_t x, uint32_t y, uint32_t width, uin
 void pgpu_texture_data_level (uint32_t id, uint32_t level, uint32_t face, uint32_t x, uint32_t y,
 			      uint32_t width, uint32_t height, uint32_t format, const void *pixels)
 {
+	uint32_t row_bytes = format == PGPU_ETC1 ? (width + 3) / 4 * 8 : width * bytes_per_pixel[format];
+	pgpu_texture_data_stride (id, level, face, x, y, width, height, format, pixels,
+				  (row_bytes + 3) & ~3u);
+}
+
+void pgpu_texture_data_stride (uint32_t id, uint32_t level, uint32_t face, uint32_t x, uint32_t y,
+			       uint32_t width, uint32_t height, uint32_t format, const void *pixels,
+			       uint32_t src_stride)
+{
 	id = PGPU_TEXTURE_TARGET (id, level, face);
 	const uint8_t *src = pixels;
 
 	if (format == PGPU_ETC1)
 	{
-		/* 4x4 blocks of 8 bytes, block rows bottom-up */
+		/* 4x4 blocks of 8 bytes, block rows bottom-up, tightly packed */
 		uint32_t row_bytes = (width + 3) / 4 * 8;
 		uint32_t rows_per_part = MAX_DATA_BYTES / row_bytes;
 		uint32_t block_rows = (height + 3) / 4;
@@ -651,7 +689,6 @@ void pgpu_texture_data_level (uint32_t id, uint32_t level, uint32_t face, uint32
 	}
 
 	uint32_t bpp = bytes_per_pixel[format];
-	uint32_t src_stride = (width * bpp + 3) & ~3u;		/* GL unpack alignment 4 */
 
 	/* column spans that fit a packet, then as many rows as fit */
 	uint32_t span_max = MAX_DATA_BYTES / bpp;
@@ -894,7 +931,7 @@ void pgpu_line_width (float width)			{ cmd1 (PGPU_OP_LINE_WIDTH, f2u (width)); }
 
 /* ---- client-side arrays ------------------------------------------------------ */
 
-static const uint8_t type_bytes[] = {4, 2, 2, 1, 1, 1, 1, 2, 2};
+static const uint8_t type_bytes[] = {4, 2, 2, 1, 1, 1, 1, 2, 2, 4};
 
 static struct
 {
@@ -905,7 +942,7 @@ static struct
 void pgpu_client_attrib_pointer (uint32_t index, uint32_t size, uint32_t type, uint32_t stride,
 				 const void *pointer)
 {
-	if (index >= 8 || type > PGPU_USHORT_NORM)
+	if (index >= 8 || type > PGPU_FIXED)
 	{
 		return;
 	}

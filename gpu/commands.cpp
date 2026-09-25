@@ -19,6 +19,10 @@ LOGMODULE ("commands");
 #define CFG_DEPTH_FUNC__SHIFT	12
 #define CFG_Z_UPDATE		(1 << 15)
 
+// TILE_RENDERING_MODE_CONFIG colour format (bits 3:2): 0 BGR565 dithered, 1 RGBA8888,
+// 2 BGR565 without dither
+#define MODE_BGR565_NO_DITHER	(2 << 2)
+
 // GL shader record (VideoCore IV 3D reference guide; Mesa vc4 SHADER_RECORD)
 #define SHADER_RECORD_BYTES	36
 #define ATTRIBUTE_RECORD_BYTES	8
@@ -32,9 +36,9 @@ LOGMODULE ("commands");
 enum
 {
 	TYPE_FLOAT, TYPE_SHORT, TYPE_SHORT_NORM, TYPE_UBYTE_NORM, TYPE_BYTE_NORM,
-	TYPE_UBYTE, TYPE_BYTE, TYPE_USHORT, TYPE_USHORT_NORM, TYPES
+	TYPE_UBYTE, TYPE_BYTE, TYPE_USHORT, TYPE_USHORT_NORM, TYPE_FIXED, TYPES
 };
-static const unsigned TypeBytes[TYPES] = {4, 2, 2, 1, 1, 1, 1, 2, 2};
+static const unsigned TypeBytes[TYPES] = {4, 2, 2, 1, 1, 1, 1, 2, 2, 4};
 
 static float AsFloat (u32 nWord)
 {
@@ -100,6 +104,9 @@ static float Component (const u8 *p, u32 nType)
 	case TYPE_USHORT:
 		return (u16) (p[0] | p[1] << 8);
 
+	case TYPE_FIXED:			// 16.16
+		return (s32) (p[0] | p[1] << 8 | p[2] << 16 | (u32) p[3] << 24) / 65536.0f;
+
 	default:
 		return (u16) (p[0] | p[1] << 8) / 65535.0f;
 	}
@@ -124,6 +131,7 @@ static void ConvertValue (const float *pValue, u32 nType, unsigned nSize, u8 *pO
 		case TYPE_UBYTE:
 		case TYPE_BYTE:
 		case TYPE_USHORT:	v = (s32) f;			break;
+		case TYPE_FIXED:	v = (s32) (f * 65536.0f);	break;
 		default:		v = (s32) (u * 65535.0f + 0.5f); break;
 		}
 
@@ -224,6 +232,7 @@ void CCommands::DefaultState (void)
 {
 	TGLState &S = m_State;
 	memset (&S, 0, sizeof S);
+	S.nEnables = PGPU_CAP_DITHER;		// as GL
 
 	Identity (S.Modelview);
 	Identity (S.Projection);
@@ -1027,7 +1036,7 @@ u32 CCommands::BufferData (const u32 *p, unsigned nLength)
 	{
 		return PGPU_ERR_OBJECT;
 	}
-	if ((nOffset | nBytes) & 3 || (nBytes + 3) / 4 != nLength - 3)
+	if ((nBytes + 3) / 4 != nLength - 3)		// any offset and length (glBufferSubData)
 	{
 		return PGPU_ERR_LENGTH;
 	}
@@ -1403,6 +1412,10 @@ void CCommands::FlushJob (boolean bForce)
 	{
 		u32 nPrevious;
 		m_pRenderer->GetPanelTarget (&T, &nPrevious);
+		if (!(m_State.nEnables & PGPU_CAP_DITHER))
+		{
+			T.nModeFlags |= MODE_BGR565_NO_DITHER;	// the state when the job renders
+		}
 		nLoadColor = m_bJobClearColor ? 0 : m_bPanelDrawn ? T.nColorBus : nPrevious;
 		bLoadZS = !m_bJobClearZS && m_bPanelZSValid;
 	}

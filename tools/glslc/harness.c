@@ -25,7 +25,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MARKER_BASE	1000000		/* marker k is stored as float (MARKER_BASE + k) */
+#define MARKER_BASE	1000000		/* marker k: (MARKER_BASE + k), as a float or an int
+					   (bools can't hold markers: Mesa stores true as ~0) */
 
 static char *read_file (const char *path)
 {
@@ -140,6 +141,7 @@ int main (int argc, char **argv)
 		{
 			strcpy (attribs[nattribs].name, a);
 			attribs[nattribs].type =   !strcmp (b, "float") ? GL_FLOAT
+						 : !strcmp (b, "fixed") ? GL_FIXED
 						 : !strcmp (b, "byte") ? GL_BYTE
 						 : !strcmp (b, "ubyte") ? GL_UNSIGNED_BYTE
 						 : !strcmp (b, "short") ? GL_SHORT : GL_UNSIGNED_SHORT;
@@ -260,6 +262,7 @@ int main (int argc, char **argv)
 		int found = 0;
 		for (int k = 0; k < nattribs; k++)
 			found |= !strcmp (attribs[k].name, name);
+		printf ("attribute %s 0x%04x %d\n", name, type, size);
 		if (!found)
 		{
 			printf ("error attribute %s is not listed in the program description\n", name);

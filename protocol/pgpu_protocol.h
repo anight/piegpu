@@ -168,7 +168,8 @@ enum pgpu_error
 #define PGPU_CAP_SCISSOR_TEST		(1u << 13)
 #define PGPU_CAP_POLYGON_OFFSET_FILL	(1u << 14)
 #define PGPU_CAP_STENCIL_TEST		(1u << 15)
-#define PGPU_CAP_ALL			0xFFFFu
+#define PGPU_CAP_DITHER			(1u << 16)	/* panel: RGB565 dithered (default on) */
+#define PGPU_CAP_ALL			0x1FFFFu
 
 /* compare functions (same order as the V3D depth-test field) */
 enum pgpu_func
@@ -219,7 +220,7 @@ enum pgpu_blend_equation { PGPU_FUNC_ADD, PGPU_FUNC_SUBTRACT, PGPU_FUNC_REVERSE_
 enum pgpu_type
 {
 	PGPU_FLOAT, PGPU_SHORT, PGPU_SHORT_NORM, PGPU_UBYTE_NORM, PGPU_BYTE_NORM,
-	PGPU_UBYTE, PGPU_BYTE, PGPU_USHORT, PGPU_USHORT_NORM
+	PGPU_UBYTE, PGPU_BYTE, PGPU_USHORT, PGPU_USHORT_NORM, PGPU_FIXED
 };
 enum pgpu_index_type { PGPU_INDEX_U8, PGPU_INDEX_U16 };
 

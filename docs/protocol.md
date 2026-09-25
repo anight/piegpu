@@ -23,7 +23,7 @@ Status: **draft**. Everything is normative unless marked *informative*.
 | Physical | pins, I2S timing, the READY and FRAME signals (§2, §3) |
 | Packet | framing of 32-bit words: header, payload, CRC32 (§4) |
 | Command | execution model, opcodes, payloads, replies and enums (§6–§10) |
-| API (Pico library) | a GL ES 1.1-like C API that encodes commands (§13, informative) |
+| API (Pico library) | the OpenGL ES 2.0 and 1.1 API, encoded into commands (§13, informative) |
 
 ---
 
@@ -255,7 +255,7 @@ Payload fields are listed word by word. `[n]` means n words.
 | Op | Name | Payload | Meaning |
 |---|---|---|---|
 | `0x20` | BUFFER_CREATE | `id buffer`, `u32 size_bytes` | Create a buffer (contents undefined). Recreating an existing id replaces it. |
-| `0x21` | BUFFER_DATA | `id buffer`, `u32 offset_bytes`, `u32 length_bytes`, `bytes data[…]` | Write data. offset and length are multiples of 4. |
+| `0x21` | BUFFER_DATA | `id buffer`, `u32 offset_bytes`, `u32 length_bytes`, `bytes data[…]` | Write data (any offset and length). |
 | `0x22` | BUFFER_DELETE | `id buffer` | Delete it. |
 
 ### 7.4 Textures
@@ -348,7 +348,7 @@ compiling (triangles, lines, points), each with two fragment shader endings: a
 plain one, and one that blends and masks from uniforms, so every blend state
 and colour mask works with every program. The compiler also writes a C header
 with the blob, the attribute locations, the uniform storage offsets and the
-sampler indices.
+sampler indices, and the names and GL types that `glProgramBinaryOES` needs (§13).
 
 | Op | Name | Payload | Meaning |
 |---|---|---|---|
@@ -356,7 +356,7 @@ sampler indices.
 | `0x81` | PROGRAM_DATA | `id program`, `u32 offset_words`, `words blob[…]` | Store part of the blob. When the last word has arrived, the Zero checks the blob and loads the code; an invalid blob is reported as `ERROR` 10 and the program stays unusable. |
 | `0x82` | PROGRAM_DELETE | `id program` | Delete it. |
 | `0x83` | USE_PROGRAM | `id program` | Draw with this program; 0 = the fixed-function pipeline. |
-| `0x84` | PROGRAM_UNIFORM | `id program`, `u32 offset_words`, `words values[…]` | Write the program's uniform storage (offsets from the compiler's header). Values are 32-bit floats; `int` and `bool` uniforms are stored as floats too (the V3D has no integer ALU). |
+| `0x84` | PROGRAM_UNIFORM | `id program`, `u32 offset_words`, `words values[…]` | Write the program's uniform storage (offsets from the compiler's header). Values as Mesa's `vc4` driver stores them (it has native integers): `float` uniforms as 32-bit floats, `int` uniforms as 32-bit integers, `bool` uniforms as 0 (false) or `0xFFFFFFFF` (true). |
 | `0x85` | PROGRAM_SAMPLER | `id program`, `u32 sampler`, `u32 unit` | Like `glUniform1i` on a sampler: the texture unit (0–7) a sampler reads. Default: sampler n reads unit n. |
 | `0x86` | TEXTURE_BIND_UNIT | `u32 unit`, `id texture` | Bind a texture to unit 0–7 (0 = none). `TEXTURE_BIND` is unit 0. |
 | `0x87` | VERTEX_ATTRIB | `u32 index`, `f32 v[4]` | Current value of a generic attribute (0–7), used when its array is disabled. Default (0, 0, 0, 1). |
@@ -399,7 +399,7 @@ program wasn't compiled for it, the draw is reported as `ERROR` 10.
 |---|---|
 | matrices | identity |
 | viewport | full panel (0, 0, width, height), depth range 0 … 1 |
-| enables | all off |
+| enables | all off, except DITHER |
 | depth | func LESS, depth writes on |
 | blend | ONE, ZERO |
 | cull face / front face | BACK / CCW |
@@ -501,7 +501,8 @@ that 1 bit. The next packet may follow directly after the CRC word.
 | 6 | LIGHT1 | 13 | SCISSOR_TEST |
 | | | 14 | POLYGON_OFFSET_FILL |
 | | | 15 | STENCIL_TEST |
-| | | 16–31 | reserved, must be 0 |
+| | | 16 | DITHER (the panel's RGB565 output is dithered; enabled by default, as in GL; applies to a whole job, with the state when it renders) |
+| | | 17–31 | reserved, must be 0 |
 
 ### 10.2 Compare functions (depth, alpha)
 
@@ -539,6 +540,7 @@ In the fixed-function pipeline SRC_ALPHA_SATURATE is approximated by SRC_ALPHA.
 | 6 | BYTE | as is (−128 … 127) |
 | 7 | USHORT | as is |
 | 8 | USHORT_NORM | normalised to 0 … 1 |
+| 9 | FIXED | 16.16 fixed point |
 
 ### 10.6 Texture parameters
 
@@ -616,29 +618,63 @@ words wherever the Pico has nothing to send.
 
 ## 13. Pico library (*informative*)
 
-The Pico side is a C library with a **GL ES 1.1-like API**. It encodes calls
-into packets, computes the CRC with the DMA sniffer, and streams them over PIO,
-checking READY between packets.
+The Pico side has two layers:
 
-| Library call | Wire |
+- **`pgpu`** (`pico/gpulink/pgpu.{h,c}`): one C function per command. It
+  batches packets into a staging buffer, sends them by DMA over PIO (checking
+  READY before each batch), parses replies in a 1 ms timer, and queues `ERROR`
+  replies separately (`pgpu_poll_error`). It also splits large uploads into
+  packets and turns client-side arrays into `PROGRAM_DRAW_INLINE`.
+- **`pgl`** (`pico/gpulink/gles/pgl.{h,c}`): the **OpenGL ES 2.0 API**, with
+  the **GL ES 1.1 fixed-function calls** for program 0. It keeps the GL state
+  (for `glGet*`, `glIsEnabled`, object names) and encodes it into commands.
+  `gltest.c` (self test 8) exercises it using only `gl*` calls.
+
+### 13.1 How pgl maps GL to the wire
+
+| GL | Wire |
 |---|---|
-| `glClearColor`, `glClearDepthf`, `glClear` | `CLEAR` (sent before the first draw of the frame) |
-| `glViewport`, `glDepthRangef` | `VIEWPORT` |
-| `glMatrixMode`, `glLoadIdentity`, `glPushMatrix`, `glPopMatrix`, `glTranslatef`, `glRotatef`, `glScalef`, `glMultMatrixf`, `glOrthof`, `glFrustumf` | **kept in the library**; `LOAD_MATRIX` is sent when a changed matrix is needed by a draw |
-| `glEnable`, `glDisable` | `ENABLE`, `DISABLE` (batched as masks) |
-| `glLightfv`, `glMaterialfv`, `glLightModelfv`, `glFogf`, `glShadeModel` | `LIGHT`, `MATERIAL`, `LIGHT_MODEL`, `FOG`, `SHADE_MODEL` |
-| `glColor4f`, `glNormal3f`, `glTexCoord2f` (as current values) | `COLOR`, `NORMAL`, `TEXCOORD` |
-| `glGenBuffers`, `glBufferData`, `glBufferSubData`, `glDeleteBuffers` | `BUFFER_*` |
-| `glGenTextures`, `glTexImage2D`, `glTexSubImage2D`, `glTexParameteri`, `glTexEnvi`, `glBindTexture` | `TEXTURE_*`, `TEX_ENV` |
-| `glVertexPointer`, `glColorPointer`, `glNormalPointer`, `glTexCoordPointer` with a bound buffer, `glEnableClientState` | `ARRAY`, `ARRAYS_ENABLE` |
-| `glDrawArrays`, `glDrawElements` with buffers | `DRAW_ARRAYS`, `DRAW_ELEMENTS` |
-| `glDrawArrays` with **client-side arrays** (pointers into Pico RAM) | the library copies the vertices into `DRAW_INLINE` |
-| end of frame (`eglSwapBuffers`) | `FRAME_END` |
+| `glGen*`, `glBind*`, `glDelete*` | GL names map to Zero ids: buffers 1–250, textures 1–120, framebuffers 1–16. Colour renderbuffers are Zero textures 121–128. Programs get Zero ids 1–64 from a pool. |
+| `glBufferData`, `glBufferSubData` | `BUFFER_CREATE`, `BUFFER_DATA`. Index buffers are also kept on the Pico, for draws that combine them with client-side vertex arrays. |
+| `glTexImage2D`, `glTexSubImage2D`, `glCompressedTexImage2D` (ETC1), `glCopyTex[Sub]Image2D`, `glGenerateMipmap`, `glTexParameter*` | `TEXTURE_CREATE` when level 0's size or format changes, then `TEXTURE_DATA` (repacked for `GL_UNPACK_ALIGNMENT`), `COPY_TEX_IMAGE`, `GENERATE_MIPMAP`, `TEXTURE_PARAMS`. The GL ES 1.1 `GL_GENERATE_MIPMAP` parameter is supported. |
+| `glFramebufferTexture2D`, `glFramebufferRenderbuffer`, `glBindFramebuffer` | `FRAMEBUFFER_CREATE` and `BIND_FRAMEBUFFER`, sent by the next draw, clear or read. A depth or stencil renderbuffer sets the combined depth and stencil buffer flag. |
+| `glEnable`, `glDisable` | `ENABLE` / `DISABLE`, sent by the next draw or clear. Depth and stencil tests are off on targets without those buffers, as in GL. |
+| `glProgramBinaryOES` | `PROGRAM_CREATE` / `PROGRAM_DATA`, then a `PING`. An `ERROR` from checking the blob makes the link fail. Samplers are set to unit 0, as in GL. |
+| `glUniform*` | `PROGRAM_UNIFORM`: locations are uniform index << 16 \| array element. Values are converted to the program's types (int32; bool 0 / ~0). Sampler uniforms use `PROGRAM_SAMPLER`. |
+| `glVertexAttribPointer`, `glDrawArrays`, `glDrawElements` with a program | Buffer arrays use `ATTRIB_ARRAY`. Client-side arrays and indices use `PROGRAM_DRAW_INLINE`, with the buffer arrays' offsets moved to the first vertex sent. Lists are split into several packets. |
+| GL ES 1.1 arrays and draws | Buffer arrays use `ARRAY`. Client-side arrays (interleaved ones once) and indices are copied into two stream buffers (Zero ids 251 and 252), which the Zero reads when the draw arrives. |
+| GL ES 1.1 matrices, lights, material, fog, `glTexEnv`, `glAlphaFunc`, `glShadeModel`, `glColor4f`, `glNormal3f`, `glMultiTexCoord4f` | Matrix stacks kept on the Pico (`LOAD_MATRIX` before a draw that needs a changed matrix); `LIGHT` (position and spot direction transformed by the modelview when set), `MATERIAL`, `LIGHT_MODEL`, `FOG`, `TEX_ENV`, `ALPHA_FUNC`, `SHADE_MODEL`, `COLOR`, `NORMAL`, `TEXCOORD`. |
+| `glClear`, `glClearColor`, `glClearDepthf`, `glClearStencil` | `CLEAR` |
+| `glReadPixels` (RGBA, UNSIGNED_BYTE) | `READ_PIXELS`. Alpha is 255 on targets without alpha. |
+| `glGetError` | Errors found by pgl at once. `ERROR` replies map to GL errors (ENUM → `GL_INVALID_ENUM`, LIMIT → `GL_INVALID_VALUE`, MEMORY → `GL_OUT_OF_MEMORY`, others → `GL_INVALID_OPERATION`). They arrive after the Zero has executed the command; after `glFinish` (`PING`), all are in. `pglGetZeroError` gives the last one's code, opcode and detail. |
+| `pglSwapBuffers` | `FRAME_END` |
 
-Client-side arrays are supported by copying. That's the easy path for porting
-existing code; uploading to buffers once is the fast path.
+### 13.2 Differences from GL ES 2.0 and 1.1
 
----
+- **No shader compiler** (`GL_SHADER_COMPILER` is false). `glShaderSource`,
+  `glCompileShader`, `glGetShaderPrecisionFormat` and `glReleaseShaderCompiler`
+  report `GL_INVALID_OPERATION`, and `glLinkProgram` fails. Programs are
+  compiled by `tools/glslc` and loaded with `glProgramBinaryOES` (format
+  `PGL_PROGRAM_BINARY_PGPU`; the binary is the `NAME_info` structure of the
+  generated header). Attribute locations are those given to glslc, so
+  `glBindAttribLocation` has no effect.
+- **Framebuffers** need a colour attachment: level 0 of an RGBA texture, or an
+  RGBA4, RGB5_A1, RGB565, RGB8 or RGBA8 renderbuffer. Other combinations report
+  `GL_FRAMEBUFFER_UNSUPPORTED`. Depth and stencil live in the framebuffer, not
+  in the renderbuffers, so they aren't shared between framebuffers. With an
+  RGB565 or RGB8 renderbuffer, blending still reads the stored alpha.
+- **`glTexSubImage2D`** needs the texture's format and type. A mipmap level
+  that doesn't fit level 0 is ignored (GL would make the texture incomplete).
+- **Fixed function:** 4 lights, no spot lights (`GL_SPOT_*` is stored but
+  ignored), one texture unit, `MODULATE`, `REPLACE`, `DECAL` and `BLEND`
+  environments (no `ADD` or `COMBINE`), no clip planes, no point size. The
+  texture coordinate's r and q are ignored.
+- **Limits:** a buffer array's stride must be at most 255 with programs.
+  Client-side indexed draws of strips, fans and loops must fit one packet;
+  otherwise the result is `GL_OUT_OF_MEMORY`.
+- `GL_POINT_SMOOTH`, `GL_LINE_SMOOTH` and the multisample enables are stored,
+  but have no effect (there is no multisample buffer). `GL_DITHER` switches the
+  panel's dithering (§10.1).
 
 ## 14. Zero implementation notes (*informative*)
 
