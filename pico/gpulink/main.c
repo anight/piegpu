@@ -1684,7 +1684,7 @@ static void self_test_7 (void)
 
 /* ---- replies ----------------------------------------------------------------- */
 
-void gl_self_test (void);	/* gltest.c */
+unsigned gl_self_test (void);	/* gltest.c: the number of failed checks */
 
 static unsigned choose_reply_phase (void)
 {

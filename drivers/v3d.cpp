@@ -38,7 +38,9 @@ LOGMODULE ("v3d");
 
 #define PROPTAG_SET_ENABLE_QPU	0x00030012
 
-#define JOB_TIMEOUT_US		1000000
+// per phase; a long job is legal (dEQP's flush_finish renders for about 1 s),
+// both together stay below the devlink watchdog (10 s)
+#define JOB_TIMEOUT_US		4000000
 
 CV3D::CV3D (void)
 {
@@ -125,6 +127,7 @@ boolean CV3D::RunJob (u32 nBinStart, u32 nBinEnd, u32 nRenderStart, u32 nRenderE
 		{
 			LOGERR ("Binning timeout");
 			DumpStatus ();
+			Reset ();
 			return FALSE;
 		}
 	}
@@ -140,6 +143,7 @@ boolean CV3D::RunJob (u32 nBinStart, u32 nBinEnd, u32 nRenderStart, u32 nRenderE
 		{
 			LOGERR ("Rendering timeout");
 			DumpStatus ();
+			Reset ();
 			return FALSE;
 		}
 	}
@@ -169,6 +173,34 @@ void CV3D::DumpStatus (void)
 	// reset the threads for the next job
 	Write (V3D_CT0CS, 1 << 15);
 	Write (V3D_CT1CS, 1 << 15);
+}
+
+// after a job that didn't finish: resetting the control list threads leaves
+// the V3D hung (every later job times out), power it off and on
+boolean CV3D::Reset (void)
+{
+	CBcmPropertyTags Tags;
+	TPropertyTagSimple TagQPU;
+	TagQPU.nValue = 0;
+	if (!Tags.GetTag (PROPTAG_SET_ENABLE_QPU, &TagQPU, sizeof TagQPU, 4))
+	{
+		LOGERR ("Cannot disable QPU");
+		return FALSE;
+	}
+	TagQPU.nValue = 1;
+	if (!Tags.GetTag (PROPTAG_SET_ENABLE_QPU, &TagQPU, sizeof TagQPU, 4))
+	{
+		LOGERR ("Cannot enable QPU");
+		return FALSE;
+	}
+
+	Write (V3D_INTDIS, 0xFFFFFFFF);
+	Write (V3D_INTCTL, 0xFFFFFFFF);		// clear what is pending
+	Write (V3D_CT0CS, 1 << 15);
+	Write (V3D_CT1CS, 1 << 15);
+	LOGNOTE ("Reset (IDENT0 0x%08X)", Read (V3D_IDENT0));
+
+	return TRUE;
 }
 
 u32 CV3D::Read (unsigned nOffset)

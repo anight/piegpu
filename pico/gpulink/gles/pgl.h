@@ -6,10 +6,12 @@
  * call is encoded into the command stream. Differences to a desktop driver:
  *
  * - There is no shader compiler (GL_SHADER_COMPILER is GL_FALSE). Programs
- *   are precompiled on the PC by tools/glslc and loaded with
- *   glProgramBinaryOES (program, PGL_PROGRAM_BINARY_PGPU, &NAME_info,
- *   sizeof NAME_info), NAME_info being defined by the generated header.
- *   Attribute locations are those glslc was given (-a order).
+ *   are precompiled on the PC by tools/glslc and loaded, as GL ES 2.0 allows,
+ *   with glShaderBinary (2, {vs, fs}, PGL_SHADER_BINARY_PGPU, &NAME_info,
+ *   sizeof NAME_info) and glLinkProgram, or with glProgramBinaryOES (program,
+ *   PGL_PROGRAM_BINARY_PGPU, &NAME_info, sizeof NAME_info). NAME_info is
+ *   defined by the generated header. Attribute locations are those glslc was
+ *   given (-a order).
  * - glGetError returns errors found here at once; errors the Zero reports come
  *   in asynchronously (after glFlush, when the Zero has executed the command).
  *   After glFinish, all errors of earlier commands are there.
@@ -27,6 +29,10 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "pgl_enums.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 typedef unsigned int	GLenum;
 typedef unsigned char	GLboolean;
@@ -46,8 +52,11 @@ typedef intptr_t	GLintptr;
 typedef intptr_t	GLsizeiptr;
 typedef char		GLchar;
 
-/* glProgramBinaryOES format: a pgpu_program_info_t from tools/glslc */
+/* glProgramBinaryOES and glShaderBinary formats: a pgpu_program_info_t from
+   tools/glslc (NAME_info); for glShaderBinary, load it into the vertex and
+   the fragment shader, then glLinkProgram */
 #define PGL_PROGRAM_BINARY_PGPU		0x9A50
+#define PGL_SHADER_BINARY_PGPU		0x9A51
 
 /* ---- pgl ---------------------------------------------------------------------- */
 
@@ -262,5 +271,9 @@ void glTexEnvfv (GLenum target, GLenum pname, const GLfloat *params);
 void glTexEnvi (GLenum target, GLenum pname, GLint param);
 void glTranslatef (GLfloat x, GLfloat y, GLfloat z);
 void glVertexPointer (GLint size, GLenum type, GLsizei stride, const void *pointer);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -23,6 +23,7 @@ static const unsigned BytesPerPixel[FORMATS] = {4, 2, 2, 2, 1, 1, 2, 0, 3};
 
 // TMU config (Mesa's kernel/vc4_packet.h)
 #define TEX_TYPE_RGBA8888	0		// tiled
+#define TEX_TYPE_RGBX8888	1		// tiled, alpha reads as 1
 #define P0_TYPE__SHIFT		4
 #define P0_CMMODE		(1 << 9)	// cube map
 #define P1_HEIGHT__SHIFT	20
@@ -548,8 +549,9 @@ boolean CTextures::Use (u32 nId, TConfig *pConfig)
 	static const u8 MinFilter[6] = {1, 0, 2, 4, 3, 5};
 	boolean bMipmap = T.nMinFilter >= PGPU_NEAREST_MIPMAP_NEAREST;
 
+	// formats without alpha read alpha 1, also after rendering into them
 	pConfig->P0 =   CV3D::BusAddress (T.Storage.pBase + T.nLevel0)	// level 0, page aligned
-		      | TEX_TYPE_RGBA8888 << P0_TYPE__SHIFT
+		      | (HasAlpha (T.nFormat) ? TEX_TYPE_RGBA8888 : TEX_TYPE_RGBX8888) << P0_TYPE__SHIFT
 		      | (bMipmap ? T.nLevels - 1 : 0)
 		      | (T.bCube ? P0_CMMODE : 0);
 	pConfig->P1 =   (T.nHeight & 2047) << P1_HEIGHT__SHIFT
@@ -563,6 +565,17 @@ boolean CTextures::Use (u32 nId, TConfig *pConfig)
 	pConfig->bAlphaFormat = T.nFormat == FORMAT_A8;
 
 	return TRUE;
+}
+
+boolean CTextures::HasAlpha (u32 nFormat)
+{
+	return nFormat != FORMAT_RGB888 && nFormat != FORMAT_RGB565 && nFormat != FORMAT_ETC1
+	       && nFormat != FORMAT_L8;
+}
+
+boolean CTextures::TargetHasAlpha (u32 nId) const
+{
+	return nId >= 1 && nId <= MaxTextures && m_Textures[nId].bValid && HasAlpha (m_Textures[nId].nFormat);
 }
 
 void CTextures::UseFallback (TConfig *pConfig)

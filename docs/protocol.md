@@ -244,7 +244,7 @@ Payload fields are listed word by word. `[n]` means n words.
 | `0x10` | CLEAR | `u32 mask`, `color color`, `f32 depth` [, `u32 stencil`] | Clear the bound target (§6.2). mask bit 0 = colour, bit 1 = depth, bit 2 = stencil. |
 | `0x11` | FRAME_END | `u32 flags` | End the frame: render and present it. flags: bit 0 = request a `FRAME_DONE` reply. |
 | `0x12` | VIEWPORT | `s32 x`, `s32 y`, `u32 width`, `u32 height`, `f32 near`, `f32 far` | Like `glViewport` + `glDepthRangef`. |
-| `0x13` | FRAMEBUFFER_CREATE | `id framebuffer`, `u32 texture` (id \| cube face << 24), `u32 flags` | A render target: level 0 of the texture (RGBA), and with flags bit 0 its own depth and stencil buffer. Recreating an id replaces it. |
+| `0x13` | FRAMEBUFFER_CREATE | `id framebuffer`, `u32 texture` (id \| cube face << 24), `u32 flags` | A render target: level 0 of the texture, and with flags bit 0 a depth and stencil buffer: its own, or with flags bits 15–8 = n (1–16) buffer n, shared by the framebuffers that name it. A texture without alpha (RGB, RGB565, L, ETC1) is a target without alpha: `DST_ALPHA` reads 1, and sampling it reads alpha 1. Recreating an id replaces it. |
 | `0x14` | FRAMEBUFFER_DELETE | `id framebuffer` | Delete it; the panel is bound if it was bound. |
 | `0x15` | BIND_FRAMEBUFFER | `id framebuffer` | Draw to this target; 0 = the panel. Renders what the old target collected. |
 | `0x16` | READ_PIXELS | `s32 x`, `s32 y`, `u32 width`, `u32 height` | Like `glReadPixels` (RGBA, unsigned bytes) from the bound target: `PIXELS` replies (§9). At most 262144 pixels. |
@@ -360,7 +360,7 @@ sampler indices, and the names and GL types that `glProgramBinaryOES` needs (§1
 | `0x85` | PROGRAM_SAMPLER | `id program`, `u32 sampler`, `u32 unit` | Like `glUniform1i` on a sampler: the texture unit (0–7) a sampler reads. Default: sampler n reads unit n. |
 | `0x86` | TEXTURE_BIND_UNIT | `u32 unit`, `id texture` | Bind a texture to unit 0–7 (0 = none). `TEXTURE_BIND` is unit 0. |
 | `0x87` | VERTEX_ATTRIB | `u32 index`, `f32 v[4]` | Current value of a generic attribute (0–7), used when its array is disabled. Default (0, 0, 0, 1). |
-| `0x88` | ATTRIB_ARRAY | `u32 index`, `id buffer`, `u32 offset_bytes`, `u32 stride_bytes`, `u32 size`, `u32 type` | Point generic attribute 0–7 at a buffer. stride 0 = tightly packed; at most 255. |
+| `0x88` | ATTRIB_ARRAY | `u32 index`, `id buffer`, `u32 offset_bytes`, `u32 stride_bytes`, `u32 size`, `u32 type` | Point generic attribute 0–7 at a buffer. stride 0 = tightly packed (over 255 bytes, the Zero copies the vertices used). |
 | `0x89` | ATTRIBS_ENABLE | `u32 mask` | Which generic attributes come from arrays (bit n = attribute n). |
 | `0x8A` | PROGRAM_DRAW_INLINE | `u32 mode`, `u32 vertices`, `u32 attribute_mask`, `u32 index_count`, `u32 index_type`, then per attribute in the mask (ascending): `u32 format`, `bytes data[…]`; then `bytes indices[…]` | Draw with vertex data carried in the packet (client-side arrays). format = type \| size << 8; other formats than the program's are converted. The data is `vertices` values, tightly packed and padded to a word. index_count 0 = draw the vertices in order; otherwise index_count indices follow, u8 or u16. Attributes not in the mask come from `ATTRIB_ARRAY` (first vertex 0) or `VERTEX_ATTRIB`. |
 
@@ -384,10 +384,16 @@ program wasn't compiled for it, the draw is reported as `ERROR` 10.
   texture reads (0, 0, 0, 1).
 - **GLSL:** GLSL ES 1.00 as compiled by Mesa's `vc4` driver: `gl_FragCoord`,
   `gl_FrontFacing`, `gl_PointCoord` and `gl_DepthRange` follow GL on the panel
-  and on texture targets, except `gl_PointCoord.y`, which is inverted when
-  drawing points into a texture. The panel has no alpha channel (`DST_ALPHA`
-  reads 1); texture targets have one. Not supported: integer arithmetic beyond
-  what fits in floats.
+  and on texture targets (verified numerically in self test 8). Mesa compiles
+  the origin of `gl_PointCoord` into the fragment shader, so glslc adds a
+  points variant for texture targets (`PGPU_VK_TEXTURE_TARGET`), which the Zero
+  uses when drawing points into a texture. The panel has no alpha channel (`DST_ALPHA`
+  reads 1); texture targets have one. Control flow (loops, `break`, `discard`,
+  branches that differ per pixel) and dynamic indexing of uniform arrays work
+  (verified in self test 8); the latter reads the program's uniform storage
+  through the TMU (uniform kind 11, a copy of the storage per draw).
+  `gl_FragCoord` is at pixel centres (x + 0.5, y + 0.5): Mesa's `vc4` returns
+  the integer pixel coordinates, which `patches/mesa-vc4-dump.patch` fixes.
 - **Limits:** 64 programs, blob at most 65536 words, uniform storage at most 4096
   words, 8 attributes, 8 samplers, `count` at most 65535 per draw.
 - `DRAW_ARRAYS` with a program reads the arrays starting at `first`: `first` can
@@ -460,9 +466,10 @@ A reply to a request uses the request's opcode (`GET_INFO` → `INFO`, `PING` �
 |---|---|---|---|
 | `0x02` | INFO | `u32 version`, `u16 width, u16 height`, `u32 max_texture_size`, `u32 max_buffers`, `u32 max_textures`, `u32 max_lights`, `u32 ring_bytes` | After `RESET`, `GET_INFO`, and once after the Zero boots. version = `0x00010000` for 1.0. |
 | `0x03` | PONG | `u32 cookie` | `PING` |
-| `0x04` | STATUS | `u32 frames`, `u32 crc_errors`, `u32 command_errors`, `u32 ring_free_bytes`, `u32 last_frame_us` | `GET_STATUS` |
+| `0x04` | STATUS | `u32 frames`, `u32 crc_errors`, `u32 command_errors`, `u32 ring_free_bytes`, `u32 last_frame_us`, then the last measuring window (about a second): `u32 window_us`, `u32 window_frames`, `u32 v3d_busy_us` (binning and rendering), `u32 arm_busy_us` (receiving and executing commands, without the waits for the V3D and the panel), `u32 panel_wait_us` (for the panel DMA of the previous frame). Older Zeros send the first 5 words | `GET_STATUS` |
 | `0x11` | FRAME_DONE | `u32 frame_number`, `u32 render_us`, `u32 draws`, `u32 triangles` | After a frame whose `FRAME_END` had flag bit 0 set is handed to the panel |
 | `0x16` | PIXELS | `u32 offset`, `color pixels[1 … 61]` | `READ_PIXELS`: the pixels from `offset` (in pixels, rows bottom up), in as many replies as needed |
+| `0x7E` | CREDIT | `u32 bytes` | USB stream only (§13.3): the stream bytes the Zero has taken so far, since the session started |
 | `0x7F` | ERROR | `u32 code`, `u32 opcode`, `u32 detail` | An invalid command (§6.4) or a CRC error (code 1, opcode 0) |
 
 Error codes: 1 = CRC, 2 = unknown opcode, 3 = bad length, 4 = bad id,
@@ -621,60 +628,105 @@ words wherever the Pico has nothing to send.
 The Pico side has two layers:
 
 - **`pgpu`** (`pico/gpulink/pgpu.{h,c}`): one C function per command. It
-  batches packets into a staging buffer, sends them by DMA over PIO (checking
-  READY before each batch), parses replies in a 1 ms timer, and queues `ERROR`
-  replies separately (`pgpu_poll_error`). It also splits large uploads into
-  packets and turns client-side arrays into `PROGRAM_DRAW_INLINE`.
+  batches packets, splits large uploads, turns client-side arrays into
+  `PROGRAM_DRAW_INLINE`, and parses replies into queues (`ERROR` replies
+  separately, `pgpu_poll_error`). The words go through a transport
+  (`pgpu_link.h`): on the Pico the I2S link (`pgpu_pico.c`: DMA over PIO,
+  READY before each batch, replies sampled into a DMA ring and parsed in a
+  1 ms timer); on a PC the Zero's USB (§13.3).
 - **`pgl`** (`pico/gpulink/gles/pgl.{h,c}`): the **OpenGL ES 2.0 API**, with
   the **GL ES 1.1 fixed-function calls** for program 0. It keeps the GL state
   (for `glGet*`, `glIsEnabled`, object names) and encodes it into commands.
-  `gltest.c` (self test 8) exercises it using only `gl*` calls.
+  `gltest.c` (self test 8) exercises it using only `gl*` calls, on the Pico and
+  on a PC.
 
 ### 13.1 How pgl maps GL to the wire
 
 | GL | Wire |
 |---|---|
-| `glGen*`, `glBind*`, `glDelete*` | GL names map to Zero ids: buffers 1–250, textures 1–120, framebuffers 1–16. Colour renderbuffers are Zero textures 121–128. Programs get Zero ids 1–64 from a pool. |
-| `glBufferData`, `glBufferSubData` | `BUFFER_CREATE`, `BUFFER_DATA`. Index buffers are also kept on the Pico, for draws that combine them with client-side vertex arrays. |
-| `glTexImage2D`, `glTexSubImage2D`, `glCompressedTexImage2D` (ETC1), `glCopyTex[Sub]Image2D`, `glGenerateMipmap`, `glTexParameter*` | `TEXTURE_CREATE` when level 0's size or format changes, then `TEXTURE_DATA` (repacked for `GL_UNPACK_ALIGNMENT`), `COPY_TEX_IMAGE`, `GENERATE_MIPMAP`, `TEXTURE_PARAMS`. The GL ES 1.1 `GL_GENERATE_MIPMAP` parameter is supported. |
-| `glFramebufferTexture2D`, `glFramebufferRenderbuffer`, `glBindFramebuffer` | `FRAMEBUFFER_CREATE` and `BIND_FRAMEBUFFER`, sent by the next draw, clear or read. A depth or stencil renderbuffer sets the combined depth and stencil buffer flag. |
+| `glGen*`, `glBind*`, `glDelete*` | GL names map to Zero ids: buffers 1–250, textures 1–110 (texture object 0 of each target: 111, 112), framebuffers 1–16. Colour renderbuffers are Zero textures 121–128; framebuffers without a colour attachment get a scratch colour texture (113–120). Programs get Zero ids 1–64 from a pool. |
+| `glBufferData`, `glBufferSubData` | `BUFFER_CREATE`, `BUFFER_DATA`. Buffers up to 16 KB and all index buffers are also kept on the Pico (on a PC all buffers), for draws that combine an index buffer with client-side vertex arrays. |
+| `glTexImage2D`, `glTexSubImage2D`, `glCompressedTexImage2D` (ETC1), `glCopyTex[Sub]Image2D`, `glGenerateMipmap`, `glTexParameter*` | `TEXTURE_CREATE` when level 0's size or format changes, then `TEXTURE_DATA` (repacked for `GL_UNPACK_ALIGNMENT`; `glTexSubImage2D` data of another type than the texture's is converted on the Pico), `COPY_TEX_IMAGE`, `GENERATE_MIPMAP`, `TEXTURE_PARAMS`. A texture pgl knows to be incomplete (a level of size 0, a mipmap level that doesn't fit level 0) is bound as none. The GL ES 1.1 `GL_GENERATE_MIPMAP` parameter is supported. |
+| `glFramebufferTexture2D`, `glFramebufferRenderbuffer`, `glBindFramebuffer` | `FRAMEBUFFER_CREATE` and `BIND_FRAMEBUFFER`, sent by the next draw, clear or read. A depth or stencil renderbuffer sets the depth and stencil flag and names a shared depth and stencil buffer (the renderbuffer), so framebuffers attaching the same renderbuffer share its contents. |
 | `glEnable`, `glDisable` | `ENABLE` / `DISABLE`, sent by the next draw or clear. Depth and stencil tests are off on targets without those buffers, as in GL. |
-| `glProgramBinaryOES` | `PROGRAM_CREATE` / `PROGRAM_DATA`, then a `PING`. An `ERROR` from checking the blob makes the link fail. Samplers are set to unit 0, as in GL. |
+| `glShaderBinary` + `glLinkProgram`, `glProgramBinaryOES`; on a PC also `glCompileShader` + `glLinkProgram` | `PROGRAM_CREATE` / `PROGRAM_DATA`, then a `PING`. An `ERROR` from checking the blob makes the link fail. Samplers are set to unit 0, as in GL. |
 | `glUniform*` | `PROGRAM_UNIFORM`: locations are uniform index << 16 \| array element. Values are converted to the program's types (int32; bool 0 / ~0). Sampler uniforms use `PROGRAM_SAMPLER`. |
-| `glVertexAttribPointer`, `glDrawArrays`, `glDrawElements` with a program | Buffer arrays use `ATTRIB_ARRAY`. Client-side arrays and indices use `PROGRAM_DRAW_INLINE`, with the buffer arrays' offsets moved to the first vertex sent. Lists are split into several packets. |
+| `glVertexAttribPointer`, `glDrawArrays`, `glDrawElements` with a program | Buffer arrays use `ATTRIB_ARRAY`. Client-side arrays and indices use `PROGRAM_DRAW_INLINE`, with the buffer arrays' offsets moved to the first vertex sent; lists are split into several packets; strips, fans and loops too large for a packet go to temporary buffers (Zero ids 253, 254). Draws of more than 65535 vertices are split (lists and strips). |
 | GL ES 1.1 arrays and draws | Buffer arrays use `ARRAY`. Client-side arrays (interleaved ones once) and indices are copied into two stream buffers (Zero ids 251 and 252), which the Zero reads when the draw arrives. |
 | GL ES 1.1 matrices, lights, material, fog, `glTexEnv`, `glAlphaFunc`, `glShadeModel`, `glColor4f`, `glNormal3f`, `glMultiTexCoord4f` | Matrix stacks kept on the Pico (`LOAD_MATRIX` before a draw that needs a changed matrix); `LIGHT` (position and spot direction transformed by the modelview when set), `MATERIAL`, `LIGHT_MODEL`, `FOG`, `TEX_ENV`, `ALPHA_FUNC`, `SHADE_MODEL`, `COLOR`, `NORMAL`, `TEXCOORD`. |
 | `glClear`, `glClearColor`, `glClearDepthf`, `glClearStencil` | `CLEAR` |
-| `glReadPixels` (RGBA, UNSIGNED_BYTE) | `READ_PIXELS`. Alpha is 255 on targets without alpha. |
-| `glGetError` | Errors found by pgl at once. `ERROR` replies map to GL errors (ENUM → `GL_INVALID_ENUM`, LIMIT → `GL_INVALID_VALUE`, MEMORY → `GL_OUT_OF_MEMORY`, others → `GL_INVALID_OPERATION`). They arrive after the Zero has executed the command; after `glFinish` (`PING`), all are in. `pglGetZeroError` gives the last one's code, opcode and detail. |
+| `glReadPixels` (RGBA, UNSIGNED_BYTE) | `READ_PIXELS`, rows at `GL_PACK_ALIGNMENT`. Alpha is 255 on targets without alpha. |
+| `glGetError` | Errors found by pgl at once. `ERROR` replies map to GL errors (ENUM → `GL_INVALID_ENUM`, LIMIT → `GL_INVALID_VALUE`, MEMORY → `GL_OUT_OF_MEMORY`, others → `GL_INVALID_OPERATION`). If commands were sent since the last call, `glGetError` first waits for them with a `PING` (about 80 µs over USB, 1–3 ms over I2S), so it reports their errors. `pglGetZeroError` gives the last one's code, opcode and detail; with `PGL_DEBUG` set (PC), pgl prints them. |
 | `pglSwapBuffers` | `FRAME_END` |
 
 ### 13.2 Differences from GL ES 2.0 and 1.1
 
-- **No shader compiler** (`GL_SHADER_COMPILER` is false). `glShaderSource`,
-  `glCompileShader`, `glGetShaderPrecisionFormat` and `glReleaseShaderCompiler`
-  report `GL_INVALID_OPERATION`, and `glLinkProgram` fails. Programs are
-  compiled by `tools/glslc` and loaded with `glProgramBinaryOES` (format
-  `PGL_PROGRAM_BINARY_PGPU`; the binary is the `NAME_info` structure of the
-  generated header). Attribute locations are those given to glslc, so
-  `glBindAttribLocation` has no effect.
-- **Framebuffers** need a colour attachment: level 0 of an RGBA texture, or an
-  RGBA4, RGB5_A1, RGB565, RGB8 or RGBA8 renderbuffer. Other combinations report
-  `GL_FRAMEBUFFER_UNSUPPORTED`. Depth and stencil live in the framebuffer, not
-  in the renderbuffers, so they aren't shared between framebuffers. With an
-  RGB565 or RGB8 renderbuffer, blending still reads the stored alpha.
-- **`glTexSubImage2D`** needs the texture's format and type. A mipmap level
-  that doesn't fit level 0 is ignored (GL would make the texture incomplete).
+- **No shader compiler on the Pico** (`GL_SHADER_COMPILER` is false), which GL
+  ES 2.0 allows when a shader binary format is supported (2.10). Programs are
+  compiled by `tools/glslc`; the binary is the `NAME_info` structure of the
+  generated header, "an optimized pair of vertex and fragment shaders"
+  (2.10.2): load it with `glShaderBinary` (format `PGL_SHADER_BINARY_PGPU`)
+  into the vertex and the fragment shader, then `glLinkProgram`; or with
+  `glProgramBinaryOES` (`PGL_PROGRAM_BINARY_PGPU`). As the specification
+  requires without a compiler, `glShaderSource`, `glCompileShader`,
+  `glReleaseShaderCompiler`, `glGetShaderPrecisionFormat`,
+  `glGetShaderInfoLog`, `glGetShaderSource` and `glGetShaderiv` for the compile
+  status, info log and source lengths report `GL_INVALID_OPERATION`. Attribute
+  locations of binaries are those given to glslc, so `glBindAttribLocation` has
+  no effect on them. On a PC, pgl compiles (§13.3).
+- Programs are compiled for triangles, lines and points by default; a program
+  compiled with fewer (`glslc -v`) reports `ERROR` 10 for the others.
+- Draws of more than 65535 vertices as fans or loops report
+  `GL_OUT_OF_MEMORY`.
+- **Framebuffers:** colour attachments are level 0 of an RGBA or RGB texture,
+  or an RGBA4, RGB5_A1, RGB565, RGB8 or RGBA8 renderbuffer. The Zero keeps
+  depth and stencil together: a framebuffer with separate depth and stencil
+  renderbuffers shares its depth and stencil with others through the depth one.
+- **Textures:** a level of an incomplete texture that doesn't fit level 0
+  keeps its old contents on the Zero (GL has none, the texture being
+  incomplete); only visible once the texture is complete again.
 - **Fixed function:** 4 lights, no spot lights (`GL_SPOT_*` is stored but
   ignored), one texture unit, `MODULATE`, `REPLACE`, `DECAL` and `BLEND`
   environments (no `ADD` or `COMBINE`), no clip planes, no point size. The
   texture coordinate's r and q are ignored.
-- **Limits:** a buffer array's stride must be at most 255 with programs.
-  Client-side indexed draws of strips, fans and loops must fit one packet;
-  otherwise the result is `GL_OUT_OF_MEMORY`.
+- **`GL_DITHER`** is stored but has no effect: the V3D's dither moves values
+  by up to two steps (0 becomes 2 of 31, measured), where GL requires one of
+  the two nearest values (GL ES 2.0 4.1.7). pgl keeps it off (the Zero's
+  `DITHER` capability); without it, the V3D truncates, as GL does.
 - `GL_POINT_SMOOTH`, `GL_LINE_SMOOTH` and the multisample enables are stored,
-  but have no effect (there is no multisample buffer). `GL_DITHER` switches the
-  panel's dithering (§10.1).
+  but have no effect (there is no multisample buffer).
+- **Mesa's limits** (glslc compiles with Mesa's `vc4`): at most 8 attributes
+  including aliased ones (`attribute_location.bind_aliasing.max_cond_*`); the
+  V3D loses triangles with vertices far outside the viewport
+  (`clipping.triangle_vertex.clip_three.*`). Mesa's `vc4` fails these on a
+  Raspberry Pi 3 as well (`src/broadcom/ci/broadcom-rpi3-fails.txt`).
+
+### 13.3 pgl on a PC (tests)
+
+pgl and pgpu also build for Linux (`pico/gpulink/host`): the transport
+(`pgpu_host.c`) sends the packets to the Zero over its USB serial link (the
+gpu app's devlink), so programs on the PC drive the GPU without the Pico:
+
+- **The stream:** the PC sends `pico-gpu-stream` (a new session each time);
+  the Zero answers `#STREAM`, takes all following bytes as command packets
+  (§4, byte aligned) and ignores the I2S input from then on. Replies come back
+  on the same link; the log goes on as text, which the PC skips (packets are
+  found by their header and CRC).
+- **Flow control:** the Zero's USB gadget buffers 8 KB and drops what doesn't
+  fit, so the Zero sends `CREDIT` replies (§9) with the number of stream bytes
+  taken; the PC keeps at most 6 KB unacknowledged.
+- **Shader compiler:** on the PC, `GL_SHADER_COMPILER` is true:
+  `glCompileShader` runs `glslc --check` (Mesa's info log),
+  `glLinkProgram` runs glslc for the pair with the attribute locations bound
+  by `glBindAttribLocation` (others get the lowest free ones; aliases and
+  matrix attributes as GL) and loads the result as a binary. Results are
+  cached (`~/.cache/pgpu-glslc`).
+- **Tests:** `gltest_host` (self test 8), `compile_test`, and the Khronos
+  conformance tests: `tools/deqp/build-deqp.sh` builds dEQP-GLES2 (VK-GL-CTS)
+  with a `pgl` platform (the panel as a 320x240 RGB565 window with 24-bit depth
+  and 8-bit stencil); `tools/deqp/run-deqp.py` runs cases in batches (going on
+  after a crash), `failures.py` groups the failures, `compare-vc4.py` compares
+  with Mesa's `vc4` on a Raspberry Pi 3.
 
 ## 14. Zero implementation notes (*informative*)
 
@@ -702,7 +754,11 @@ The Pico side has two layers:
 - **Stencil:** every fragment shader writes the three TLB stencil setup words
   from uniforms (Mesa's encoding); with the test off they say "always pass, keep".
 - **Scissor** and the viewport become the V3D's clip window; polygon offset is
-  its depth offset (factor and units as in Mesa's `vc4`).
+  its depth offset (factor and units as in Mesa's `vc4`). An empty clip window
+  doesn't clip everything on the V3D: such draws are skipped.
+- **V3D state that persists across jobs:** the line width keeps its value from
+  the previous job (measured: lines drew wrongly after wide-line tests), so
+  each job emits it before first use; the depth offset is treated the same.
 - **Programs** run in the V3D's GL shader mode: the binner runs the coordinate
   shader, the renderer the vertex and fragment shaders, and the hardware clips.
   Each draw gets a shader record, attribute records pointing straight into the

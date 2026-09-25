@@ -114,7 +114,11 @@ public:
 
 	/// \brief Add a triangle list (3 vertices per triangle) to the current frame
 	/// \param pVertices 4 + GetVaryings (nShader) floats per vertex
-	void AddTriangles (const TDrawSetup &rSetup, const float *pVertices, unsigned nVertices);
+	/// \return FALSE if the frame is full (nothing added)
+	boolean AddTriangles (const TDrawSetup &rSetup, const float *pVertices, unsigned nVertices);
+
+	/// \brief Count triangles that didn't fit (for the stats)
+	void Drop (unsigned nTriangles)		{ m_nDropped += nTriangles; }
 
 	/// \brief Add a GL shader mode draw (see TGLDraw)
 	/// \return FALSE if the frame is full (the draw is dropped)

@@ -27,6 +27,7 @@ CKernel::CKernel (void)
 	m_DevLink (&m_Interrupt),
 	m_Display (&m_Interrupt, DC_PIN, RESET_PIN, DISPLAY_WIDTH, DISPLAY_HEIGHT,
 		   SPI_CLOCK_SPEED, 0, TRUE),		// little endian RGB565 from the V3D
+	m_HostLink (&m_DevLink),
 	m_Renderer (&m_V3D, &m_Display),
 	m_Commands (&m_Renderer, &m_Receiver)
 {
@@ -59,7 +60,8 @@ TShutdownMode CKernel::Run (void)
 	}
 	m_Commands.Reset ();
 
-	if (!m_Receiver.Initialize ())
+	if (   !m_Receiver.Initialize ()
+	    || !m_HostLink.Initialize ())
 	{
 		LOGPANIC ("Receiver init failed");
 	}
@@ -68,6 +70,9 @@ TShutdownMode CKernel::Run (void)
 	m_Commands.SendInfo ();			// once after boot (docs/protocol.md 9)
 
 	unsigned nLastReport = m_Timer.GetUptime ();
+	unsigned nWindowStart = CTimer::GetClockTicks ();	// microseconds
+	unsigned nBusyUs = 0;			// receiving and executing packets
+	u32 nCredited = 0;			// stream bytes reported to the host
 	while (1)
 	{
 		m_DevLink.Update ();
@@ -76,10 +81,35 @@ TShutdownMode CKernel::Run (void)
 			DumpScreenshot ();
 		}
 
+		// commands from the Pico (I2S), or from a PC over USB once it has
+		// switched the USB link to its binary stream (then the Pico is ignored)
+		boolean bHost = m_DevLink.IsStreaming ();
+		if (bHost)
+		{
+			m_Commands.SetHostLink (&m_HostLink);
+
+			// flow control: the host may send what the gadget's queue holds
+			// beyond what we have taken
+			u32 nReceived = m_DevLink.GetStreamReceived ();
+			if (nReceived != nCredited)
+			{
+				m_HostLink.SendReply (PGPU_REPLY_CREDIT, &nReceived, 1);
+				nCredited = nReceived;
+			}
+
+			u32 nHeader;
+			while (m_Receiver.GetPacket (&nHeader) != nullptr)
+			{
+			}
+		}
+
 		u32 nHeader;
 		const u32 *pPayload;
-		for (unsigned i = 0;
-		     i < MAX_PACKETS_PER_LOOP && (pPayload = m_Receiver.GetPacket (&nHeader)) != nullptr;
+		unsigned nLoopStart = CTimer::GetClockTicks (), i;
+		for (i = 0;
+		     i < MAX_PACKETS_PER_LOOP
+		     && (pPayload = bHost ? m_HostLink.GetPacket (&nHeader)
+					  : m_Receiver.GetPacket (&nHeader)) != nullptr;
 		     i++)
 		{
 			if (PGPU_HEADER_OP (nHeader) == PGPU_OP_DEBUG_SCREENSHOT)
@@ -91,6 +121,10 @@ TShutdownMode CKernel::Run (void)
 				m_Commands.Execute (nHeader, pPayload);
 			}
 		}
+		if (i)
+		{
+			nBusyUs += CTimer::GetClockTicks () - nLoopStart;
+		}
 
 		unsigned nNow = m_Timer.GetUptime ();
 		if (nNow != nLastReport)
@@ -98,6 +132,16 @@ TShutdownMode CKernel::Run (void)
 			TReceiverStats R = m_Receiver.GetStats ();
 			TCommandStats C = m_Commands.GetStats ();
 			unsigned nFrames = C.nFrames ? C.nFrames : 1;
+
+			// the CPU's own work: the waits for the V3D and the panel happen
+			// while executing commands (both poll)
+			unsigned nTicks = CTimer::GetClockTicks ();
+			unsigned nWaitUs = C.nRenderUs + C.nPresentWaitUs;
+			TLoadStats Load = {nTicks - nWindowStart, C.nFrames, C.nRenderUs,
+					   nBusyUs > nWaitUs ? nBusyUs - nWaitUs : 0, C.nPresentWaitUs};
+			m_Commands.SetLoadStats (Load);
+			nWindowStart = nTicks;
+			nBusyUs = 0;
 
 			LOGNOTE ("%u fps, %u draws %u tris/frame, prims %u clipped %u rejected %u dropped %u, "
 				 "render %u us, panel wait %u us",

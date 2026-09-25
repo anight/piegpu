@@ -9,9 +9,12 @@
  *	vs <file>
  *	fs <file>
  *	attrib <name> <float|byte|ubyte|short|ushort> <size 1-4> <normalized 0|1>
- *	variant <triangles|lines|points>
+ *	variant <triangles|lines|points|points_texture>
+ *	check		(only compile the shaders listed, print the info log)
+ *	probe		(link without attribute locations, print the attributes)
  *
- * Attributes get locations 0, 1, ... in the order listed. Every active
+ * Attributes get locations 0, 1, ... in the order listed; "a,b" are names
+ * bound to one location (aliases), "-" is a location no attribute starts at. Every active
  * uniform scalar is set to a unique marker value so that glslc.py can find
  * where it lands in the uniform streams; sampler n is given texture unit n
  * with a texture of width 4 << n (visible in the texture config uniforms).
@@ -119,8 +122,9 @@ int main (int argc, char **argv)
 	char vs[1024] = "", fs[1024] = "";
 	struct { char name[128]; GLenum type; int size, norm; } attribs[8];
 	int nattribs = 0;
-	struct { GLenum prim; char blend[32]; } variants[32];
+	struct { GLenum prim; char blend[32]; int texture_target; } variants[32];
 	int nvariants = 0;
+	int check = 0, probe = 0;
 
 	FILE *job = fopen (argv[1], "r");
 	if (!job)
@@ -133,7 +137,11 @@ int main (int argc, char **argv)
 	{
 		char a[1024], b[64];
 		int n, m;
-		if (sscanf (line, "vs %1023s", a) == 1)
+		if (!strncmp (line, "check", 5))
+			check = 1;
+		else if (!strncmp (line, "probe", 5))
+			probe = 1;
+		else if (sscanf (line, "vs %1023s", a) == 1)
 			strcpy (vs, a);
 		else if (sscanf (line, "fs %1023s", a) == 1)
 			strcpy (fs, a);
@@ -151,9 +159,10 @@ int main (int argc, char **argv)
 		}
 		else if (sscanf (line, "variant %63s", b) == 1 && nvariants < 32)
 		{
-			variants[nvariants].prim =   !strcmp (b, "points") ? GL_POINTS
+			variants[nvariants].prim =   !strncmp (b, "points", 6) ? GL_POINTS
 						   : !strcmp (b, "lines") ? GL_LINES : GL_TRIANGLES;
 			strcpy (variants[nvariants].blend, "none");
+			variants[nvariants].texture_target = !strcmp (b, "points_texture");
 			nvariants++;
 		}
 	}
@@ -218,6 +227,17 @@ int main (int argc, char **argv)
 		return 1;
 	}
 
+	if (check)
+	{
+		/* compile errors are printed by compile () */
+		if (vs[0])
+			compile (GL_VERTEX_SHADER, vs);
+		if (fs[0])
+			compile (GL_FRAGMENT_SHADER, fs);
+		printf ("compiled\n");
+		return 0;
+	}
+
 	glViewport (0, 0, 320, 240);
 	glEnable (GL_DEPTH_TEST);
 
@@ -236,7 +256,14 @@ int main (int argc, char **argv)
 	glAttachShader (prog, compile (GL_VERTEX_SHADER, vs));
 	glAttachShader (prog, compile (GL_FRAGMENT_SHADER, fs));
 	for (int i = 0; i < nattribs; i++)
-		glBindAttribLocation (prog, i, attribs[i].name);
+	{
+		/* "a,b": aliases at one location; "-": no attribute starts here */
+		char names[128];
+		strcpy (names, attribs[i].name);
+		for (char *n = strtok (names, ","); n; n = strtok (NULL, ","))
+			if (strcmp (n, "-"))
+				glBindAttribLocation (prog, i, n);
+	}
 	glLinkProgram (prog);
 	GLint ok;
 	glGetProgramiv (prog, GL_LINK_STATUS, &ok);
@@ -261,13 +288,23 @@ int main (int argc, char **argv)
 		glGetActiveAttrib (prog, i, sizeof name, NULL, &size, &type, name);
 		int found = 0;
 		for (int k = 0; k < nattribs; k++)
-			found |= !strcmp (attribs[k].name, name);
+		{
+			char names[128];
+			strcpy (names, attribs[k].name);
+			for (char *n = strtok (names, ","); n; n = strtok (NULL, ","))
+				found |= !strcmp (n, name);
+		}
 		printf ("attribute %s 0x%04x %d\n", name, type, size);
-		if (!found)
+		if (!found && !probe)
 		{
 			printf ("error attribute %s is not listed in the program description\n", name);
 			return 1;
 		}
+	}
+
+	if (probe)
+	{
+		return 0;
 	}
 
 	/* uniforms: markers; samplers: unit n, texture width 4 << n */
@@ -279,9 +316,11 @@ int main (int argc, char **argv)
 		GLint size;
 		GLenum type;
 		glGetActiveUniform (prog, u, sizeof name, NULL, &size, &type, name);
-		char *bracket = strchr (name, '[');
-		if (bracket)
-			*bracket = 0;		/* arrays are reported as "name[0]" */
+		/* arrays are reported as "name[0]" (only the last subscript: members
+		   of arrays of structures are "name[1].member") */
+		size_t len = strlen (name);
+		if (len > 3 && !strcmp (name + len - 3, "[0]"))
+			name[len - 3] = 0;
 
 		int is_int, n = components (type, &is_int);
 		printf ("uniform %d %s 0x%04x %d\n", u, name, type, size);
@@ -378,8 +417,11 @@ int main (int argc, char **argv)
 
 		fprintf (dump, "{\"variant\": %d}\n", v);
 		fflush (dump);
+		if (variants[v].texture_target)
+			setenv ("PGPU_POINT_LOWER_LEFT", "1", 1);	/* see the Mesa patch */
 		glDrawArrays (variants[v].prim, 0, 6);
 		glFlush ();
+		unsetenv ("PGPU_POINT_LOWER_LEFT");
 	}
 	fclose (dump);
 	glFinish ();

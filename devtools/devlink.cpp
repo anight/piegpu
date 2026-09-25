@@ -5,6 +5,7 @@
 #include <circle/devicenameservice.h>
 #include <circle/logger.h>
 #include <circle/startup.h>
+#include <circle/util.h>
 #include <assert.h>
 
 LOGMODULE ("devlink");
@@ -16,6 +17,12 @@ CDevLink::CDevLink (CInterruptSystem *pInterrupt)
 	m_bHostActive (FALSE),
 	m_bReplayDone (FALSE),
 	m_pMagicPtr (DEVLINK_REBOOT_MAGIC),
+	m_pStreamMagicPtr (DEVLINK_STREAM_MAGIC),
+	m_bStream (FALSE),
+	m_pStream (nullptr),
+	m_nStreamIn (0),
+	m_nStreamOut (0),
+	m_nStreamReceived (0),
 	m_nRxIn (0),
 	m_nRxOut (0)
 {
@@ -23,13 +30,16 @@ CDevLink::CDevLink (CInterruptSystem *pInterrupt)
 
 CDevLink::~CDevLink (void)
 {
+	delete [] m_pStream;
 }
 
 boolean CDevLink::Initialize (void)
 {
 	m_Watchdog.Start (DEVLINK_WATCHDOG_SECONDS);
 
-	return m_Gadget.Initialize ();
+	m_pStream = new u8[StreamSize];
+
+	return m_pStream && m_Gadget.Initialize ();
 }
 
 void CDevLink::Update (void)
@@ -53,28 +63,33 @@ void CDevLink::Update (void)
 		return;
 	}
 
-	char Buffer[256];
-	int nResult = m_pSerial->Read (Buffer, sizeof Buffer);
-	if (nResult > 0)
+	char Buffer[512];
+	int nResult;
+	do
 	{
-		// The host has opened the port and is listening now
-		m_bHostActive = TRUE;
-
-		CheckMagic (Buffer, nResult);
-
-		for (int i = 0; i < nResult; i++)
+		// in stream mode, read only what the ring can take: the rest stays
+		// in the gadget, and the host waits (USB flow control)
+		unsigned nFree = (m_nStreamOut + StreamSize - m_nStreamIn - 1) % StreamSize;
+		if (m_bStream && nFree < sizeof Buffer)
 		{
-			unsigned nNext = (m_nRxIn + 1) % RxBufferSize;
-			if (nNext != m_nRxOut)		// drop when full
-			{
-				m_RxBuffer[m_nRxIn] = Buffer[i];
-				m_nRxIn = nNext;
-			}
+			break;
+		}
+
+		nResult = m_pSerial->Read (Buffer, sizeof Buffer);
+		if (nResult > 0)
+		{
+			// The host has opened the port and is listening now
+			m_bHostActive = TRUE;
+
+			CheckMagic (Buffer, nResult);
+			Receive (Buffer, nResult);
 		}
 	}
+	while (m_bStream && nResult > 0);
 
 	if (   m_bHostActive
-	    && !m_bReplayDone)
+	    && !m_bReplayDone
+	    && !m_bStream)
 	{
 		// Replay the log ring buffer in small chunks, so that the gadget's
 		// (non-blocking) send queue does not overflow. Keep the log target
@@ -95,6 +110,78 @@ void CDevLink::Update (void)
 			LOGNOTE ("Host connected");
 		}
 	}
+}
+
+void CDevLink::Receive (const char *pData, unsigned nLength)
+{
+	for (unsigned i = 0; i < nLength; i++)
+	{
+		char c = pData[i];
+
+		if (m_bStream)
+		{
+			m_pStream[m_nStreamIn] = c;		// Update () checked the space
+			m_nStreamIn = (m_nStreamIn + 1) % StreamSize;
+			m_nStreamReceived++;
+		}
+		else
+		{
+			unsigned nNext = (m_nRxIn + 1) % RxBufferSize;
+			if (nNext != m_nRxOut)		// drop when full
+			{
+				m_RxBuffer[m_nRxIn] = c;
+				m_nRxIn = nNext;
+			}
+		}
+
+		// the magic again: a new host session (the magic in the stream is
+		// skipped as garbage)
+		if (c != *m_pStreamMagicPtr)
+		{
+			m_pStreamMagicPtr = DEVLINK_STREAM_MAGIC;
+		}
+		if (c == *m_pStreamMagicPtr && *++m_pStreamMagicPtr == '\0')
+		{
+			StartStream ();			// the following bytes are the stream
+		}
+	}
+}
+
+void CDevLink::StartStream (void)
+{
+	LOGNOTE ("Binary stream from the host");
+
+	m_pStreamMagicPtr = DEVLINK_STREAM_MAGIC;
+	if (!m_bReplayDone)
+	{
+		// the log goes to the host from now on (without the replay)
+		CLogger *pLogger = CLogger::Get ();
+		m_pPrevLogTarget = pLogger->GetTarget ();
+		pLogger->SetNewTarget (m_pSerial);
+		m_bReplayDone = TRUE;
+	}
+	m_bStream = TRUE;
+	m_nStreamReceived = 0;			// counted from after the magic
+	m_nRxIn = m_nRxOut = 0;
+
+	Write (DEVLINK_STREAM_ACK, sizeof DEVLINK_STREAM_ACK - 1);
+}
+
+unsigned CDevLink::StreamRead (void *pBuffer, unsigned nMax)
+{
+	u8 *p = (u8 *) pBuffer;
+	unsigned n = 0;
+	while (n < nMax && m_nStreamOut != m_nStreamIn)
+	{
+		// up to the write position or the end of the ring
+		unsigned nEnd = m_nStreamIn > m_nStreamOut ? m_nStreamIn : StreamSize;
+		unsigned nChunk = nEnd - m_nStreamOut < nMax - n ? nEnd - m_nStreamOut : nMax - n;
+		memcpy (p + n, m_pStream + m_nStreamOut, nChunk);
+		n += nChunk;
+		m_nStreamOut = (m_nStreamOut + nChunk) % StreamSize;
+	}
+
+	return n;
 }
 
 int CDevLink::GetChar (void)

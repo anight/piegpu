@@ -41,6 +41,9 @@
 #define PGPU_VK_PRIM(w)			((w) & 0xFFu)		/* enum pgpu_prim_class */
 #define PGPU_VK_BLEND(w)		(((w) >> 8) & 0xFFu)	/* enum pgpu_blend_mode */
 #define PGPU_VK_POINT_SIZE		(1u << 16)		/* the VS writes the point size */
+#define PGPU_VK_TEXTURE_TARGET		(1u << 17)		/* for texture targets: the origin of
+							   gl_PointCoord is compiled into the FS;
+							   a variant without it serves both */
 
 enum pgpu_prim_class { PGPU_PRIM_TRIANGLES, PGPU_PRIM_LINES, PGPU_PRIM_POINTS };
 
@@ -84,6 +87,9 @@ enum pgpu_uniform_kind
 	PGPU_U_TEXTURE_CONFIG_P1 = 7,
 	PGPU_U_TEXTURE_CONFIG_P2 = 8,
 	PGPU_U_TEXTURE_FIRST_LEVEL = 9,
+	PGPU_U_UBO0_ADDR = 11,		/* bus address of the program's uniform storage
+					   (as of this draw) + data bytes: dynamic
+					   indexing of uniform arrays, read by the TMU */
 	PGPU_U_STENCIL = 22,		/* TLB stencil setup: data 0 front, 1 back, 2 write masks */
 	PGPU_U_UNIFORMS_ADDRESS = 24,	/* bus address of this uniform stream */
 

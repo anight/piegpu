@@ -1,13 +1,14 @@
-# pico-gpu: dump compiled vc4 shaders (code, uniform stream layout, values) and
-# where the built-in state variables and the uniforms are in the constant
-# buffers, when PGPU_VC4_DUMP is set.
+# pico-gpu: dump compiled vc4 shaders (code, uniform stream layout, values, VS
+# inputs) and where the built-in state variables and the uniforms are in the
+# constant buffers, when PGPU_VC4_DUMP is set; gl_FragCoord at the pixel centre;
+# a switch for the lower left point sprite origin (PGPU_POINT_LOWER_LEFT).
 # For Mesa mesa-26.2.3; applied by tools/glslc/build-mesa.sh.
 
 diff --git a/src/gallium/drivers/vc4/vc4_context.h b/src/gallium/drivers/vc4/vc4_context.h
-index c5559b4..e07d3dc 100644
+index c5559b4..0a0e97e 100644
 --- a/src/gallium/drivers/vc4/vc4_context.h
 +++ b/src/gallium/drivers/vc4/vc4_context.h
-@@ -176,6 +176,10 @@ struct vc4_compiled_shader {
+@@ -176,6 +176,13 @@ struct vc4_compiled_shader {
          uint8_t vattrs_live;
  
          const struct vc4_fs_inputs *fs_inputs;
@@ -15,14 +16,42 @@ index c5559b4..e07d3dc 100644
 +        /* pico-gpu: copy of the code for the dump hook */
 +        uint64_t *pgpu_code;
 +        uint32_t pgpu_code_count;
++        /* the state tracker's VS inputs: vattr (driver location) k is the
++         * k-th set bit */
++        uint64_t pgpu_inputs_read;
  };
  
  struct vc4_program_stateobj {
 diff --git a/src/gallium/drivers/vc4/vc4_program.c b/src/gallium/drivers/vc4/vc4_program.c
-index d9d51f2..e018802 100644
+index d9d51f2..88741e7 100644
 --- a/src/gallium/drivers/vc4/vc4_program.c
 +++ b/src/gallium/drivers/vc4/vc4_program.c
-@@ -2694,6 +2694,13 @@ vc4_get_compiled_shader(struct vc4_context *vc4, enum qstage stage,
+@@ -23,6 +23,7 @@
+  */
+ 
+ #include <inttypes.h>
++#include <stdlib.h>
+ #include "util/format/u_format.h"
+ #include "util/crc32.h"
+ #include "util/perf/cpu_trace.h"
+@@ -740,8 +741,14 @@ emit_vertex_input(struct vc4_compile *c, int attr)
+ static void
+ emit_fragcoord_input(struct vc4_compile *c, int attr)
+ {
+-        c->inputs[attr * 4 + 0] = qir_ITOF(c, qir_reg(QFILE_FRAG_X, 0));
+-        c->inputs[attr * 4 + 1] = qir_ITOF(c, qir_reg(QFILE_FRAG_Y, 0));
++        /* pico-gpu: the pixel centre is at + 0.5 (the screen advertises
++         * fs_coord_pixel_center_half_integer, and FRAG_X/Y are the integer
++         * pixel coordinates; measured on the hardware)
++         */
++        c->inputs[attr * 4 + 0] = qir_FADD(c, qir_ITOF(c, qir_reg(QFILE_FRAG_X, 0)),
++                                           qir_uniform_f(c, 0.5));
++        c->inputs[attr * 4 + 1] = qir_FADD(c, qir_ITOF(c, qir_reg(QFILE_FRAG_Y, 0)),
++                                           qir_uniform_f(c, 0.5));
+         c->inputs[attr * 4 + 2] =
+                 qir_FMUL(c,
+                          qir_ITOF(c, qir_FRAG_Z(c)),
+@@ -2694,6 +2701,15 @@ vc4_get_compiled_shader(struct vc4_context *vc4, enum qstage stage,
                  shader->bo = vc4_bo_alloc_shader(vc4->screen, c->qpu_insts,
                                                   c->qpu_inst_count *
                                                   sizeof(uint64_t));
@@ -33,14 +62,29 @@ index d9d51f2..e018802 100644
 +                memcpy(shader->pgpu_code, c->qpu_insts,
 +                       c->qpu_inst_count * sizeof(uint64_t));
 +                shader->pgpu_code_count = c->qpu_inst_count;
++                shader->pgpu_inputs_read =
++                        key->shader_state->base.ir.nir->info.inputs_read;
          }
  
          shader->fs_threaded = c->fs_threaded;
+@@ -2795,6 +2811,12 @@ vc4_update_compiled_fs(struct vc4_context *vc4, uint8_t prim_mode)
+                 key->point_coord_upper_left =
+                         (vc4->rasterizer->base.sprite_coord_mode ==
+                          PIPE_SPRITE_COORD_UPPER_LEFT);
++                /* pico-gpu: tools/glslc compiles the fragment shader for
++                 * points a second time for texture targets (rows bottom up),
++                 * where the state tracker would choose the lower left origin
++                 */
++                if (getenv("PGPU_POINT_LOWER_LEFT"))
++                        key->point_coord_upper_left = false;
+         }
+ 
+         key->ubo_1_size = vc4->constbuf[MESA_SHADER_FRAGMENT].cb[1].buffer_size;
 diff --git a/src/gallium/drivers/vc4/vc4_uniforms.c b/src/gallium/drivers/vc4/vc4_uniforms.c
-index f63bbcd..8ab0104 100644
+index f63bbcd..f405779 100644
 --- a/src/gallium/drivers/vc4/vc4_uniforms.c
 +++ b/src/gallium/drivers/vc4/vc4_uniforms.c
-@@ -187,6 +187,54 @@ get_texrect_scale(struct vc4_texture_stateobj *texstate,
+@@ -187,6 +187,55 @@ get_texrect_scale(struct vc4_texture_stateobj *texstate,
          return fui(1.0f / dim);
  }
  
@@ -78,7 +122,8 @@ index f63bbcd..8ab0104 100644
 +
 +        const uint64_t *code = shader->pgpu_code;
 +        unsigned n = shader->pgpu_code_count;
-+        fprintf(f, "], \"code\": [");
++        fprintf(f, "], \"inputs_read\": %llu, \"code\": [",
++                (unsigned long long) shader->pgpu_inputs_read);
 +        for (unsigned i = 0; i < n; i++)
 +                fprintf(f, "%s\"%016llx\"", i ? ", " : "",
 +                        (unsigned long long) code[i]);
@@ -95,7 +140,7 @@ index f63bbcd..8ab0104 100644
  void
  vc4_write_uniforms(struct vc4_context *vc4, struct vc4_compiled_shader *shader,
                     struct vc4_constbuf_stateobj *cb,
-@@ -202,6 +250,7 @@ vc4_write_uniforms(struct vc4_context *vc4, struct vc4_compiled_shader *shader,
+@@ -202,6 +251,7 @@ vc4_write_uniforms(struct vc4_context *vc4, struct vc4_compiled_shader *shader,
          struct vc4_cl_out *uniforms =
                  cl_start_shader_reloc(&job->uniforms,
                                        uinfo->num_texture_samples);
@@ -103,7 +148,7 @@ index f63bbcd..8ab0104 100644
  
          for (int i = 0; i < uinfo->count; i++) {
                  enum quniform_contents contents = uinfo->contents[i];
-@@ -358,6 +407,8 @@ vc4_write_uniforms(struct vc4_context *vc4, struct vc4_compiled_shader *shader,
+@@ -358,6 +408,8 @@ vc4_write_uniforms(struct vc4_context *vc4, struct vc4_compiled_shader *shader,
                  }
          }
  

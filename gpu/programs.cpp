@@ -189,6 +189,10 @@ u32 CPrograms::Load (TProgram *p, u32 *pDetail)
 				CHECK (nData < p->nUniformWords, nWord);
 				break;
 
+			case PGPU_U_UBO0_ADDR:
+				CHECK (nData < p->nUniformWords * 4, nWord);
+				break;
+
 			case PGPU_U_TEXTURE_CONFIG_P0:
 			case PGPU_U_TEXTURE_CONFIG_P1:
 			case PGPU_U_TEXTURE_CONFIG_P2:		// sampler | flag << 16
@@ -338,18 +342,28 @@ TProgram *CPrograms::Get (u32 nId)
 	return &m_Programs[nId];
 }
 
-const TProgramVariant *CPrograms::FindVariant (const TProgram *p, unsigned nPrim, unsigned nBlend)
+const TProgramVariant *CPrograms::FindVariant (const TProgram *p, unsigned nPrim, unsigned nBlend,
+					       boolean bTextureTarget)
 {
+	const TProgramVariant *pAny = nullptr;
 	for (unsigned i = 0; i < p->nVariants; i++)
 	{
 		u32 nKey = p->pVariants[i].nKey;
 		if (PGPU_VK_PRIM (nKey) == nPrim && PGPU_VK_BLEND (nKey) == nBlend)
 		{
-			return &p->pVariants[i];
+			boolean bForTexture = !!(nKey & PGPU_VK_TEXTURE_TARGET);
+			if (bForTexture == bTextureTarget)
+			{
+				return &p->pVariants[i];
+			}
+			if (!bForTexture && !pAny)
+			{
+				pAny = &p->pVariants[i];	// no variant for texture targets
+			}
 		}
 	}
 
-	return nullptr;
+	return pAny;
 }
 
 void CPrograms::EndFrame (void)

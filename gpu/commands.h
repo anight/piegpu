@@ -12,6 +12,7 @@
 #include "textures.h"
 #include "geometry.h"
 #include "receiver.h"
+#include "hostlink.h"
 #include "programs.h"
 #include <circle/types.h>
 
@@ -32,6 +33,16 @@ struct TCommandStats
 	unsigned nPresentWaitUs;
 };
 
+// the last measuring window (about a second), for STATUS (docs/protocol.md 9)
+struct TLoadStats
+{
+	u32 nWindowUs;
+	u32 nFrames;
+	u32 nV3DBusyUs;			// binning and rendering
+	u32 nARMBusyUs;			// receiving and executing commands, not waiting
+	u32 nPanelWaitUs;		// for the panel's DMA of the previous frame
+};
+
 class CCommands
 {
 public:
@@ -48,10 +59,15 @@ public:
 	/// \brief Send INFO (after boot)
 	void SendInfo (void);
 
+	/// \brief Replies go to the host's USB stream from now on (the host drives
+	/// the GPU instead of the Pico)
+	void SetHostLink (CHostLink *pHostLink)		{ m_pHostLink = pHostLink; }
+
 	/// \brief Execute one command packet
 	void Execute (u32 nHeader, const u32 *pPayload);
 
 	TCommandStats GetStats (void);
+	void SetLoadStats (const TLoadStats &rLoad)	{ m_Load = rLoad; }
 
 private:
 	struct TBuffer
@@ -113,7 +129,7 @@ private:
 			 u32 *pDetail, const TInlineData *pInline = nullptr, unsigned nVertices = 0);
 	u32 ProgramDrawInline (const u32 *p, unsigned nLength, u32 *pDetail);
 	boolean GetViewport (TViewport *pViewport) const;
-	u32 *BuildUniforms (const TProgram *pProgram, const TProgramShader *pShader,
+	u32 *BuildUniforms (const TProgram *pProgram, const TProgramShader *pShader, u32 *pStorageBus,
 			    const TViewport &rViewport, u32 *pBus);
 	u32 BlendMode (void) const;
 	u32 ConfigBits (boolean bFaces) const;
@@ -121,12 +137,14 @@ private:
 	void EndFrame (u32 nFlags);
 
 	void DefaultInput (TInputVertex *pVertex) const;
-	void Reply (u8 uchOpcode, const u32 *pPayload, unsigned nLength);
+	boolean Reply (u8 uchOpcode, const u32 *pPayload, unsigned nLength);
+	void FlushIfTarget (u32 nTexture);
 	void Error (u32 nCode, u32 nOpcode, u32 nDetail);
 
 private:
 	CRenderer *m_pRenderer;
 	CReceiver *m_pReceiver;
+	CHostLink *m_pHostLink;
 	CTextures m_Textures;
 	CGeometry m_Geometry;
 
@@ -155,18 +173,26 @@ private:
 	u32 *m_pIndices;
 
 	// framebuffer objects (render to texture)
+	struct TZSBuffer			// depth and stencil (allocated when rendered)
+	{
+		u8 *p;
+		unsigned nBytes;
+		boolean bValid;			// stored by a job
+	};
 	struct TFramebuffer
 	{
 		boolean bValid;
 		u32 nTexture;			// colour: level 0 of this texture
 		unsigned nFace;			// cube map face
 		boolean bDepthStencil;
-		u8 *pZS;			// depth and stencil (allocated when rendered)
-		unsigned nZSBytes;
-		boolean bZSValid;		// stored by a job
+		unsigned nSharedZS;		// 1 .. MaxSharedZS: shared depth and stencil
+		TZSBuffer ZS;			// else its own
 	};
 	static const unsigned MaxFramebuffers = 16;
 	TFramebuffer m_Framebuffers[MaxFramebuffers + 1];	// ids 1 .. MaxFramebuffers
+	static const unsigned MaxSharedZS = 16;
+	TZSBuffer m_SharedZS[MaxSharedZS + 1];			// ids 1 .. MaxSharedZS
+	TZSBuffer &ZSOf (TFramebuffer &F)	{ return F.nSharedZS ? m_SharedZS[F.nSharedZS] : F.ZS; }
 	u32 m_nFramebuffer;		// bound, 0 = the panel
 
 	// the job: what the renderer collects for the bound target
@@ -179,6 +205,7 @@ private:
 
 	void UpdateTarget (void);
 	void FlushJob (boolean bForce);
+	static void JobFullHandler (void *pParam);
 	void EndJob (void);
 	u32 Clear (u32 nMask, u32 nColor, float fDepth, u8 nStencil);
 	u32 ReadRect (s32 x, s32 y, unsigned nWidth, unsigned nHeight, u32 *pOut);
@@ -186,6 +213,7 @@ private:
 	void FramebufferFree (TFramebuffer *pFramebuffer);
 	unsigned m_nFrameNumber;
 	unsigned m_nLastFrameUs;
+	TLoadStats m_Load;
 
 	// totals for STATUS
 	unsigned m_nTotalFrames;

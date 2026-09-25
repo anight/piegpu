@@ -1,13 +1,11 @@
 /*
  * pgpu.h - Pico side of the Pico GPU link (docs/protocol.md)
  *
- * Commands are appended to a staging buffer and sent in batches by DMA over
- * the I2S link. pgpu_flush () sends the batch; pgpu_frame_end () flushes.
- * READY is checked before each batch, idle words keep the clock running.
- *
- * Replies from the Zero are sampled by a second state machine in lockstep
- * with the bit clock, written to a DMA ring, and parsed every millisecond by
- * a timer callback into a small queue (pgpu_poll_reply ()).
+ * Commands are appended to a staging buffer and sent in batches by the
+ * transport (pgpu_link.h: the I2S link on the Pico, pgpu_pico.c; the Zero's
+ * USB on a PC, host/pgpu_host.c). pgpu_flush () sends the batch;
+ * pgpu_frame_end () flushes. Replies are parsed into small queues
+ * (pgpu_poll_reply (), pgpu_poll_error ()).
  */
 #ifndef PGPU_H
 #define PGPU_H
@@ -15,6 +13,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "pgpu_protocol.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #define PGPU_STAGING_WORDS	4096		/* per buffer (two buffers) */
 #define PGPU_MAX_REPLY_PAYLOAD	64
@@ -60,23 +62,32 @@ typedef struct
 	uint32_t command_errors;
 	uint32_t ring_free_bytes;
 	uint32_t last_frame_us;
+	/* the Zero's last measuring window (about a second; 0 from an older Zero) */
+	uint32_t window_us;
+	uint32_t window_frames;
+	uint32_t v3d_busy_us;		/* binning and rendering */
+	uint32_t arm_busy_us;		/* receiving and executing, not waiting */
+	uint32_t panel_wait_us;		/* for the panel DMA of the previous frame */
 } pgpu_status_t;
 
 /* link */
 void pgpu_init (void);
-bool pgpu_wait_ready (uint32_t timeout_ms);	/* the Zero is up and accepting */
-bool pgpu_wait_frame (uint32_t timeout_ms);	/* next FRAME pulse */
+bool pgpu_wait_ready (uint32_t timeout_ms);	/* the Zero is up and accepting (Pico only) */
+bool pgpu_wait_frame (uint32_t timeout_ms);	/* next FRAME pulse (Pico only) */
 void pgpu_flush (void);
+uint32_t pgpu_packets_sent (void);		/* packets built since pgpu_init () */
 pgpu_stats_t pgpu_get_stats (void);		/* and reset the counters */
 
 /* replies */
-void pgpu_set_reply_phase (unsigned phase);	/* 0: sample at BCLK rise, 1: at BCLK fall */
+void pgpu_set_reply_phase (unsigned phase);	/* 0: sample at BCLK rise, 1: at BCLK fall (Pico only) */
 bool pgpu_poll_reply (pgpu_reply_t *reply);		/* other than ERROR and PIXELS */
 bool pgpu_poll_error (uint32_t error[3]);		/* ERROR reply: code, opcode, detail */
 /* wait for a reply with this opcode; other replies are discarded */
 bool pgpu_wait_reply (uint8_t opcode, pgpu_reply_t *reply, uint32_t timeout_ms);
 bool pgpu_get_info (pgpu_info_t *info, uint32_t timeout_ms);
 bool pgpu_get_status (pgpu_status_t *status, uint32_t timeout_ms);
+/* a STATUS reply (from pgpu_poll_reply after pgpu_request_status) */
+bool pgpu_status_from_reply (const pgpu_reply_t *reply, pgpu_status_t *status);
 /* round trip: -1 on timeout, else microseconds */
 int32_t pgpu_ping_wait (uint32_t cookie, uint32_t timeout_ms);
 
@@ -204,5 +215,9 @@ bool pgpu_draw_elements_client (uint32_t mode, uint32_t count, uint32_t index_ty
 /* DRAW_INLINE: vertices laid out as in docs/protocol.md 7.8 */
 void pgpu_draw_inline (uint32_t mode, uint32_t count, uint32_t attrib_mask,
 		       const uint32_t *vertex_words, uint32_t words_per_vertex);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

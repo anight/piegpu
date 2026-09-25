@@ -94,6 +94,14 @@ public:
 	CGeometry (CRenderer *pRenderer, CTextures *pTextures);
 	~CGeometry (void);
 
+	/// \brief Called when the frame is full: renders the job so far
+	typedef void TJobFullHandler (void *pParam);
+	void SetJobFullHandler (TJobFullHandler *pHandler, void *pParam)
+	{
+		m_pJobFull = pHandler;
+		m_pJobFullParam = pParam;
+	}
+
 	/// \brief Draw primitives from processed input vertices
 	/// \param pIndices nullptr: vertices 0 .. nCount-1 in order
 	/// \return 0 or a pgpu_error code
@@ -148,6 +156,8 @@ private:
 
 private:
 	CRenderer *m_pRenderer;
+	TJobFullHandler *m_pJobFull;
+	void *m_pJobFullParam;
 	CTextures *m_pTextures;
 
 	TVertex *m_pVertices;

@@ -121,6 +121,7 @@ enum pgpu_reply
 	PGPU_REPLY_STATUS	= 0x04,
 	PGPU_REPLY_FRAME_DONE	= 0x11,
 	PGPU_REPLY_PIXELS	= 0x16,
+	PGPU_REPLY_CREDIT	= 0x7E,		/* USB stream only: bytes received so far */
 	PGPU_REPLY_ERROR	= 0x7F
 };
 
@@ -147,6 +148,10 @@ enum pgpu_error
 
 /* FRAMEBUFFER_CREATE flags */
 #define PGPU_FRAMEBUFFER_DEPTH_STENCIL	(1u << 0)
+/* bits 15-8: 1 .. 16 = a depth and stencil buffer shared by the framebuffers
+   with the same number (a GL renderbuffer), 0 = the framebuffer's own */
+#define PGPU_FRAMEBUFFER_SHARED(n)	((n) << 8)
+#define PGPU_FRAMEBUFFER_SHARED_ZS(f)	(((f) >> 8) & 0xFFu)
 
 /* FRAME_END flags */
 #define PGPU_FRAME_REPLY		(1u << 0)

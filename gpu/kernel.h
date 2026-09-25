@@ -14,6 +14,7 @@
 #include <st7789dma.h>
 #include <v3d.h>
 #include "receiver.h"
+#include "hostlink.h"
 #include "renderer.h"
 #include "commands.h"
 
@@ -53,6 +54,7 @@ private:
 	CST7789DMADisplay	m_Display;
 	CV3D			m_V3D;
 	CReceiver		m_Receiver;
+	CHostLink		m_HostLink;		// commands from a PC over USB (tests)
 	CRenderer		m_Renderer;
 	CCommands		m_Commands;
 };

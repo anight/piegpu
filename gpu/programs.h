@@ -73,7 +73,8 @@ public:
 	TProgram *Get (u32 nId);
 
 	/// \return the variant for this primitive class and blend mode, or nullptr
-	static const TProgramVariant *FindVariant (const TProgram *pProgram, unsigned nPrim, unsigned nBlend);
+	static const TProgramVariant *FindVariant (const TProgram *pProgram, unsigned nPrim, unsigned nBlend,
+						   boolean bTextureTarget);
 
 	/// \brief Mark the program used by the current frame
 	void Use (TProgram *pProgram)	{ pProgram->bUsed = TRUE; }

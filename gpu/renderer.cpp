@@ -3,6 +3,7 @@
 //
 #include "renderer.h"
 #include "shaders.h"
+#include <pgpu_protocol.h>
 #include <circle/timer.h>
 #include <circle/util.h>
 #include <assert.h>
@@ -108,7 +109,7 @@ boolean CRenderer::Initialize (void)
 	return TRUE;
 }
 
-void CRenderer::AddTriangles (const TDrawSetup &rSetup, const float *pVertices, unsigned nVertices)
+boolean CRenderer::AddTriangles (const TDrawSetup &rSetup, const float *pVertices, unsigned nVertices)
 {
 	assert (rSetup.nShader < FRAGMENT_SHADERS);
 	assert (rSetup.nUniforms == FragmentShaders[rSetup.nShader].nUniforms);
@@ -130,8 +131,7 @@ void CRenderer::AddTriangles (const TDrawSetup &rSetup, const float *pVertices, 
 	    || (!bMerge && (   m_nDraws >= MaxDraws
 			    || m_nUniformWords + rSetup.nUniforms > UniformPoolWords)))
 	{
-		m_nDropped += nVertices / 3;
-		return;
+		return FALSE;
 	}
 
 	if (bMerge)
@@ -169,6 +169,8 @@ void CRenderer::AddTriangles (const TDrawSetup &rSetup, const float *pVertices, 
 	}
 
 	m_nVertexBytes += nVertices * nStride;
+
+	return TRUE;
 }
 
 boolean CRenderer::AddGLDraw (const TGLDraw &rDraw)
@@ -295,8 +297,8 @@ boolean CRenderer::RenderJob (const TRenderTarget &rTarget, u32 nLoadColorBus, b
 	Last.nClipX = Last.nClipY = 0;		// the clip window emitted above
 	Last.nClipWidth = rTarget.nWidth;
 	Last.nClipHeight = rTarget.nHeight;
-	Last.nDepthOffset = 0;			// reset value
-	Last.fLineWidth = 1.0f;
+	Last.nDepthOffset = ~0u;		// not known: the V3D keeps it across jobs
+	Last.fLineWidth = -1.0f;		// not known: the V3D keeps it across jobs
 	boolean bViewportOffset = FALSE;	// a GL draw set a viewport offset
 	for (unsigned i = 0; i < m_nDraws; i++)
 	{
@@ -355,20 +357,27 @@ boolean CRenderer::RenderJob (const TRenderTarget &rTarget, u32 nLoadColorBus, b
 			Bin.Add8 (V3D_GL_SHADER_STATE);		// record address | attribute arrays (8 = 0)
 			Bin.Add32 (G.nRecordBus | (G.nAttributes & 7));
 
-			if (G.bIndexed)
+			// the V3D doesn't draw a line loop of 2 vertices (as in Mesa's vc4):
+			// its two segments as lines
+			boolean bLoop2 = G.nMode == PGPU_LINE_LOOP && G.nCount == 2;
+			u8 nMode = bLoop2 ? PGPU_LINES : G.nMode;
+			for (unsigned i = 0; i < (bLoop2 ? 2u : 1u); i++)
 			{
-				Bin.Add8 (V3D_INDEXED_PRIMITIVE_LIST);
-				Bin.Add8 (G.nMode | G.nIndexType << 4);
-				Bin.Add32 (G.nCount);
-				Bin.Add32 (G.nIndexBus);
-				Bin.Add32 (G.nMaxIndex);
-			}
-			else
-			{
-				Bin.Add8 (V3D_VERTEX_ARRAY_PRIMITIVES);
-				Bin.Add8 (G.nMode);
-				Bin.Add32 (G.nCount);
-				Bin.Add32 (0);			// first vertex: in the attribute addresses
+				if (G.bIndexed)
+				{
+					Bin.Add8 (V3D_INDEXED_PRIMITIVE_LIST);
+					Bin.Add8 (nMode | G.nIndexType << 4);
+					Bin.Add32 (G.nCount);
+					Bin.Add32 (G.nIndexBus);
+					Bin.Add32 (G.nMaxIndex);
+				}
+				else
+				{
+					Bin.Add8 (V3D_VERTEX_ARRAY_PRIMITIVES);
+					Bin.Add8 (nMode);
+					Bin.Add32 (G.nCount);
+					Bin.Add32 (0);		// first vertex: in the attribute addresses
+				}
 			}
 
 			nTriangles += G.nMode >= 4 ? (G.nMode == 4 ? G.nCount / 3 : G.nCount - 2) : 0;

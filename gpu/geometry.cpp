@@ -62,6 +62,8 @@ static u32 FloatBits (float f)
 
 CGeometry::CGeometry (CRenderer *pRenderer, CTextures *pTextures)
 :	m_pRenderer (pRenderer),
+	m_pJobFull (nullptr),
+	m_pJobFullParam (nullptr),
 	m_pTextures (pTextures),
 	m_nBatch (0)
 {
@@ -135,6 +137,10 @@ u32 CGeometry::Draw (const TGLState &rState, u32 nMode, const TInputVertex *pVer
 
 	boolean bFaces = nMode >= PGPU_TRIANGLES;
 	SetupDraw (rState, bFaces);
+	if (!m_TriangleState.nClipWidth || !m_TriangleState.nClipHeight)
+	{
+		return 0;		// scissored away (the V3D's clip window can't be empty)
+	}
 
 	boolean bFlat = rState.nShadeModel == 1;
 #define V(n)	(&m_pVertices[pIndices ? pIndices[n] : (n)])
@@ -895,7 +901,17 @@ void CGeometry::Flush (void)
 	if (m_nBatch)
 	{
 		m_Setup.State = *m_pBatchState;
-		m_pRenderer->AddTriangles (m_Setup, m_pBatch, m_nBatch);
+		boolean bAdded = m_pRenderer->AddTriangles (m_Setup, m_pBatch, m_nBatch);
+		if (!bAdded && m_pJobFull)
+		{
+			// the frame is full: render what it has, then add these to the next job
+			(*m_pJobFull) (m_pJobFullParam);
+			bAdded = m_pRenderer->AddTriangles (m_Setup, m_pBatch, m_nBatch);
+		}
+		if (!bAdded)
+		{
+			m_pRenderer->Drop (m_nBatch / 3);
+		}
 		m_nBatch = 0;
 	}
 }

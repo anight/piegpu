@@ -172,6 +172,7 @@ static u8 *ConvertArray (CRenderer *pRenderer, const u8 *pSrc, unsigned nSrcStri
 CCommands::CCommands (CRenderer *pRenderer, CReceiver *pReceiver)
 :	m_pRenderer (pRenderer),
 	m_pReceiver (pReceiver),
+	m_pHostLink (nullptr),
 	m_Geometry (pRenderer, &m_Textures),
 	m_nBufferBytes (0),
 	m_nRetiredBuffers (0),
@@ -188,9 +189,12 @@ CCommands::CCommands (CRenderer *pRenderer, CReceiver *pReceiver)
 	memset (&m_Stats, 0, sizeof m_Stats);
 
 	memset (m_Framebuffers, 0, sizeof m_Framebuffers);
+	memset (m_SharedZS, 0, sizeof m_SharedZS);
 	memset (&m_FrameStats, 0, sizeof m_FrameStats);
+	memset (&m_Load, 0, sizeof m_Load);
 	m_bJobPending = m_bJobClearColor = m_bJobClearZS = FALSE;
 	m_bPanelDrawn = m_bPanelZSValid = FALSE;
+	m_Geometry.SetJobFullHandler (JobFullHandler, this);
 
 	DefaultState ();
 }
@@ -219,6 +223,11 @@ void CCommands::Reset (void)
 	for (unsigned i = 1; i <= MaxFramebuffers; i++)
 	{
 		FramebufferFree (&m_Framebuffers[i]);
+	}
+	for (unsigned i = 1; i <= MaxSharedZS; i++)
+	{
+		delete [] m_SharedZS[i].p;
+		memset (&m_SharedZS[i], 0, sizeof m_SharedZS[i]);
 	}
 	m_nFramebuffer = 0;
 	m_bJobPending = m_bJobClearColor = m_bJobClearZS = FALSE;
@@ -372,6 +381,15 @@ void CCommands::Execute (u32 nHeader, const u32 *pPayload)
 
 	u32 nDetail = 0;
 	u32 nError = Dispatch (nOpcode, pPayload, nLength, &nDetail);
+	if (   nError == PGPU_ERR_MEMORY && m_pRenderer->GetDraws ()
+	    && (   nOpcode == PGPU_OP_DRAW_ARRAYS || nOpcode == PGPU_OP_DRAW_ELEMENTS
+		|| nOpcode == PGPU_OP_PROGRAM_DRAW_INLINE || nOpcode == PGPU_OP_CLEAR))
+	{
+		// the frame's pools are full: render the job so far, draw into the next
+		FlushJob (FALSE);
+		nDetail = 0;
+		nError = Dispatch (nOpcode, pPayload, nLength, &nDetail);
+	}
 	if (nError)
 	{
 		if (nError == PGPU_ERR_LENGTH)
@@ -403,15 +421,20 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 		break;
 
 	case PGPU_OP_GET_STATUS: {
-		u32 Status[5] =
+		u32 Status[10] =
 		{
 			m_nTotalFrames,
 			m_pReceiver->GetTotalCRCErrors (),
 			m_nTotalErrors,
 			m_pReceiver->GetFreeBytes (),
-			m_nLastFrameUs
+			m_nLastFrameUs,
+			m_Load.nWindowUs,
+			m_Load.nFrames,
+			m_Load.nV3DBusyUs,
+			m_Load.nARMBusyUs,
+			m_Load.nPanelWaitUs
 		};
-		Reply (PGPU_REPLY_STATUS, Status, 5);
+		Reply (PGPU_REPLY_STATUS, Status, 10);
 		} break;
 
 	// frame
@@ -484,7 +507,7 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 			unsigned n = nWords - nOffset < 61 ? nWords - nOffset : 61;
 			Reply[0] = nOffset;
 			memcpy (Reply + 1, pPixels + nOffset, n * 4);
-			if (!m_pReceiver->SendReply (PGPU_REPLY_PIXELS, Reply, 1 + n))
+			if (!this->Reply (PGPU_REPLY_PIXELS, Reply, 1 + n))
 			{
 				m_pReceiver->UpdateTx ();		// backlog full: wait for the link
 				nRetries++;
@@ -563,12 +586,14 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 			return PGPU_ERR_LENGTH;
 		}
 		*pDetail = p[0];
+		FlushIfTarget (p[0] & 0xFFFF);
 		return m_Textures.Data (p[0] & 0xFFFF, (p[0] >> 16) & 0xFF, p[0] >> 24,
 					p[1] & 0xFFFF, p[1] >> 16, p[2] & 0xFFFF, p[2] >> 16,
 					p + 3, nLength - 3);
 
 	case PGPU_OP_GENERATE_MIPMAP:
 		*pDetail = p[0];
+		FlushIfTarget (p[0]);
 		return m_Textures.GenerateMipmap (p[0]);
 
 	case PGPU_OP_TEXTURE_PARAMS:
@@ -1392,7 +1417,17 @@ void CCommands::UpdateTarget (void)
 			S.nTargetHeight = nHeight;
 		}
 		S.bFlipY = FALSE;
-		S.bTargetAlpha = TRUE;
+		S.bTargetAlpha = m_Textures.TargetHasAlpha (F.nTexture);	// else DST_ALPHA is 1
+	}
+}
+
+// the texture is about to change on the ARM: draws into it that the bound
+// framebuffer collected come first (GL order)
+void CCommands::FlushIfTarget (u32 nTexture)
+{
+	if (m_nFramebuffer && m_Framebuffers[m_nFramebuffer].nTexture == nTexture)
+	{
+		FlushJob (FALSE);
 	}
 }
 
@@ -1437,17 +1472,18 @@ void CCommands::FlushJob (boolean bForce)
 		if (F.bDepthStencil)
 		{
 			unsigned nBytes = DEPTH_BUFFER_SIZE (T.nWidth, T.nHeight);
-			if (F.nZSBytes != nBytes)
+			TZSBuffer &ZS = ZSOf (F);
+			if (ZS.nBytes != nBytes)
 			{
-				delete [] F.pZS;
-				F.pZS = new u8[nBytes + 4096];
-				F.nZSBytes = nBytes;
-				F.bZSValid = FALSE;
+				delete [] ZS.p;
+				ZS.p = new u8[nBytes + 4096];
+				ZS.nBytes = nBytes;
+				ZS.bValid = FALSE;
 			}
-			T.nZSBus = CV3D::BusAddress ((void *) (((uintptr) F.pZS + 4095) & ~(uintptr) 4095));
+			T.nZSBus = CV3D::BusAddress ((void *) (((uintptr) ZS.p + 4095) & ~(uintptr) 4095));
 		}
 		nLoadColor = m_bJobClearColor ? 0 : T.nColorBus;
-		bLoadZS = !m_bJobClearZS && F.bZSValid;
+		bLoadZS = !m_bJobClearZS && F.bDepthStencil && ZSOf (F).bValid;
 	}
 
 	if (!m_pRenderer->RenderJob (T, nLoadColor, bLoadZS, m_JobClear, &m_FrameStats))
@@ -1463,11 +1499,20 @@ void CCommands::FlushJob (boolean bForce)
 	else
 	{
 		TFramebuffer &F = m_Framebuffers[m_nFramebuffer];
-		F.bZSValid = F.bDepthStencil;
+		if (F.bDepthStencil)
+		{
+			ZSOf (F).bValid = TRUE;
+		}
 		m_Textures.Invalidate (F.nTexture);	// written by the V3D
 	}
 
 	EndJob ();
+}
+
+// the fixed-function geometry found the frame full
+void CCommands::JobFullHandler (void *pParam)
+{
+	static_cast<CCommands *> (pParam)->FlushJob (FALSE);
 }
 
 // the job has rendered: storage replaced during it can be freed
@@ -1502,7 +1547,9 @@ u32 CCommands::Clear (u32 nMask, u32 nColor, float fDepth, u8 nStencil)
 		return 0;
 	}
 
-	boolean bZSValid = m_nFramebuffer ? m_Framebuffers[m_nFramebuffer].bZSValid : m_bPanelZSValid;
+	boolean bZSValid =   !m_nFramebuffer ? m_bPanelZSValid
+			   : m_Framebuffers[m_nFramebuffer].bDepthStencil
+			     && ZSOf (m_Framebuffers[m_nFramebuffer]).bValid;
 	boolean bFast =    !m_pRenderer->GetDraws ()
 			&& !(S.nEnables & PGPU_CAP_SCISSOR_TEST)
 			&& (!bColor || (S.nColorMask & 0xF) == 0xF)
@@ -1629,6 +1676,10 @@ u32 CCommands::ReadRect (s32 x, s32 y, unsigned nWidth, unsigned nHeight, u32 *p
 				else
 				{
 					nPixel = m_Textures.ReadRGBA (nTexture, nFace, px, py);
+					if (!m_Textures.TargetHasAlpha (nTexture))
+					{
+						nPixel |= 0xFFu << 24;		// RGB: alpha 1
+					}
 				}
 			}
 			pOut[row * nWidth + i] = nPixel;
@@ -1644,7 +1695,8 @@ u32 CCommands::FramebufferCreate (u32 nId, u32 nTexture, u32 nFlags)
 	{
 		return PGPU_ERR_ID;
 	}
-	if (nFlags & ~PGPU_FRAMEBUFFER_DEPTH_STENCIL)
+	unsigned nShared = PGPU_FRAMEBUFFER_SHARED_ZS (nFlags);
+	if ((nFlags & ~(PGPU_FRAMEBUFFER_DEPTH_STENCIL | 0xFF00)) || nShared > MaxSharedZS)
 	{
 		return PGPU_ERR_ENUM;
 	}
@@ -1659,6 +1711,7 @@ u32 CCommands::FramebufferCreate (u32 nId, u32 nTexture, u32 nFlags)
 	F.nTexture = nTexture & 0xFFFF;
 	F.nFace = nTexture >> 24;
 	F.bDepthStencil = !!(nFlags & PGPU_FRAMEBUFFER_DEPTH_STENCIL);
+	F.nSharedZS = F.bDepthStencil ? nShared : 0;
 	if (nId == m_nFramebuffer)
 	{
 		UpdateTarget ();
@@ -1669,13 +1722,18 @@ u32 CCommands::FramebufferCreate (u32 nId, u32 nTexture, u32 nFlags)
 
 void CCommands::FramebufferFree (TFramebuffer *F)
 {
-	delete [] F->pZS;
+	delete [] F->ZS.p;
 	memset (F, 0, sizeof *F);
 }
 
-void CCommands::Reply (u8 uchOpcode, const u32 *pPayload, unsigned nLength)
+boolean CCommands::Reply (u8 uchOpcode, const u32 *pPayload, unsigned nLength)
 {
-	m_pReceiver->SendReply (uchOpcode, pPayload, nLength);
+	if (m_pHostLink)
+	{
+		return m_pHostLink->SendReply (uchOpcode, pPayload, nLength);
+	}
+
+	return m_pReceiver->SendReply (uchOpcode, pPayload, nLength);
 }
 
 void CCommands::Error (u32 nCode, u32 nOpcode, u32 nDetail)
@@ -1784,7 +1842,8 @@ boolean CCommands::GetViewport (TViewport *pVP) const
 }
 
 // resolve a shader's uniform stream into the frame's uniform pool
-u32 *CCommands::BuildUniforms (const TProgram *pProgram, const TProgramShader *pShader,
+// *pStorageBus: a copy of the uniform storage for this draw (0: not made yet)
+u32 *CCommands::BuildUniforms (const TProgram *pProgram, const TProgramShader *pShader, u32 *pStorageBus,
 			       const TViewport &rVP, u32 *pBus)
 {
 	u32 *pStream = m_pRenderer->AllocUniforms (pShader->nUniforms ? pShader->nUniforms : 1, pBus);
@@ -1809,6 +1868,19 @@ u32 *CCommands::BuildUniforms (const TProgram *pProgram, const TProgramShader *p
 		case PGPU_U_VIEWPORT_Z_OFFSET:	memcpy (&nValue, &rVP.fZOffset, 4); break;
 		case PGPU_U_VIEWPORT_Z_SCALE:	memcpy (&nValue, &rVP.fZScale, 4); break;
 		case PGPU_U_UNIFORMS_ADDRESS:	nValue = *pBus; break;
+
+		case PGPU_U_UBO0_ADDR:		// the TMU reads the storage when the frame renders
+			if (!*pStorageBus)
+			{
+				u8 *pCopy = m_pRenderer->AllocData (pProgram->nUniformWords * 4, pStorageBus);
+				if (!pCopy)
+				{
+					return nullptr;
+				}
+				memcpy (pCopy, pProgram->pUniforms, pProgram->nUniformWords * 4);
+			}
+			nValue = *pStorageBus + nData;
+			break;
 
 		case PGPU_U_TEXTURE_CONFIG_P0:
 		case PGPU_U_TEXTURE_CONFIG_P1:
@@ -1848,6 +1920,8 @@ u32 *CCommands::BuildUniforms (const TProgram *pProgram, const TProgramShader *p
 			} break;
 
 		case PGPU_U_POINT_Y_TRANSFORM: {	// upper-left origin (flipped when rows go top down)
+			// (Mesa 26's vc4 compiles the origin into the FS instead:
+			// PGPU_VK_TEXTURE_TARGET variants)
 			const float Flipped[4] = {-1.0f, 1.0f, 0.0f, 0.0f}, Straight[4] = {1.0f, 0.0f, 0.0f, 0.0f};
 			memcpy (&nValue, m_State.bFlipY ? &Flipped[nData] : &Straight[nData], 4);
 			} break;
@@ -1963,7 +2037,8 @@ u32 CCommands::ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
 	}
 	unsigned nPrim =   nMode == PGPU_POINTS ? PGPU_PRIM_POINTS
 			 : nMode <= PGPU_LINE_STRIP ? PGPU_PRIM_LINES : PGPU_PRIM_TRIANGLES;
-	const TProgramVariant *pVariant = CPrograms::FindVariant (pProgram, nPrim, BlendMode ());
+	const TProgramVariant *pVariant = CPrograms::FindVariant (pProgram, nPrim, BlendMode (),
+								  !m_State.bFlipY);
 	if (!pVariant)
 	{
 		*pDetail = 2;
@@ -2197,9 +2272,10 @@ u32 CCommands::ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
 	// uniform streams
 	CGeometry::BlendCoefficients (m_State, m_State.bTargetAlpha, m_BlendK);
 	u32 nFSUniforms, nVSUniforms, nCSUniforms;
-	if (   !BuildUniforms (pProgram, pVariant->pFS, VP, &nFSUniforms)
-	    || !BuildUniforms (pProgram, pVariant->pVS, VP, &nVSUniforms)
-	    || !BuildUniforms (pProgram, pVariant->pCS, VP, &nCSUniforms))
+	u32 nStorageBus = 0;
+	if (   !BuildUniforms (pProgram, pVariant->pFS, &nStorageBus, VP, &nFSUniforms)
+	    || !BuildUniforms (pProgram, pVariant->pVS, &nStorageBus, VP, &nVSUniforms)
+	    || !BuildUniforms (pProgram, pVariant->pCS, &nStorageBus, VP, &nCSUniforms))
 	{
 		return PGPU_ERR_MEMORY;
 	}

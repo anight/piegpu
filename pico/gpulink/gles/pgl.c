@@ -13,17 +13,27 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "pico/stdlib.h"
 #include "pgpu.h"
+#include "pgpu_link.h"
 #include "pgpu_program.h"
 #include "pgpu_program_info.h"
+#include "pgl_compiler.h"
 
 /* ---- limits -------------------------------------------------------------------- */
 
 #define MAX_BUFFER_NAMES	250		/* Zero ids 1 .. 250 */
+#ifndef PGL_SHADOW_LIMIT
+#define PGL_SHADOW_LIMIT	16384		/* copies of buffers kept up to this size (0: all) */
+#endif
 #define HW_STREAM_VERTEX	251		/* fixed-function client arrays */
 #define HW_STREAM_INDEX		252		/* fixed-function client indices */
-#define MAX_TEXTURE_NAMES	120		/* Zero ids 1 .. 120 */
+#define HW_TEMP_VERTEX		253		/* program draws too large for a packet */
+#define HW_TEMP_INDEX		254
+#define MAX_TEXTURE_NAMES	110		/* Zero ids 1 .. 110 */
+#define TEX_DEFAULT_2D		111		/* texture object 0 of each target */
+#define TEX_DEFAULT_CUBE	112
+#define HW_SCRATCH_BASE		112		/* colour for framebuffers without: 113 .. 120 */
+#define SCRATCH_TEXTURES	8
 #define MAX_RENDERBUFFER_NAMES	8		/* colour storage: Zero textures 121 .. 128 */
 #define HW_RENDERBUFFER_BASE	120
 #define MAX_FRAMEBUFFER_NAMES	16		/* Zero ids 1 .. 16 */
@@ -45,7 +55,8 @@
 
 typedef struct
 {
-	bool used;
+	bool used;			/* name generated or bound */
+	bool bound;			/* an object (GL: created by the first bind) */
 	GLsizeiptr size;
 	GLenum usage;
 	uint8_t *shadow;		/* copy of index data (ELEMENT_ARRAY_BUFFER uploads) */
@@ -64,12 +75,21 @@ typedef struct
 	uint32_t generation;		/* TEXTURE_CREATE count (framebuffers follow it) */
 	GLenum min_filter, mag_filter, wrap_s, wrap_t;
 	bool generate_mipmap;		/* GL ES 1.1 GL_GENERATE_MIPMAP */
+	bool empty;			/* level 0 has no texels (0 x n): incomplete */
+	uint8_t faces;			/* the faces whose level 0 is defined (2D: bit 0) */
+	bool orphan;			/* deleted, still attached to a framebuffer */
+	GLuint orphan_name;		/* its GL name then (attachment queries) */
+	uint16_t bad_levels;		/* mipmap levels not fitting level 0: incomplete
+					   with a mipmap filter (pgl ignores their data) */
 } texture_t;
 
 typedef struct
 {
-	bool used;
+	bool used;			/* name generated or bound */
+	bool bound;			/* an object (GL: created by the first bind) */
 	GLenum format;			/* 0: no storage */
+	bool orphan;			/* deleted, still attached to a framebuffer */
+	GLuint orphan_name;		/* its GL name then (attachment queries) */
 	uint16_t width, height;
 	uint32_t generation;
 } renderbuffer_t;
@@ -86,10 +106,13 @@ typedef struct
 
 typedef struct
 {
-	bool used;
+	bool used;			/* name generated or bound */
+	bool bound;			/* an object (GL: created by the first bind) */
 	attachment_t att[ATTACHMENTS];
 	bool created;			/* on the Zero, with: */
 	uint32_t sent_texture, sent_flags, sent_generation;
+	uint8_t scratch;		/* colour texture when none is attached (0: none) */
+	uint16_t scratch_width, scratch_height;
 } framebuffer_t;
 
 enum { OBJ_NONE, OBJ_SHADER, OBJ_PROGRAM };
@@ -101,6 +124,11 @@ typedef struct
 	/* shader */
 	GLenum shader_type;
 	uint16_t attached;		/* number of programs it is attached to */
+	const pgpu_program_info_t *binary;	/* from glShaderBinary */
+	char *source;			/* glShaderSource (with a compiler) */
+	char *compiled_source;		/* of the last successful compile */
+	bool compiled;
+	char *log_buf;			/* info log (shader: compile, program: link) */
 	/* program */
 	uint8_t hw;			/* Zero id, 0 = none */
 	bool linked;
@@ -111,6 +139,9 @@ typedef struct
 	uint16_t *first;		/* per uniform: index of its first value */
 	uint8_t units[PGPU_MAX_SAMPLERS];
 	GLuint shaders[2];
+	pgpu_program_info_t *compiled_info;	/* linked from source (pglc_free) */
+	struct attrib_binding { char *name; GLuint index; } *bindings;	/* glBindAttribLocation */
+	unsigned n_bindings;
 } object_t;
 
 typedef struct
@@ -145,10 +176,20 @@ static struct
 	uint16_t width, height;		/* the panel */
 
 	uint32_t errors;		/* GL error flags: bit (error - GL_INVALID_ENUM) */
+	uint32_t synced_packets;	/* pgpu_packets_sent () at the last error sync */
+	bool debug;			/* PGL_DEBUG set: print the Zero's errors */
 	uint32_t zero_error[3];
 
+	/* GL names -> slots (the index of these arrays, and the Zero id where it
+	   is the same): GL allows any name, created by glBind* */
+	GLuint buffer_names[MAX_BUFFER_NAMES + 1];
+	GLuint texture_names[MAX_TEXTURE_NAMES + 1];
+	GLuint renderbuffer_names[MAX_RENDERBUFFER_NAMES + 1];
+	GLuint framebuffer_names[MAX_FRAMEBUFFER_NAMES + 1];
+
 	buffer_t buffers[MAX_BUFFER_NAMES + 1];
-	texture_t textures[MAX_TEXTURE_NAMES + 1];
+	texture_t textures[TEX_DEFAULT_CUBE + 1];	/* and the default objects */
+	GLuint scratch_owner[SCRATCH_TEXTURES];	/* framebuffer using each scratch texture */
 	renderbuffer_t renderbuffers[MAX_RENDERBUFFER_NAMES + 1];
 	framebuffer_t framebuffers[MAX_FRAMEBUFFER_NAMES + 1];
 	object_t objects[MAX_OBJECT_NAMES + 1];
@@ -168,7 +209,7 @@ static struct
 	uint32_t caps;			/* PGPU_CAP_* as the application set them */
 	bool texture_2d[UNITS];		/* GL_TEXTURE_2D per unit (unit 0 drives the cap) */
 	bool normalize, rescale_normal;
-	bool sample_alpha_to_coverage, sample_coverage, point_smooth, line_smooth;
+	bool dither, sample_alpha_to_coverage, sample_coverage, point_smooth, line_smooth;
 	bool multisample, sample_alpha_to_one;
 
 	/* fragment state */
@@ -319,6 +360,11 @@ static unsigned drain_zero_errors (uint32_t program_hw)
 	uint32_t e[3];
 	while (pgpu_poll_error (e))
 	{
+		if (S.debug)
+		{
+			fprintf (stderr, "pgl: Zero error %lu, opcode %02lx, detail %lu\n", (unsigned long) e[0],
+				 (unsigned long) e[1], (unsigned long) e[2]);
+		}
 		memcpy (S.zero_error, e, sizeof e);
 		if (   program_hw
 		    && (e[1] == PGPU_OP_PROGRAM_CREATE || e[1] == PGPU_OP_PROGRAM_DATA))
@@ -331,9 +377,23 @@ static unsigned drain_zero_errors (uint32_t program_hw)
 	return program_errors;
 }
 
+/* errors the Zero finds come back as ERROR replies: wait for those of the
+   commands sent so far (a PING round trip, only if anything was sent) */
+static void sync_errors (void)
+{
+	if (pgpu_packets_sent () != S.synced_packets)
+	{
+		static uint32_t cookie = 0x9E000000u;
+		pgpu_ping_wait (++cookie, 1000);
+		pgpu_link_settle ();
+		S.synced_packets = pgpu_packets_sent ();
+	}
+	drain_zero_errors (0);
+}
+
 GLenum glGetError (void)
 {
-	drain_zero_errors (0);
+	sync_errors ();
 	for (unsigned bit = 0; bit < 7; bit++)
 	{
 		if (S.errors & (1u << bit))
@@ -347,7 +407,7 @@ GLenum glGetError (void)
 
 void pglGetZeroError (uint32_t error[3])
 {
-	drain_zero_errors (0);
+	sync_errors ();
 	memcpy (error, S.zero_error, sizeof S.zero_error);
 }
 
@@ -362,7 +422,7 @@ void glFinish (void)
 	   ERROR replies of those commands come before it */
 	static uint32_t cookie = 0x9C000000u;
 	pgpu_ping_wait (++cookie, 1000);
-	sleep_ms (2);			/* the reply parser runs every millisecond */
+	pgpu_link_settle ();
 	drain_zero_errors (0);
 }
 
@@ -376,8 +436,18 @@ static void free_objects (void)
 	}
 	for (unsigned i = 1; i <= MAX_OBJECT_NAMES; i++)
 	{
-		free (S.objects[i].values);
-		free (S.objects[i].first);
+		object_t *o = &S.objects[i];
+		free (o->values);
+		free (o->first);
+		free (o->source);
+		free (o->compiled_source);
+		free (o->log_buf);
+		pglc_free (o->compiled_info);
+		for (unsigned b = 0; b < o->n_bindings; b++)
+		{
+			free (o->bindings[b].name);
+		}
+		free (o->bindings);
 	}
 }
 
@@ -396,6 +466,8 @@ static void default_light (light_t *l, int i)
 	l->attenuation[0] = 1.0f;
 	l->attenuation[1] = l->attenuation[2] = 0.0f;
 }
+
+static void texture_take (unsigned n);
 
 bool pglInit (void)
 {
@@ -441,8 +513,18 @@ bool pglInit (void)
 	S.generate_mipmap_hint = S.perspective_hint = S.point_smooth_hint = GL_DONT_CARE;
 	S.line_smooth_hint = S.fog_hint = GL_DONT_CARE;
 	S.pack_alignment = S.unpack_alignment = 4;
-	S.multisample = true;
-	S.caps = S.sent_caps = PGPU_CAP_DITHER;		/* GL's default, and the Zero's */
+	S.multisample = S.dither = true;
+	S.debug = getenv ("PGL_DEBUG") != NULL;
+	/* GL_DITHER has no effect: the V3D's dither moves values by up to two
+	   steps (0 becomes 2 of 31, measured), where GL allows one of the two
+	   nearest values (GL ES 2.0 4.1.7); without it, the V3D truncates, which
+	   is what GL does without dithering */
+	pgpu_disable (PGPU_CAP_DITHER);
+	S.sent_caps = 0;
+	texture_take (TEX_DEFAULT_2D);
+	S.textures[TEX_DEFAULT_2D].target = TEX_2D;
+	texture_take (TEX_DEFAULT_CUBE);
+	S.textures[TEX_DEFAULT_CUBE].target = TEX_CUBE;
 
 	S.matrix_mode = GL_MODELVIEW;
 	mat_identity (S.modelview[0]);
@@ -645,7 +727,6 @@ static uint32_t cap_bit (GLenum cap)
 	case GL_SCISSOR_TEST:		return PGPU_CAP_SCISSOR_TEST;
 	case GL_POLYGON_OFFSET_FILL:	return PGPU_CAP_POLYGON_OFFSET_FILL;
 	case GL_STENCIL_TEST:		return PGPU_CAP_STENCIL_TEST;
-	case GL_DITHER:			return PGPU_CAP_DITHER;
 	default:			return 0;
 	}
 }
@@ -656,6 +737,7 @@ static bool *cap_flag (GLenum cap)
 	switch (cap)
 	{
 	case GL_TEXTURE_2D:			return &S.texture_2d[S.active_unit];
+	case GL_DITHER:				return &S.dither;
 	case GL_NORMALIZE:			return &S.normalize;
 	case GL_RESCALE_NORMAL:			return &S.rescale_normal;
 	case GL_SAMPLE_ALPHA_TO_COVERAGE:	return &S.sample_alpha_to_coverage;
@@ -761,6 +843,12 @@ static bool texture_has_alpha (uint8_t format)
 	return format == PGPU_RGBA8888 || format == PGPU_RGBA4444 || format == PGPU_RGBA5551;
 }
 
+/* colour-renderable texture formats (RGB ones read alpha 1 on the Zero) */
+static bool texture_renderable (uint8_t format)
+{
+	return texture_has_alpha (format) || format == PGPU_RGB888 || format == PGPU_RGB565;
+}
+
 /* status of a framebuffer object; its size and colour target */
 static GLenum framebuffer_status (const framebuffer_t *fb, unsigned *w, unsigned *h,
 				  uint32_t *hw_texture, uint32_t *generation)
@@ -781,11 +869,11 @@ static GLenum framebuffer_status (const framebuffer_t *fb, unsigned *w, unsigned
 		if (a->type == GL_TEXTURE)
 		{
 			const texture_t *t = &S.textures[a->name];
-			if (a->name == 0 || a->name > MAX_TEXTURE_NAMES || !t->used || !t->storage)
+			if (a->name == 0 || a->name > MAX_TEXTURE_NAMES || !t->used || !t->storage || t->empty)
 			{
 				return GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT;
 			}
-			if (i != ATT_COLOR || a->level != 0 || !texture_has_alpha (t->format))
+			if (i != ATT_COLOR || a->level != 0 || !texture_renderable (t->format))
 			{
 				return GL_FRAMEBUFFER_UNSUPPORTED;
 			}
@@ -819,11 +907,6 @@ static GLenum framebuffer_status (const framebuffer_t *fb, unsigned *w, unsigned
 	{
 		return GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT;
 	}
-	if (c->type == GL_NONE)
-	{
-		return GL_FRAMEBUFFER_UNSUPPORTED;	/* the Zero renders to a colour target */
-	}
-
 	if (w)
 	{
 		*w = width;
@@ -831,7 +914,12 @@ static GLenum framebuffer_status (const framebuffer_t *fb, unsigned *w, unsigned
 	}
 	if (hw_texture)
 	{
-		if (c->type == GL_TEXTURE)
+		if (c->type == GL_NONE)
+		{
+			*hw_texture = 0;		/* validate_framebuffer adds a scratch colour */
+			*generation = 0;
+		}
+		else if (c->type == GL_TEXTURE)
 		{
 			*hw_texture = c->name | (uint32_t) c->face << 24;
 			*generation = S.textures[c->name].generation;
@@ -865,6 +953,11 @@ static bool target_has_stencil (void)
 	return s->type == GL_RENDERBUFFER && rb_has_stencil (S.renderbuffers[s->name].format);
 }
 
+static bool target_has_color (void)
+{
+	return !S.framebuffer || S.framebuffers[S.framebuffer].att[ATT_COLOR].type != GL_NONE;
+}
+
 static bool target_has_alpha (void)
 {
 	if (!S.framebuffer)
@@ -872,6 +965,10 @@ static bool target_has_alpha (void)
 		return false;
 	}
 	const attachment_t *c = &S.framebuffers[S.framebuffer].att[ATT_COLOR];
+	if (c->type == GL_NONE)
+	{
+		return false;
+	}
 	if (c->type == GL_TEXTURE)
 	{
 		return texture_has_alpha (S.textures[c->name].format);
@@ -881,18 +978,82 @@ static bool target_has_alpha (void)
 }
 
 /* the bound framebuffer on the Zero, with its current attachments */
+static void release_render_target (uint32_t hw);
+
+/* the Zero renders to a colour target: a framebuffer with only depth and/or
+   stencil gets a scratch colour texture (writes to it can't be seen) */
+static uint32_t scratch_texture (GLuint name, framebuffer_t *fb, unsigned w, unsigned h)
+{
+	if (!fb->scratch)
+	{
+		for (unsigned i = 0; i < SCRATCH_TEXTURES && !fb->scratch; i++)
+		{
+			if (!S.scratch_owner[i])
+			{
+				S.scratch_owner[i] = name;
+				fb->scratch = HW_SCRATCH_BASE + 1 + i;
+				fb->scratch_width = fb->scratch_height = 0;
+			}
+		}
+		if (!fb->scratch)
+		{
+			return 0;
+		}
+	}
+	if (fb->scratch_width != w || fb->scratch_height != h)
+	{
+		release_render_target (fb->scratch);
+		pgpu_texture_create (fb->scratch, w, h, PGPU_RGBA8888);
+		fb->scratch_width = w;
+		fb->scratch_height = h;
+	}
+	return fb->scratch;
+}
+
+static void free_scratch (framebuffer_t *fb)
+{
+	if (fb->scratch)
+	{
+		release_render_target (fb->scratch);
+		pgpu_texture_delete (fb->scratch);
+		S.scratch_owner[fb->scratch - HW_SCRATCH_BASE - 1] = 0;
+		fb->scratch = 0;
+	}
+}
+
 static bool validate_framebuffer (void)
 {
 	if (S.framebuffer)
 	{
 		framebuffer_t *fb = &S.framebuffers[S.framebuffer];
 		uint32_t texture = 0, generation = 0;
-		if (framebuffer_status (fb, NULL, NULL, &texture, &generation) != GL_FRAMEBUFFER_COMPLETE)
+		unsigned w = 0, h = 0;
+		if (framebuffer_status (fb, &w, &h, &texture, &generation) != GL_FRAMEBUFFER_COMPLETE)
 		{
 			ERROR_RET (GL_INVALID_FRAMEBUFFER_OPERATION, false);
 		}
-		uint32_t flags = target_has_depth () || target_has_stencil ()
-				 ? PGPU_FRAMEBUFFER_DEPTH_STENCIL : 0;
+		if (!texture)
+		{
+			texture = scratch_texture (S.framebuffer, fb, w, h);
+			generation = w | h << 16;
+			if (!texture)
+			{
+				ERROR_RET (GL_OUT_OF_MEMORY, false);
+			}
+		}
+		else
+		{
+			free_scratch (fb);
+		}
+		/* depth and stencil live in the renderbuffer: framebuffers with the
+		   same one share them (the Zero keeps depth and stencil together:
+		   the depth renderbuffer names them, else the stencil one) */
+		uint32_t flags = 0;
+		if (target_has_depth () || target_has_stencil ())
+		{
+			GLuint rb = fb->att[target_has_depth () ? ATT_DEPTH : ATT_STENCIL].name;
+			flags = PGPU_FRAMEBUFFER_DEPTH_STENCIL | PGPU_FRAMEBUFFER_SHARED (rb);
+		}
 		if (   !fb->created || fb->sent_texture != texture || fb->sent_flags != flags
 		    || fb->sent_generation != generation)
 		{
@@ -944,44 +1105,117 @@ static void validate_caps (void)
 
 /* ---- buffers ----------------------------------------------------------------------------- */
 
-static void gen_names (GLsizei n, GLuint *names, unsigned max, bool (*used) (unsigned),
-		       void (*take) (unsigned))
+/* ---- names: a table per object type, slot -> GL name (0: free) ---- */
+
+enum { NAMES_BUFFER, NAMES_TEXTURE, NAMES_RENDERBUFFER, NAMES_FRAMEBUFFER };
+
+static GLuint *name_table (int kind, unsigned *max)
+{
+	switch (kind)
+	{
+	case NAMES_BUFFER:	*max = MAX_BUFFER_NAMES;	return S.buffer_names;
+	case NAMES_TEXTURE:	*max = MAX_TEXTURE_NAMES;	return S.texture_names;
+	case NAMES_RENDERBUFFER: *max = MAX_RENDERBUFFER_NAMES;	return S.renderbuffer_names;
+	default:		*max = MAX_FRAMEBUFFER_NAMES;	return S.framebuffer_names;
+	}
+}
+
+/* the slot of a GL name, 0 if it has none */
+static unsigned slot_of (int kind, GLuint name)
+{
+	unsigned max;
+	const GLuint *names = name_table (kind, &max);
+	for (unsigned slot = 1; name && slot <= max; slot++)
+	{
+		if (names[slot] == name)
+		{
+			return slot;
+		}
+	}
+	return 0;
+}
+
+/* the GL name of a slot (0 for slot 0) */
+static GLuint name_of (int kind, unsigned slot)
+{
+	unsigned max;
+	return slot ? name_table (kind, &max)[slot] : 0;
+}
+
+/* an object without a name still in use (deleted, but attached) */
+static bool slot_busy (int kind, unsigned slot)
+{
+	switch (kind)
+	{
+	case NAMES_BUFFER:		return S.buffers[slot].used;
+	case NAMES_TEXTURE:		return S.textures[slot].used;
+	case NAMES_RENDERBUFFER:	return S.renderbuffers[slot].used;
+	default:			return S.framebuffers[slot].used;
+	}
+}
+
+/* the slot of a name, a free one if it has none; 0 if all are taken */
+static unsigned slot_for (int kind, GLuint name)
+{
+	unsigned slot = slot_of (kind, name), max;
+	GLuint *names = name_table (kind, &max);
+	for (unsigned s = 1; !slot && s <= max; s++)
+	{
+		if (!names[s] && !slot_busy (kind, s))
+		{
+			names[s] = name;
+			slot = s;
+		}
+	}
+	return slot;
+}
+
+static void free_name (int kind, unsigned slot)
+{
+	unsigned max;
+	name_table (kind, &max)[slot] = 0;
+}
+
+static void gen_names (GLsizei n, GLuint *out, int kind, void (*take) (unsigned))
 {
 	if (n < 0)
 	{
 		ERROR (GL_INVALID_VALUE);
 	}
-	unsigned next = 1;
 	for (GLsizei i = 0; i < n; i++)
 	{
-		while (next <= max && used (next))
+		GLuint name = 1;
+		while (slot_of (kind, name))
 		{
-			next++;
+			name++;			/* the lowest name not in use */
 		}
-		if (next > max)
+		unsigned slot = slot_for (kind, name);
+		if (!slot)
 		{
 			for (GLsizei j = i; j < n; j++)
 			{
-				names[j] = 0;
+				out[j] = 0;
 			}
-			ERROR (GL_OUT_OF_MEMORY);
+			ERROR (GL_OUT_OF_MEMORY);	/* pgl's tables are full */
 		}
-		take (next);
-		names[i] = next++;
+		take (slot);
+		out[i] = name;
 	}
 }
 
-static bool buffer_used (unsigned n)	{ return S.buffers[n].used; }
+/* ---- buffers ---- */
+
 static void buffer_take (unsigned n)	{ S.buffers[n].used = true; }
 
 void glGenBuffers (GLsizei n, GLuint *buffers)
 {
-	gen_names (n, buffers, MAX_BUFFER_NAMES, buffer_used, buffer_take);
+	gen_names (n, buffers, NAMES_BUFFER, buffer_take);
 }
 
 GLboolean glIsBuffer (GLuint buffer)
 {
-	return buffer && buffer <= MAX_BUFFER_NAMES && S.buffers[buffer].used;
+	unsigned slot = slot_of (NAMES_BUFFER, buffer);
+	return slot && S.buffers[slot].bound;
 }
 
 void glBindBuffer (GLenum target, GLuint buffer)
@@ -990,13 +1224,15 @@ void glBindBuffer (GLenum target, GLuint buffer)
 	{
 		ERROR (GL_INVALID_ENUM);
 	}
-	if (buffer > MAX_BUFFER_NAMES)
-	{
-		ERROR (GL_OUT_OF_MEMORY);	/* pgl has no object for this name */
-	}
 	if (buffer)
 	{
-		S.buffers[buffer].used = true;
+		unsigned slot = slot_for (NAMES_BUFFER, buffer);
+		if (!slot)
+		{
+			ERROR (GL_OUT_OF_MEMORY);	/* pgl's table is full */
+		}
+		buffer = slot;
+		S.buffers[buffer].used = S.buffers[buffer].bound = true;
 	}
 	if (target == GL_ARRAY_BUFFER)
 	{
@@ -1048,10 +1284,11 @@ void glBufferData (GLenum target, GLsizeiptr size, const void *data, GLenum usag
 
 	free (b->shadow);
 	b->shadow = NULL;
-	if (target == GL_ELEMENT_ARRAY_BUFFER)
+	if (target == GL_ELEMENT_ARRAY_BUFFER || PGL_SHADOW_LIMIT == 0 || size <= PGL_SHADOW_LIMIT)
 	{
 		/* for draws that combine client-side vertex arrays with an index
-		   buffer: the vertex range is taken from the indices */
+		   buffer: the vertex range is taken from the indices (a buffer
+		   uploaded as vertex data may be used as index buffer later) */
 		b->shadow = calloc (1, size ? size : 1);
 		if (!b->shadow)
 		{
@@ -1101,8 +1338,8 @@ void glDeleteBuffers (GLsizei n, const GLuint *buffers)
 	}
 	for (GLsizei i = 0; i < n; i++)
 	{
-		GLuint name = buffers[i];
-		if (!name || name > MAX_BUFFER_NAMES || !S.buffers[name].used)
+		GLuint name = slot_of (NAMES_BUFFER, buffers[i]);
+		if (!name || !S.buffers[name].used)
 		{
 			continue;
 		}
@@ -1134,6 +1371,7 @@ void glDeleteBuffers (GLsizei n, const GLuint *buffers)
 		}
 		free (S.buffers[name].shadow);
 		memset (&S.buffers[name], 0, sizeof S.buffers[name]);
+		free_name (NAMES_BUFFER, name);
 		for (int a = 0; a < ATTRIBS; a++)
 		{
 			if (S.sent_attribs[a].buffer == name)
@@ -1169,7 +1407,6 @@ void glGetBufferParameteriv (GLenum target, GLenum pname, GLint *params)
 
 /* ---- textures ------------------------------------------------------------------------------ */
 
-static bool texture_used (unsigned n)	{ return S.textures[n].used; }
 
 static void texture_take (unsigned n)
 {
@@ -1183,12 +1420,13 @@ static void texture_take (unsigned n)
 
 void glGenTextures (GLsizei n, GLuint *textures)
 {
-	gen_names (n, textures, MAX_TEXTURE_NAMES, texture_used, texture_take);
+	gen_names (n, textures, NAMES_TEXTURE, texture_take);
 }
 
 GLboolean glIsTexture (GLuint texture)
 {
-	return texture && texture <= MAX_TEXTURE_NAMES && S.textures[texture].used
+	texture = slot_of (NAMES_TEXTURE, texture);
+	return texture && S.textures[texture].used
 	       && S.textures[texture].target != TEX_NONE;
 }
 
@@ -1208,12 +1446,14 @@ void glBindTexture (GLenum target, GLuint texture)
 	{
 		ERROR (GL_INVALID_ENUM);
 	}
-	if (texture > MAX_TEXTURE_NAMES)
-	{
-		ERROR (GL_OUT_OF_MEMORY);
-	}
 	if (texture)
 	{
+		unsigned slot = slot_for (NAMES_TEXTURE, texture);
+		if (!slot)
+		{
+			ERROR (GL_OUT_OF_MEMORY);	/* pgl's table is full */
+		}
+		texture = slot;
 		texture_t *t = &S.textures[texture];
 		if (!t->used)
 		{
@@ -1268,7 +1508,7 @@ static texture_t *texture_for_target (GLenum target, GLuint *name, unsigned *fac
 	*name = tt == TEX_2D ? S.bound_2d[S.active_unit] : S.bound_cube[S.active_unit];
 	if (!*name)
 	{
-		ERROR_RET (GL_INVALID_OPERATION, NULL);	/* pgl has no default texture objects */
+		*name = tt == TEX_2D ? TEX_DEFAULT_2D : TEX_DEFAULT_CUBE;	/* texture object 0 */
 	}
 	return &S.textures[*name];
 }
@@ -1296,7 +1536,7 @@ static void release_render_target (uint32_t hw)
 /* define level `level` with this size and format: create the Zero texture if
    needed; false if the level can't be stored (inconsistent with level 0:
    the texture is incomplete in GL, and pgl ignores the level) */
-static bool define_level (GLuint name, texture_t *t, GLint level, GLsizei w, GLsizei h,
+static bool define_level (GLuint name, texture_t *t, unsigned face, GLint level, GLsizei w, GLsizei h,
 			  uint8_t format, GLenum gl_format, GLenum gl_type)
 {
 	bool cube = t->target == TEX_CUBE;
@@ -1318,25 +1558,66 @@ static bool define_level (GLuint name, texture_t *t, GLint level, GLsizei w, GLs
 			t->gl_format = gl_format;
 			t->gl_type = gl_type;
 			t->generation++;
+			t->bad_levels = 0;
+			t->faces = 0;			/* the other faces are gone */
 			send_texture_params (name);
+		}
+		if (level == 0)
+		{
+			t->empty = false;
+			t->faces |= 1u << face;
 		}
 		return true;
 	}
 
-	/* a mipmap level: the Zero has them for power-of-two sizes */
-	if (!is_pot (t->width) || !is_pot (t->height) || format != t->format)
+	/* a mipmap level: the Zero has them for power-of-two sizes (a mipmapped
+	   non-power-of-two texture is incomplete in GL ES 2.0 anyway) */
+	if (!is_pot (t->width) || !is_pot (t->height))
 	{
 		return false;
 	}
 	unsigned lw = t->width >> level, lh = t->height >> level;
-	return (lw ? lw : 1) == (unsigned) w && (lh ? lh : 1) == (unsigned) h
-	       && (t->width >> level || t->height >> level);
+	bool in_chain = lw || lh;
+	bool fits = format == t->format && (lw ? lw : 1) == (unsigned) w && (lh ? lh : 1) == (unsigned) h
+		    && in_chain;
+	if (in_chain)
+	{
+		/* a level that doesn't fit makes the texture incomplete (GL ES 2.0
+		   3.7.10) until it is specified again */
+		t->bad_levels = fits ? t->bad_levels & ~(1u << level) : t->bad_levels | 1u << level;
+	}
+	return fits;
+}
+
+/* a level of zero size (0 x n) */
+static void empty_level (texture_t *t, unsigned face, GLint level)
+{
+	if (level == 0)
+	{
+		t->empty = true;
+		t->faces &= ~(1u << face);
+	}
+	else if (t->storage && is_pot (t->width) && is_pot (t->height)
+		 && (t->width >> level || t->height >> level))
+	{
+		t->bad_levels |= 1u << level;
+	}
+}
+
+/* complete as far as pgl knows (the Zero checks the rest: defined levels,
+   NPOT rules) */
+static bool texture_usable (const texture_t *t)
+{
+	bool mipmap = t->min_filter != GL_NEAREST && t->min_filter != GL_LINEAR;
+	return    t->storage && !t->empty && !(mipmap && t->bad_levels)
+	       && t->faces == (t->target == TEX_CUBE ? 0x3F : 1);	/* cube complete (3.7.10) */
 }
 
 static bool check_level_size (GLenum target, GLint level, GLsizei w, GLsizei h, GLint border)
 {
 	if (level < 0 || level >= MAX_LEVELS || w < 0 || h < 0 || border != 0
-	    || w > (MAX_SIZE >> level) || h > (MAX_SIZE >> level))
+	    || w > (MAX_SIZE >> level) || h > (MAX_SIZE >> level)
+	    || (level > 0 && (!is_pot (w) || !is_pot (h))))		/* GL ES 2.0 3.7.1 */
 	{
 		ERROR_RET (GL_INVALID_VALUE, false);
 	}
@@ -1345,6 +1626,67 @@ static bool check_level_size (GLenum target, GLint level, GLsizei w, GLsizei h, 
 		ERROR_RET (GL_INVALID_VALUE, false);
 	}
 	return true;
+}
+
+/* texels of the formats with several GL types (RGBA: 8888, 4444, 5551; RGB:
+   888, 565) to and from 8-bit RGBA, as the Zero converts them */
+static void unpack_texel (int format, const uint8_t *p, uint8_t rgba[4])
+{
+	uint32_t v = p[0] | (format_bytes[format] > 1 ? p[1] << 8 : 0);
+	switch (format)
+	{
+	case PGPU_RGBA8888:	memcpy (rgba, p, 4);						break;
+	case PGPU_RGB888:	memcpy (rgba, p, 3); rgba[3] = 255;				break;
+	case PGPU_RGBA4444:
+		for (int c = 0; c < 4; c++)
+		{
+			rgba[c] = ((v >> (12 - 4 * c)) & 15) * 17;
+		}
+		break;
+	case PGPU_RGBA5551:
+		for (int c = 0; c < 3; c++)
+		{
+			uint32_t x = (v >> (11 - 5 * c)) & 31;
+			rgba[c] = x << 3 | x >> 2;
+		}
+		rgba[3] = v & 1 ? 255 : 0;
+		break;
+	case PGPU_RGB565: {
+		uint32_t r = v >> 11, g = (v >> 5) & 63, b = v & 31;
+		rgba[0] = r << 3 | r >> 2;
+		rgba[1] = g << 2 | g >> 4;
+		rgba[2] = b << 3 | b >> 2;
+		rgba[3] = 255;
+		} break;
+	}
+}
+
+static uint32_t to_bits (uint8_t v, unsigned bits)
+{
+	return (v * ((1u << bits) - 1) + 127) / 255;
+}
+
+static void pack_texel (int format, const uint8_t rgba[4], uint8_t *p)
+{
+	uint32_t v = 0;
+	switch (format)
+	{
+	case PGPU_RGBA8888:	memcpy (p, rgba, 4);	return;
+	case PGPU_RGB888:	memcpy (p, rgba, 3);	return;
+	case PGPU_RGBA4444:
+		v = to_bits (rgba[0], 4) << 12 | to_bits (rgba[1], 4) << 8 | to_bits (rgba[2], 4) << 4
+		    | to_bits (rgba[3], 4);
+		break;
+	case PGPU_RGBA5551:
+		v = to_bits (rgba[0], 5) << 11 | to_bits (rgba[1], 5) << 6 | to_bits (rgba[2], 5) << 1
+		    | (rgba[3] >= 128);
+		break;
+	case PGPU_RGB565:
+		v = to_bits (rgba[0], 5) << 11 | to_bits (rgba[1], 6) << 5 | to_bits (rgba[2], 5);
+		break;
+	}
+	p[0] = v;
+	p[1] = v >> 8;
 }
 
 static uint32_t unpack_stride (unsigned row_bytes)
@@ -1390,9 +1732,10 @@ void glTexImage2D (GLenum target, GLint level, GLint internalformat, GLsizei wid
 	}
 	if (width == 0 || height == 0)
 	{
-		return;				/* an empty level: the texture is incomplete */
+		empty_level (t, face, level);	/* the texture is incomplete */
+		return;
 	}
-	if (!define_level (name, t, level, width, height, f, format, type))
+	if (!define_level (name, t, face, level, width, height, f, format, type))
 	{
 		return;
 	}
@@ -1434,8 +1777,8 @@ void glTexSubImage2D (GLenum target, GLint level, GLint xoffset, GLint yoffset, 
 	{
 		ERROR (GL_INVALID_VALUE);
 	}
-	/* the Zero converts from the texture's format: the data must be in it */
-	if (f == -2 || format != t->gl_format || type != t->gl_type)
+	/* the format must be the texture's (GL ES 2.0 3.7.2); the type may differ */
+	if (f == -2 || format != t->gl_format)
 	{
 		ERROR (GL_INVALID_OPERATION);
 	}
@@ -1443,8 +1786,43 @@ void glTexSubImage2D (GLenum target, GLint level, GLint xoffset, GLint yoffset, 
 	{
 		return;
 	}
-	pgpu_texture_data_stride (name, level, face, xoffset, yoffset, width, height, f, pixels,
-				  unpack_stride (width * format_bytes[f]));
+	uint32_t src_stride = unpack_stride (width * format_bytes[f]);
+	if (type == t->gl_type)
+	{
+		pgpu_texture_data_stride (name, level, face, xoffset, yoffset, width, height, f, pixels,
+					  src_stride);
+	}
+	else
+	{
+		/* TEXTURE_DATA is in the texture's format: convert, rows at a time */
+		static uint8_t converted[8192];
+		uint32_t dst_bpp = format_bytes[t->format], src_bpp = format_bytes[f];
+		uint32_t dst_row = (width * dst_bpp + 3) & ~3u;
+		uint32_t rows = dst_row <= sizeof converted ? sizeof converted / dst_row : 0;
+		uint32_t span = rows ? width : sizeof converted / dst_bpp;
+		rows = rows ? rows : 1;
+		for (GLsizei y = 0; y < height; y += rows)
+		{
+			uint32_t n = height - y < (GLsizei) rows ? height - y : rows;
+			for (GLsizei x = 0; x < width; x += span)
+			{
+				uint32_t w = width - x < (GLsizei) span ? width - x : span;
+				uint32_t stride = (w * dst_bpp + 3) & ~3u;
+				for (uint32_t r = 0; r < n; r++)
+				{
+					const uint8_t *src = (const uint8_t *) pixels + (y + r) * src_stride + x * src_bpp;
+					for (uint32_t i = 0; i < w; i++)
+					{
+						uint8_t rgba[4];
+						unpack_texel (f, src + i * src_bpp, rgba);
+						pack_texel (t->format, rgba, converted + r * stride + i * dst_bpp);
+					}
+				}
+				pgpu_texture_data_stride (name, level, face, xoffset + x, yoffset + y, w, n,
+							  t->format, converted, stride);
+			}
+		}
+	}
 	auto_mipmap (name, t, level);
 }
 
@@ -1472,9 +1850,10 @@ void glCompressedTexImage2D (GLenum target, GLint level, GLenum internalformat, 
 	}
 	if (width == 0 || height == 0)
 	{
+		empty_level (t, face, level);
 		return;
 	}
-	if (!define_level (name, t, level, width, height, PGPU_ETC1, GL_ETC1_RGB8_OES, 0))
+	if (!define_level (name, t, face, level, width, height, PGPU_ETC1, GL_ETC1_RGB8_OES, 0))
 	{
 		return;
 	}
@@ -1499,6 +1878,10 @@ void glCompressedTexSubImage2D (GLenum target, GLint level, GLint xoffset, GLint
 
 static bool copy_format_ok (GLenum internalformat)
 {
+	if (!target_has_color ())
+	{
+		return false;
+	}
 	bool alpha = target_has_alpha ();
 	switch (internalformat)
 	{
@@ -1535,8 +1918,12 @@ void glCopyTexImage2D (GLenum target, GLint level, GLenum internalformat, GLint 
 	{
 		ERROR (GL_INVALID_OPERATION);
 	}
-	if (width == 0 || height == 0 || !define_level (name, t, level, width, height, f,
-							 internalformat, GL_UNSIGNED_BYTE))
+	if (width == 0 || height == 0)
+	{
+		empty_level (t, face, level);
+		return;
+	}
+	if (!define_level (name, t, face, level, width, height, f, internalformat, GL_UNSIGNED_BYTE))
 	{
 		return;
 	}
@@ -1591,7 +1978,8 @@ void glGenerateMipmap (GLenum target)
 	{
 		return;
 	}
-	if (!t->storage || !is_pot (t->width) || !is_pot (t->height) || t->gl_format == GL_ETC1_RGB8_OES)
+	if (   !t->storage || !is_pot (t->width) || !is_pot (t->height) || t->gl_format == GL_ETC1_RGB8_OES
+	    || (t->target == TEX_CUBE && t->faces != 0x3F))		/* cube complete (3.7.11) */
 	{
 		ERROR (GL_INVALID_OPERATION);
 	}
@@ -1681,6 +2069,49 @@ void glGetTexParameterfv (GLenum target, GLenum pname, GLfloat *params)
 	S.errors |= errors;
 }
 
+/* deleted textures and renderbuffers live on while a framebuffer (not the
+   bound one, which lets go at once) has them attached (GL ES 2.0 4.4.3) */
+static unsigned attachment_refs (GLenum type, unsigned slot)
+{
+	unsigned n = 0;
+	for (unsigned f = 1; f <= MAX_FRAMEBUFFER_NAMES; f++)
+	{
+		for (int i = 0; S.framebuffers[f].used && i < ATTACHMENTS; i++)
+		{
+			n += S.framebuffers[f].att[i].type == type && S.framebuffers[f].att[i].name == slot;
+		}
+	}
+	return n;
+}
+
+static void reap_orphans (void)
+{
+	for (unsigned t = 1; t <= MAX_TEXTURE_NAMES; t++)
+	{
+		if (S.textures[t].orphan && !attachment_refs (GL_TEXTURE, t))
+		{
+			if (S.textures[t].storage)
+			{
+				release_render_target (t);
+				pgpu_texture_delete (t);
+			}
+			memset (&S.textures[t], 0, sizeof S.textures[t]);
+		}
+	}
+	for (unsigned r = 1; r <= MAX_RENDERBUFFER_NAMES; r++)
+	{
+		if (S.renderbuffers[r].orphan && !attachment_refs (GL_RENDERBUFFER, r))
+		{
+			if (rb_is_color (S.renderbuffers[r].format))
+			{
+				release_render_target (HW_RENDERBUFFER_BASE + r);
+				pgpu_texture_delete (HW_RENDERBUFFER_BASE + r);
+			}
+			memset (&S.renderbuffers[r], 0, sizeof S.renderbuffers[r]);
+		}
+	}
+}
+
 static void detach_from_bound_framebuffer (GLenum type, GLuint name)
 {
 	if (!S.framebuffer)
@@ -1705,8 +2136,8 @@ void glDeleteTextures (GLsizei n, const GLuint *textures)
 	}
 	for (GLsizei i = 0; i < n; i++)
 	{
-		GLuint name = textures[i];
-		if (!name || name > MAX_TEXTURE_NAMES || !S.textures[name].used)
+		GLuint name = slot_of (NAMES_TEXTURE, textures[i]);
+		if (!name || !S.textures[name].used)
 		{
 			continue;
 		}
@@ -1726,40 +2157,38 @@ void glDeleteTextures (GLsizei n, const GLuint *textures)
 			}
 		}
 		detach_from_bound_framebuffer (GL_TEXTURE, name);
-		if (S.textures[name].storage)
-		{
-			release_render_target (name);
-			pgpu_texture_delete (name);
-		}
-		memset (&S.textures[name], 0, sizeof S.textures[name]);
+		S.textures[name].orphan_name = textures[i];
+		free_name (NAMES_TEXTURE, name);
+		S.textures[name].orphan = true;		/* freed when no framebuffer has it */
 	}
+	reap_orphans ();
 }
 
 /* ---- renderbuffers and framebuffers ------------------------------------------------------------- */
 
-static bool renderbuffer_used (unsigned n)	{ return S.renderbuffers[n].used; }
 static void renderbuffer_take (unsigned n)	{ S.renderbuffers[n].used = true; }
-static bool framebuffer_used (unsigned n)	{ return S.framebuffers[n].used; }
 static void framebuffer_take (unsigned n)	{ S.framebuffers[n].used = true; }
 
 void glGenRenderbuffers (GLsizei n, GLuint *renderbuffers)
 {
-	gen_names (n, renderbuffers, MAX_RENDERBUFFER_NAMES, renderbuffer_used, renderbuffer_take);
+	gen_names (n, renderbuffers, NAMES_RENDERBUFFER, renderbuffer_take);
 }
 
 void glGenFramebuffers (GLsizei n, GLuint *framebuffers)
 {
-	gen_names (n, framebuffers, MAX_FRAMEBUFFER_NAMES, framebuffer_used, framebuffer_take);
+	gen_names (n, framebuffers, NAMES_FRAMEBUFFER, framebuffer_take);
 }
 
 GLboolean glIsRenderbuffer (GLuint rb)
 {
-	return rb && rb <= MAX_RENDERBUFFER_NAMES && S.renderbuffers[rb].used;
+	rb = slot_of (NAMES_RENDERBUFFER, rb);
+	return rb && S.renderbuffers[rb].bound;
 }
 
 GLboolean glIsFramebuffer (GLuint fb)
 {
-	return fb && fb <= MAX_FRAMEBUFFER_NAMES && S.framebuffers[fb].used;
+	fb = slot_of (NAMES_FRAMEBUFFER, fb);
+	return fb && S.framebuffers[fb].bound;
 }
 
 void glBindRenderbuffer (GLenum target, GLuint renderbuffer)
@@ -1768,13 +2197,15 @@ void glBindRenderbuffer (GLenum target, GLuint renderbuffer)
 	{
 		ERROR (GL_INVALID_ENUM);
 	}
-	if (renderbuffer > MAX_RENDERBUFFER_NAMES)
-	{
-		ERROR (GL_OUT_OF_MEMORY);
-	}
 	if (renderbuffer)
 	{
-		S.renderbuffers[renderbuffer].used = true;
+		unsigned slot = slot_for (NAMES_RENDERBUFFER, renderbuffer);
+		if (!slot)
+		{
+			ERROR (GL_OUT_OF_MEMORY);	/* pgl's table is full */
+		}
+		renderbuffer = slot;
+		S.renderbuffers[renderbuffer].used = S.renderbuffers[renderbuffer].bound = true;
 	}
 	S.renderbuffer = renderbuffer;
 }
@@ -1785,13 +2216,15 @@ void glBindFramebuffer (GLenum target, GLuint framebuffer)
 	{
 		ERROR (GL_INVALID_ENUM);
 	}
-	if (framebuffer > MAX_FRAMEBUFFER_NAMES)
-	{
-		ERROR (GL_OUT_OF_MEMORY);
-	}
 	if (framebuffer)
 	{
-		S.framebuffers[framebuffer].used = true;
+		unsigned slot = slot_for (NAMES_FRAMEBUFFER, framebuffer);
+		if (!slot)
+		{
+			ERROR (GL_OUT_OF_MEMORY);	/* pgl's table is full */
+		}
+		framebuffer = slot;
+		S.framebuffers[framebuffer].used = S.framebuffers[framebuffer].bound = true;
 	}
 	S.framebuffer = framebuffer;
 }
@@ -1827,8 +2260,10 @@ void glRenderbufferStorage (GLenum target, GLenum internalformat, GLsizei width,
 	rb->generation++;
 	if (rb_is_color (internalformat) && width && height)
 	{
-		/* colour storage is a texture on the Zero (RGBA8888, as all render targets) */
-		pgpu_texture_create (hw, width, height, PGPU_RGBA8888);
+		/* colour storage is a texture on the Zero; without alpha, it reads 1 */
+		pgpu_texture_create (hw, width, height,
+				       internalformat == GL_RGB565 ? PGPU_RGB565
+				     : internalformat == GL_RGB8_OES ? PGPU_RGB888 : PGPU_RGBA8888);
 		pgpu_texture_params (hw, PGPU_NEAREST, PGPU_NEAREST, PGPU_CLAMP_TO_EDGE, PGPU_CLAMP_TO_EDGE);
 	}
 }
@@ -1841,8 +2276,8 @@ void glDeleteRenderbuffers (GLsizei n, const GLuint *renderbuffers)
 	}
 	for (GLsizei i = 0; i < n; i++)
 	{
-		GLuint name = renderbuffers[i];
-		if (!name || name > MAX_RENDERBUFFER_NAMES || !S.renderbuffers[name].used)
+		GLuint name = slot_of (NAMES_RENDERBUFFER, renderbuffers[i]);
+		if (!name || !S.renderbuffers[name].used)
 		{
 			continue;
 		}
@@ -1851,13 +2286,11 @@ void glDeleteRenderbuffers (GLsizei n, const GLuint *renderbuffers)
 			S.renderbuffer = 0;
 		}
 		detach_from_bound_framebuffer (GL_RENDERBUFFER, name);
-		if (rb_is_color (S.renderbuffers[name].format))
-		{
-			release_render_target (HW_RENDERBUFFER_BASE + name);
-			pgpu_texture_delete (HW_RENDERBUFFER_BASE + name);
-		}
-		memset (&S.renderbuffers[name], 0, sizeof S.renderbuffers[name]);
+		S.renderbuffers[name].orphan_name = renderbuffers[i];
+		free_name (NAMES_RENDERBUFFER, name);
+		S.renderbuffers[name].orphan = true;	/* freed when no framebuffer has it */
 	}
+	reap_orphans ();
 }
 
 void glDeleteFramebuffers (GLsizei n, const GLuint *framebuffers)
@@ -1868,8 +2301,8 @@ void glDeleteFramebuffers (GLsizei n, const GLuint *framebuffers)
 	}
 	for (GLsizei i = 0; i < n; i++)
 	{
-		GLuint name = framebuffers[i];
-		if (!name || name > MAX_FRAMEBUFFER_NAMES || !S.framebuffers[name].used)
+		GLuint name = slot_of (NAMES_FRAMEBUFFER, framebuffers[i]);
+		if (!name || !S.framebuffers[name].used)
 		{
 			continue;
 		}
@@ -1877,6 +2310,7 @@ void glDeleteFramebuffers (GLsizei n, const GLuint *framebuffers)
 		{
 			S.framebuffer = 0;
 		}
+		free_scratch (&S.framebuffers[name]);
 		if (S.framebuffers[name].created)
 		{
 			pgpu_framebuffer_delete (name);	/* binds the panel if it was bound */
@@ -1886,7 +2320,9 @@ void glDeleteFramebuffers (GLsizei n, const GLuint *framebuffers)
 			}
 		}
 		memset (&S.framebuffers[name], 0, sizeof S.framebuffers[name]);
+		free_name (NAMES_FRAMEBUFFER, name);
 	}
+	reap_orphans ();
 }
 
 static attachment_t *attachment_point (GLenum target, GLenum attachment)
@@ -1921,6 +2357,7 @@ void glFramebufferTexture2D (GLenum target, GLenum attachment, GLenum textarget,
 	if (!texture)
 	{
 		memset (a, 0, sizeof *a);
+		reap_orphans ();
 		return;
 	}
 	unsigned face = 0;
@@ -1938,7 +2375,8 @@ void glFramebufferTexture2D (GLenum target, GLenum attachment, GLenum textarget,
 	{
 		ERROR (GL_INVALID_ENUM);
 	}
-	if (texture > MAX_TEXTURE_NAMES || !S.textures[texture].used || S.textures[texture].target != tt)
+	texture = slot_of (NAMES_TEXTURE, texture);
+	if (!texture || !S.textures[texture].used || S.textures[texture].target != tt)
 	{
 		ERROR (GL_INVALID_OPERATION);
 	}
@@ -1950,6 +2388,7 @@ void glFramebufferTexture2D (GLenum target, GLenum attachment, GLenum textarget,
 	a->name = texture;
 	a->level = level;
 	a->face = face;
+	reap_orphans ();
 }
 
 void glFramebufferRenderbuffer (GLenum target, GLenum attachment, GLenum renderbuffertarget,
@@ -1967,16 +2406,19 @@ void glFramebufferRenderbuffer (GLenum target, GLenum attachment, GLenum renderb
 	if (!renderbuffer)
 	{
 		memset (a, 0, sizeof *a);
+		reap_orphans ();
 		return;
 	}
-	if (renderbuffer > MAX_RENDERBUFFER_NAMES || !S.renderbuffers[renderbuffer].used)
+	renderbuffer = slot_of (NAMES_RENDERBUFFER, renderbuffer);
+	if (!renderbuffer || !S.renderbuffers[renderbuffer].bound)
 	{
-		ERROR (GL_INVALID_OPERATION);
+		ERROR (GL_INVALID_OPERATION);	/* no such object (a name is not one) */
 	}
 	a->type = GL_RENDERBUFFER;
 	a->name = renderbuffer;
 	a->level = 0;
 	a->face = 0;
+	reap_orphans ();
 }
 
 GLenum glCheckFramebufferStatus (GLenum target)
@@ -2005,9 +2447,17 @@ void glGetFramebufferAttachmentParameteriv (GLenum target, GLenum attachment, GL
 		*params = a->type;
 		return;
 	case GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME:
-		if (a->type != GL_NONE)
+		if (a->type == GL_TEXTURE)
 		{
-			*params = a->name;
+			/* a deleted object keeps its name here (the name may be reused) */
+			*params = S.textures[a->name].orphan ? S.textures[a->name].orphan_name
+							      : name_of (NAMES_TEXTURE, a->name);
+			return;
+		}
+		if (a->type == GL_RENDERBUFFER)
+		{
+			*params = S.renderbuffers[a->name].orphan ? S.renderbuffers[a->name].orphan_name
+								  : name_of (NAMES_RENDERBUFFER, a->name);
 			return;
 		}
 		break;
@@ -2393,6 +2843,10 @@ void glReadPixels (GLint x, GLint y, GLsizei width, GLsizei height, GLenum forma
 	{
 		return;
 	}
+	if (!target_has_color ())
+	{
+		ERROR (GL_INVALID_OPERATION);		/* nothing to read */
+	}
 	if (!width || !height)
 	{
 		return;
@@ -2400,9 +2854,12 @@ void glReadPixels (GLint x, GLint y, GLsizei width, GLsizei height, GLenum forma
 
 	bool opaque = !target_has_alpha ();
 	uint8_t *dst = pixels;
+	/* rows are GL_PACK_ALIGNMENT aligned: straight into the caller's memory
+	   when they are packed and word aligned, else through a bounce buffer */
+	size_t stride = ((size_t) width * 4 + S.pack_alignment - 1) / S.pack_alignment * S.pack_alignment;
 	static uint32_t bounce[1024];
-	bool aligned = ((uintptr_t) pixels & 3) == 0;
-	uint32_t rows_per_read = aligned ? 262144 / width : sizeof bounce / 4 / width;
+	bool direct = ((uintptr_t) pixels & 3) == 0 && stride == (size_t) width * 4;
+	uint32_t rows_per_read = direct ? 262144 / width : sizeof bounce / 4 / width;
 	if (rows_per_read == 0)
 	{
 		rows_per_read = 1;		/* a row wider than the bounce buffer: read in pieces */
@@ -2413,13 +2870,12 @@ void glReadPixels (GLint x, GLint y, GLsizei width, GLsizei height, GLenum forma
 		for (GLsizei col = 0; col < width; )
 		{
 			uint32_t span = width - col;
-			if (!aligned && span > sizeof bounce / 4)
+			if (!direct && span > sizeof bounce / 4)
 			{
 				span = sizeof bounce / 4;
 				n = 1;
 			}
-			uint32_t *out = aligned && span == (uint32_t) width
-					? (uint32_t *) (dst + (size_t) row * width * 4) : bounce;
+			uint32_t *out = direct ? (uint32_t *) (dst + (size_t) row * stride) : bounce;
 			uint32_t timeout = 100 + span * n / 1000;
 			if (!pgpu_read_pixels (x + col, y + row, span, n, out, timeout))
 			{
@@ -2427,7 +2883,7 @@ void glReadPixels (GLint x, GLint y, GLsizei width, GLsizei height, GLenum forma
 			}
 			for (uint32_t r = 0; r < n; r++)
 			{
-				uint8_t *d = dst + ((size_t) (row + r) * width + col) * 4;
+				uint8_t *d = dst + (size_t) (row + r) * stride + (size_t) col * 4;
 				if (out == bounce)
 				{
 					memcpy (d, bounce + r * span, span * 4);
@@ -2503,35 +2959,159 @@ GLboolean glIsProgram (GLuint program)
 	return program && program <= MAX_OBJECT_NAMES && S.objects[program].kind == OBJ_PROGRAM;
 }
 
-/* no shader compiler (GL ES 2.0 2.10.1): these generate INVALID_OPERATION */
+/* without a shader compiler (the Pico), these generate INVALID_OPERATION
+   (GL ES 2.0 2.10.1); on a PC, pgl compiles with tools/glslc (pgl_compiler.h) */
 void glShaderSource (GLuint shader, GLsizei count, const GLchar *const *string, const GLint *length)
 {
-	ERROR (GL_INVALID_OPERATION);
+	if (!pglc_available ())
+	{
+		ERROR (GL_INVALID_OPERATION);
+	}
+	object_t *s = get_object (shader, OBJ_SHADER);
+	if (!s)
+	{
+		return;
+	}
+	if (count < 0)
+	{
+		ERROR (GL_INVALID_VALUE);
+	}
+	size_t total = 0;
+	for (GLsizei i = 0; i < count; i++)
+	{
+		total += length && length[i] >= 0 ? (size_t) length[i] : strlen (string[i]);
+	}
+	char *source = malloc (total + 1);
+	if (!source)
+	{
+		ERROR (GL_OUT_OF_MEMORY);
+	}
+	size_t pos = 0;
+	for (GLsizei i = 0; i < count; i++)
+	{
+		size_t n = length && length[i] >= 0 ? (size_t) length[i] : strlen (string[i]);
+		memcpy (source + pos, string[i], n);
+		pos += n;
+	}
+	source[pos] = 0;
+	free (s->source);
+	s->source = source;
 }
 
 void glCompileShader (GLuint shader)
 {
-	ERROR (GL_INVALID_OPERATION);
+	if (!pglc_available ())
+	{
+		ERROR (GL_INVALID_OPERATION);
+	}
+	object_t *s = get_object (shader, OBJ_SHADER);
+	if (!s)
+	{
+		return;
+	}
+	char *log = NULL;
+	bool ok = s->source && pglc_compile (s->shader_type, s->source, &log);
+	free (s->log_buf);
+	s->log_buf = log;
+	free (s->compiled_source);
+	s->compiled_source = ok ? strdup (s->source) : NULL;
+	s->compiled = ok && s->compiled_source;
+	s->binary = NULL;
 }
 
 void glReleaseShaderCompiler (void)
 {
-	ERROR (GL_INVALID_OPERATION);
+	if (!pglc_available ())
+	{
+		ERROR (GL_INVALID_OPERATION);
+	}
 }
 
 void glGetShaderPrecisionFormat (GLenum shadertype, GLenum precisiontype, GLint *range, GLint *precision)
 {
-	ERROR (GL_INVALID_OPERATION);
+	if (!pglc_available ())
+	{
+		ERROR (GL_INVALID_OPERATION);
+	}
+	if (shadertype != GL_VERTEX_SHADER && shadertype != GL_FRAGMENT_SHADER)
+	{
+		ERROR (GL_INVALID_ENUM);
+	}
+	/* Mesa's values for vc4 (32-bit floats and integers at every precision) */
+	switch (precisiontype)
+	{
+	case GL_LOW_FLOAT: case GL_MEDIUM_FLOAT: case GL_HIGH_FLOAT:
+		range[0] = range[1] = 127;
+		*precision = 23;
+		break;
+	case GL_LOW_INT: case GL_MEDIUM_INT: case GL_HIGH_INT:
+		range[0] = 31;
+		range[1] = 30;
+		*precision = 0;
+		break;
+	default:
+		ERROR (GL_INVALID_ENUM);
+	}
 }
 
+static const char bad_binary_log[] = "pgl: not a program binary from tools/glslc";
+
+static bool valid_binary (const void *binary, GLint length)
+{
+	const pgpu_program_info_t *info = binary;
+	return    length == (GLint) sizeof (pgpu_program_info_t) && info
+	       && info->magic == PGPU_PROGRAM_INFO_MAGIC && info->blob && info->words;
+}
+
+static void link_binary (GLuint program, object_t *p, const pgpu_program_info_t *info);
+
+/* the binary format PGL_SHADER_BINARY_PGPU: a program from tools/glslc (its
+   NAME_info), an optimized pair of vertex and fragment shaders (GL ES 2.0
+   2.10.2). Load it into both shaders, by one call or one per shader;
+   glLinkProgram links shaders loaded from the same binary. */
 void glShaderBinary (GLsizei n, const GLuint *shaders, GLenum binaryformat, const void *binary, GLsizei length)
 {
-	ERROR (GL_INVALID_ENUM);		/* no shader binary formats (NUM_SHADER_BINARY_FORMATS 0) */
+	if (binaryformat != PGL_SHADER_BINARY_PGPU)
+	{
+		ERROR (GL_INVALID_ENUM);
+	}
+	if (n < 0 || length < 0)
+	{
+		ERROR (GL_INVALID_VALUE);
+	}
+	bool types[2] = {false, false};
+	for (GLsizei i = 0; i < n; i++)
+	{
+		object_t *s = get_object (shaders[i], OBJ_SHADER);
+		if (!s)
+		{
+			return;
+		}
+		int t = s->shader_type == GL_VERTEX_SHADER ? 0 : 1;
+		if (types[t])
+		{
+			ERROR (GL_INVALID_OPERATION);	/* two shaders of one type */
+		}
+		types[t] = true;
+	}
+	if (!valid_binary (binary, length))
+	{
+		ERROR (GL_INVALID_VALUE);
+	}
+	for (GLsizei i = 0; i < n; i++)
+	{
+		S.objects[shaders[i]].binary = binary;
+		S.objects[shaders[i]].compiled = false;
+	}
 }
 
 static void free_shader (GLuint name)
 {
-	memset (&S.objects[name], 0, sizeof S.objects[name]);
+	object_t *s = &S.objects[name];
+	free (s->source);
+	free (s->compiled_source);
+	free (s->log_buf);
+	memset (s, 0, sizeof *s);
 }
 
 void glDeleteShader (GLuint shader)
@@ -2641,11 +3221,37 @@ void glBindAttribLocation (GLuint program, GLuint index, const GLchar *name)
 	{
 		ERROR (GL_INVALID_OPERATION);
 	}
+
+	/* used by the next glLinkProgram from source */
+	object_t *p = &S.objects[program];
+	for (unsigned i = 0; i < p->n_bindings; i++)
+	{
+		if (strcmp (p->bindings[i].name, name) == 0)
+		{
+			p->bindings[i].index = index;
+			return;
+		}
+	}
+	struct attrib_binding *b = realloc (p->bindings, (p->n_bindings + 1) * sizeof *b);
+	char *copy = strdup (name);
+	if (!b || !copy)
+	{
+		free (copy);
+		if (b)
+		{
+			p->bindings = b;
+		}
+		ERROR (GL_OUT_OF_MEMORY);
+	}
+	p->bindings = b;
+	b[p->n_bindings].name = copy;
+	b[p->n_bindings].index = index;
+	p->n_bindings++;
 }
 
-static const char no_compiler_log[] =
-	"pgl: no shader compiler; compile the program with tools/glslc and load it "
-	"with glProgramBinaryOES";
+static const char not_a_pair_log[] =
+	"pgl: link needs a vertex and a fragment shader loaded by glShaderBinary from the same "
+	"binary (no shader compiler)";
 
 void glLinkProgram (GLuint program)
 {
@@ -2654,10 +3260,55 @@ void glLinkProgram (GLuint program)
 	{
 		return;
 	}
-	/* the shaders can't have been compiled: the link fails; a program in use
-	   keeps its executable (GL ES 2.0 2.10.3) */
-	p->linked = false;
-	p->log = no_compiler_log;
+	const object_t *vs = p->shaders[0] ? &S.objects[p->shaders[0]] : NULL;
+	const object_t *fs = p->shaders[1] ? &S.objects[p->shaders[1]] : NULL;
+	pgpu_program_info_t *compiled = NULL;
+	const pgpu_program_info_t *info = NULL;
+	if (vs && fs && vs->compiled && fs->compiled)
+	{
+		/* from source (pgl_compiler.h) */
+		const char *names[ATTRIBS * 4];
+		unsigned indices[ATTRIBS * 4];
+		unsigned n = 0;
+		for (unsigned i = 0; i < p->n_bindings && n < ATTRIBS * 4; i++, n++)
+		{
+			names[n] = p->bindings[i].name;
+			indices[n] = p->bindings[i].index;
+		}
+		char *log = NULL;
+		compiled = pglc_link (vs->compiled_source, fs->compiled_source, names, indices, n, &log);
+		free (p->log_buf);
+		p->log_buf = log;
+		if (!compiled)
+		{
+			p->linked = false;
+			p->log = p->log_buf;
+			return;
+		}
+		info = compiled;
+	}
+	else if (vs && fs && vs->binary && vs->binary == fs->binary)
+	{
+		info = vs->binary;
+	}
+	else
+	{
+		/* a failed link; a program in use keeps its executable (GL ES 2.0 2.10.3) */
+		p->linked = false;
+		p->log = pglc_available () ? "pgl: link needs a compiled vertex and fragment shader"
+					   : not_a_pair_log;
+		return;
+	}
+	link_binary (program, p, info);
+	if (p->compiled_info != compiled)
+	{
+		pglc_free (p->compiled_info);
+		p->compiled_info = compiled;
+	}
+	if (p->linked && p->log_buf && !p->log)
+	{
+		p->log = p->log_buf;		/* warnings */
+	}
 }
 
 static void release_program (object_t *p)
@@ -2673,6 +3324,17 @@ static void release_program (object_t *p)
 	p->values = NULL;
 	p->first = NULL;
 	p->info = NULL;
+	pglc_free (p->compiled_info);
+	p->compiled_info = NULL;
+	free (p->log_buf);
+	p->log_buf = NULL;
+	for (unsigned i = 0; i < p->n_bindings; i++)
+	{
+		free (p->bindings[i].name);
+	}
+	free (p->bindings);
+	p->bindings = NULL;
+	p->n_bindings = 0;
 }
 
 static void free_program (GLuint name)
@@ -2710,7 +3372,6 @@ void glDeleteProgram (GLuint program)
 	}
 }
 
-static const char bad_binary_log[] = "pgl: not a program binary from tools/glslc";
 static const char rejected_log[] = "pgl: the GPU rejected the program binary";
 
 void glProgramBinaryOES (GLuint program, GLenum binaryFormat, const void *binary, GLint length)
@@ -2724,14 +3385,19 @@ void glProgramBinaryOES (GLuint program, GLenum binaryFormat, const void *binary
 	{
 		ERROR (GL_INVALID_ENUM);
 	}
-	const pgpu_program_info_t *info = binary;
 	p->linked = false;
-	if (   length != (GLint) sizeof (pgpu_program_info_t) || !info
-	    || info->magic != PGPU_PROGRAM_INFO_MAGIC || !info->blob || !info->words)
+	if (!valid_binary (binary, length))
 	{
 		p->log = bad_binary_log;	/* a failed link, not a GL error */
 		return;
 	}
+	link_binary (program, p, binary);
+}
+
+/* load a program binary into a program object, as linking does */
+static void link_binary (GLuint program, object_t *p, const pgpu_program_info_t *info)
+{
+	p->linked = false;
 
 	/* uniform values, zero as after linking */
 	uint32_t n_values = 0;
@@ -2793,7 +3459,7 @@ void glProgramBinaryOES (GLuint program, GLenum binaryFormat, const void *binary
 	}
 	static uint32_t cookie = 0xB1000000u;
 	pgpu_ping_wait (++cookie, 1000);
-	sleep_ms (2);
+	pgpu_link_settle ();
 	if (drain_zero_errors (hw))
 	{
 		p->log = rejected_log;
@@ -2953,18 +3619,35 @@ void glGetShaderiv (GLuint shader, GLenum pname, GLint *params)
 	}
 	switch (pname)
 	{
-	case GL_SHADER_TYPE:		*params = s->shader_type;	break;
-	case GL_DELETE_STATUS:		*params = s->delete_pending;	break;
-	case GL_COMPILE_STATUS:		*params = GL_FALSE;		break;
-	case GL_INFO_LOG_LENGTH:	*params = 0;			break;
-	case GL_SHADER_SOURCE_LENGTH:	*params = 0;			break;
-	default:			ERROR (GL_INVALID_ENUM);
+	case GL_SHADER_TYPE:		*params = s->shader_type;	return;
+	case GL_DELETE_STATUS:		*params = s->delete_pending;	return;
+	case GL_COMPILE_STATUS:
+	case GL_INFO_LOG_LENGTH:
+	case GL_SHADER_SOURCE_LENGTH:
+		break;
+	default:
+		ERROR (GL_INVALID_ENUM);
+	}
+	if (!pglc_available ())
+	{
+		ERROR (GL_INVALID_OPERATION);	/* without a shader compiler (GL ES 2.0 6.1.8) */
+	}
+	switch (pname)
+	{
+	case GL_COMPILE_STATUS:		*params = s->compiled;					break;
+	case GL_INFO_LOG_LENGTH:	*params = s->log_buf ? (GLint) strlen (s->log_buf) + 1 : 0;	break;
+	default:			*params = s->source ? (GLint) strlen (s->source) + 1 : 0;	break;
 	}
 }
 
 void glGetShaderInfoLog (GLuint shader, GLsizei bufsize, GLsizei *length, GLchar *infolog)
 {
-	if (!get_object (shader, OBJ_SHADER))
+	if (!pglc_available ())
+	{
+		ERROR (GL_INVALID_OPERATION);	/* no shader compiler (GL ES 2.0 6.1.8) */
+	}
+	object_t *s = get_object (shader, OBJ_SHADER);
+	if (!s)
 	{
 		return;
 	}
@@ -2972,12 +3655,17 @@ void glGetShaderInfoLog (GLuint shader, GLsizei bufsize, GLsizei *length, GLchar
 	{
 		ERROR (GL_INVALID_VALUE);
 	}
-	copy_string ("", bufsize, length, infolog);
+	copy_string (s->log_buf, bufsize, length, infolog);
 }
 
 void glGetShaderSource (GLuint shader, GLsizei bufsize, GLsizei *length, GLchar *source)
 {
-	if (!get_object (shader, OBJ_SHADER))
+	if (!pglc_available ())
+	{
+		ERROR (GL_INVALID_OPERATION);	/* no shader compiler (GL ES 2.0 6.1.8) */
+	}
+	object_t *s = get_object (shader, OBJ_SHADER);
+	if (!s)
 	{
 		return;
 	}
@@ -2985,7 +3673,7 @@ void glGetShaderSource (GLuint shader, GLsizei bufsize, GLsizei *length, GLchar 
 	{
 		ERROR (GL_INVALID_VALUE);
 	}
-	copy_string ("", bufsize, length, source);
+	copy_string (s->source, bufsize, length, source);
 }
 
 static object_t *linked_program (GLuint program)
@@ -3405,7 +4093,7 @@ void glGetVertexAttribiv (GLuint index, GLenum pname, GLint *params)
 	case GL_VERTEX_ATTRIB_ARRAY_STRIDE:		*params = a->stride;		break;
 	case GL_VERTEX_ATTRIB_ARRAY_TYPE:		*params = a->gl_type;		break;
 	case GL_VERTEX_ATTRIB_ARRAY_NORMALIZED:		*params = a->normalized;	break;
-	case GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING:	*params = a->buffer;		break;
+	case GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING:	*params = name_of (NAMES_BUFFER, a->buffer);	break;
 	case GL_CURRENT_VERTEX_ATTRIB:
 		for (int i = 0; i < 4; i++)
 		{
@@ -3494,17 +4182,19 @@ static void validate_textures (void)
 			for (int e = 0; u->sampler >= 0 && e < u->size; e++)
 			{
 				unsigned unit = p->units[u->sampler + e];
-				GLuint name = u->type == GL_SAMPLER_CUBE ? S.bound_cube[unit] : S.bound_2d[unit];
+				bool cube = u->type == GL_SAMPLER_CUBE;
+				GLuint name = cube ? S.bound_cube[unit] : S.bound_2d[unit];
+				name = name ? name : cube ? TEX_DEFAULT_CUBE : TEX_DEFAULT_2D;
 				care[unit] = true;
-				want[unit] = name && S.textures[name].storage ? name : 0;
+				want[unit] = texture_usable (&S.textures[name]) ? name : 0;
 			}
 		}
 	}
 	else
 	{
-		GLuint name = S.bound_2d[0];
+		GLuint name = S.bound_2d[0] ? S.bound_2d[0] : TEX_DEFAULT_2D;
 		care[0] = true;
-		want[0] = name && S.textures[name].storage ? name : 0;
+		want[0] = texture_usable (&S.textures[name]) ? name : 0;
 	}
 
 	for (unsigned unit = 0; unit < UNITS; unit++)
@@ -3557,6 +4247,83 @@ static uint32_t mode_step (GLenum mode)
 	return mode == GL_TRIANGLES ? 3 : mode == GL_LINES ? 2 : mode == GL_POINTS ? 1 : 0;
 }
 
+/* a program draw too large for a PROGRAM_DRAW_INLINE packet: the client
+   arrays (vertices lo .. hi) and the indices, rebased to lo, go to temporary
+   buffers on the Zero (re-creating a buffer that earlier draws of the frame
+   use keeps their data) */
+static void draw_via_buffers (GLenum mode, GLint first, GLsizei count, const void *indices,
+			      uint32_t index_type, uint32_t buffer_mask, uint32_t client_mask)
+{
+	uint32_t lo = first, hi = first + count - 1;
+	if (indices)
+	{
+		index_range (indices, index_type, count, &lo, &hi);
+		if (hi - lo > 65535)
+		{
+			ERROR (GL_OUT_OF_MEMORY);
+		}
+	}
+
+	uint32_t offsets[ATTRIBS], total = 0;
+	for (unsigned i = 0; i < ATTRIBS; i++)
+	{
+		const array_t *a = &S.attribs[i];
+		if (client_mask & (1u << i))
+		{
+			offsets[i] = total;
+			total += ((hi - lo) * array_stride (a) + a->size * type_bytes[a->type] + 3) & ~3u;
+		}
+	}
+	pgpu_buffer_create (HW_TEMP_VERTEX, total);
+	for (unsigned i = 0; i < ATTRIBS; i++)
+	{
+		const array_t *a = &S.attribs[i];
+		uint32_t stride = array_stride (a);
+		if (client_mask & (1u << i))
+		{
+			pgpu_buffer_data (HW_TEMP_VERTEX, offsets[i], (const uint8_t *) a->pointer + lo * stride,
+					  (hi - lo) * stride + a->size * type_bytes[a->type]);
+			send_attrib_array (i, HW_TEMP_VERTEX, offsets[i], stride, a->size, a->type);
+		}
+		else if (buffer_mask & (1u << i))
+		{
+			send_attrib_array (i, a->buffer, (uint32_t) (uintptr_t) a->pointer + lo * stride, stride,
+					   a->size, a->type);
+		}
+	}
+	pgpu_attribs_enable (buffer_mask | client_mask);
+	S.sent_attribs_mask = buffer_mask | client_mask;
+	S.sent_attribs_mask_valid = true;
+
+	if (!indices)
+	{
+		pgpu_draw_arrays (mode, 0, count);
+		return;
+	}
+	uint32_t index_bytes = index_type + 1;
+	pgpu_buffer_create (HW_TEMP_INDEX, count * index_bytes);
+	static union { uint8_t u8[2048]; uint16_t u16[1024]; } part;
+	uint32_t per_part = sizeof part / index_bytes;
+	for (uint32_t c = 0; c < (uint32_t) count; c += per_part)
+	{
+		uint32_t n = count - c < per_part ? count - c : per_part;
+		for (uint32_t i = 0; i < n; i++)
+		{
+			uint32_t v = read_index (indices, index_type, c + i) - lo;
+			if (index_type == PGPU_INDEX_U16)
+			{
+				part.u16[i] = v;
+			}
+			else
+			{
+				part.u8[i] = v;
+			}
+		}
+		pgpu_buffer_data (HW_TEMP_INDEX, c * index_bytes, &part, n * index_bytes);
+	}
+	pgpu_draw_elements (mode, count, index_type, HW_TEMP_INDEX, 0);
+}
+
 /* a draw with a program: buffers directly; client-side arrays and indices
    with PROGRAM_DRAW_INLINE, where buffer arrays start at the first vertex sent */
 static void draw_program (GLenum mode, GLint first, GLsizei count, bool indexed, uint32_t index_type,
@@ -3566,9 +4333,13 @@ static void draw_program (GLenum mode, GLint first, GLsizei count, bool indexed,
 	uint32_t used = 0, buffer_mask = 0, client_mask = 0;
 	for (uint32_t i = 0; i < p->info->n_attribs; i++)
 	{
-		if (p->info->attribs[i].location < ATTRIBS)
+		/* a matrix takes a location per column */
+		const pgpu_attrib_info_t *a = &p->info->attribs[i];
+		unsigned columns =   a->type == GL_FLOAT_MAT2 ? 2 : a->type == GL_FLOAT_MAT3 ? 3
+				   : a->type == GL_FLOAT_MAT4 ? 4 : 1;
+		for (unsigned c = 0; c < columns && a->location + c < ATTRIBS; c++)
 		{
-			used |= 1u << p->info->attribs[i].location;
+			used |= 1u << (a->location + c);
 		}
 	}
 	for (unsigned i = 0; i < ATTRIBS; i++)
@@ -3580,11 +4351,7 @@ static void draw_program (GLenum mode, GLint first, GLsizei count, bool indexed,
 		}
 		if (a->buffer)
 		{
-			if (array_stride (a) > 255)
-			{
-				ERROR (GL_INVALID_OPERATION);	/* the Zero's limit for buffer arrays */
-			}
-			buffer_mask |= 1u << i;
+			buffer_mask |= 1u << i;		/* strides over 255: the Zero copies */
 		}
 		else
 		{
@@ -3666,7 +4433,9 @@ static void draw_program (GLenum mode, GLint first, GLsizei count, bool indexed,
 		{
 			if (!step)
 			{
-				ERROR (GL_OUT_OF_MEMORY);	/* strips, fans, loops: one packet */
+				/* strips, fans, loops that don't fit a packet */
+				draw_via_buffers (mode, first, count, NULL, 0, buffer_mask, client_mask);
+				return;
 			}
 			chunk = max - max % step;
 		}
@@ -3690,7 +4459,8 @@ static void draw_program (GLenum mode, GLint first, GLsizei count, bool indexed,
 		SET_BUFFER_ARRAYS (lo);
 		if (!pgpu_draw_elements_client (mode, n, index_type, part))
 		{
-			ERROR (GL_OUT_OF_MEMORY);		/* the vertices don't fit a packet */
+			/* the vertices don't fit a packet */
+			draw_via_buffers (mode, 0, n, part, index_type, buffer_mask, client_mask);
 		}
 	}
 	#undef SET_BUFFER_ARRAYS
@@ -3914,6 +4684,70 @@ static bool begin_draw (GLenum mode, GLsizei count)
 	return true;
 }
 
+/* GL has no vertex limit per draw; the Zero takes 65535 vertices. Lists and
+   strips are split (strips overlapping, triangle strips at even vertices to
+   keep the winding); fans and loops would need their first vertex repeated. */
+#define MAX_DRAW_VERTICES	65535
+
+static bool split_draw (GLenum mode, uint32_t *chunk, uint32_t *overlap)
+{
+	switch (mode)
+	{
+	case GL_POINTS:		*chunk = 65535; *overlap = 0; return true;
+	case GL_LINES:		*chunk = 65534; *overlap = 0; return true;
+	case GL_TRIANGLES:	*chunk = 65535; *overlap = 0; return true;
+	case GL_LINE_STRIP:	*chunk = 65535; *overlap = 1; return true;
+	case GL_TRIANGLE_STRIP:	*chunk = 65534; *overlap = 2; return true;
+	default:		return false;
+	}
+}
+
+static void draw (GLenum mode, GLint first, GLsizei count, bool indexed, uint32_t index_type,
+		  const void *indices)
+{
+	if (S.program)
+	{
+		draw_program (mode, first, count, indexed, index_type, indices);
+	}
+	else
+	{
+		draw_ff (mode, first, count, indexed, index_type, indices);
+	}
+}
+
+static void draw_split (GLenum mode, GLint first, GLsizei count, bool indexed, uint32_t index_type,
+			const void *indices)
+{
+	if (count <= MAX_DRAW_VERTICES)
+	{
+		draw (mode, first, count, indexed, index_type, indices);
+		return;
+	}
+	uint32_t chunk, overlap;
+	if (!split_draw (mode, &chunk, &overlap))
+	{
+		ERROR (GL_OUT_OF_MEMORY);
+	}
+	uint32_t index_bytes = index_type + 1;
+	for (uint32_t start = 0; ; start += chunk - overlap)
+	{
+		uint32_t n = count - start < chunk ? count - start : chunk;
+		if (indexed)
+		{
+			/* a client pointer or an offset into the index buffer */
+			draw (mode, 0, n, true, index_type, (const uint8_t *) indices + start * index_bytes);
+		}
+		else
+		{
+			draw (mode, first + start, n, false, 0, NULL);
+		}
+		if (start + n >= (uint32_t) count)
+		{
+			break;
+		}
+	}
+}
+
 void glDrawArrays (GLenum mode, GLint first, GLsizei count)
 {
 	if (first < 0)
@@ -3924,14 +4758,7 @@ void glDrawArrays (GLenum mode, GLint first, GLsizei count)
 	{
 		return;
 	}
-	if (S.program)
-	{
-		draw_program (mode, first, count, false, 0, NULL);
-	}
-	else
-	{
-		draw_ff (mode, first, count, false, 0, NULL);
-	}
+	draw_split (mode, first, count, false, 0, NULL);
 }
 
 void glDrawElements (GLenum mode, GLsizei count, GLenum type, const void *indices)
@@ -3944,15 +4771,8 @@ void glDrawElements (GLenum mode, GLsizei count, GLenum type, const void *indice
 	{
 		return;
 	}
-	uint32_t index_type = type == GL_UNSIGNED_SHORT ? PGPU_INDEX_U16 : PGPU_INDEX_U8;
-	if (S.program)
-	{
-		draw_program (mode, 0, count, true, index_type, indices);
-	}
-	else
-	{
-		draw_ff (mode, 0, count, true, index_type, indices);
-	}
+	draw_split (mode, 0, count, true, type == GL_UNSIGNED_SHORT ? PGPU_INDEX_U16 : PGPU_INDEX_U8,
+		    indices);
 }
 
 /* ---- GL ES 1.1: arrays -------------------------------------------------------------------------- */
@@ -4504,20 +5324,28 @@ void glGetTexEnvfv (GLenum env, GLenum pname, GLfloat *params)
 
 enum { K_INT, K_FLOAT, K_BOOL, K_NORM };	/* K_NORM: colours and depths, 0 .. 1 */
 
-/* values of a state variable; 0 = unknown pname */
-static int get_state (GLenum pname, float *v, int *kind)
+static void copy_values (double *v, const float *src, int n)
+{
+	for (int i = 0; i < n; i++)
+	{
+		v[i] = src[i];
+	}
+}
+
+/* values of a state variable; 0 = unknown pname (double: 32-bit masks exactly) */
+static int get_state (GLenum pname, double *v, int *kind)
 {
 	*kind = K_INT;
 	#define I1(a)		(v[0] = (a), 1)
 	#define I2(a, b)	(v[0] = (a), v[1] = (b), 2)
 	#define I4(a, b, c, d)	(v[0] = (a), v[1] = (b), v[2] = (c), v[3] = (d), 4)
-	#define COPY(src, n)	(memcpy (v, src, (n) * sizeof (float)), (n))
+	#define COPY(src, n)	(copy_values (v, src, n), (n))
 	switch (pname)
 	{
 	/* bits of the bound framebuffer */
-	case GL_RED_BITS:	return I1 (S.framebuffer ? 8 : 5);
-	case GL_GREEN_BITS:	return I1 (S.framebuffer ? 8 : 6);
-	case GL_BLUE_BITS:	return I1 (S.framebuffer ? 8 : 5);
+	case GL_RED_BITS:	return I1 (!S.framebuffer ? 5 : target_has_color () ? 8 : 0);
+	case GL_GREEN_BITS:	return I1 (!S.framebuffer ? 6 : target_has_color () ? 8 : 0);
+	case GL_BLUE_BITS:	return I1 (!S.framebuffer ? 5 : target_has_color () ? 8 : 0);
 	case GL_ALPHA_BITS:	return I1 (target_has_alpha () ? 8 : 0);
 	case GL_DEPTH_BITS:	return I1 (target_has_depth () ? 24 : 0);
 	case GL_STENCIL_BITS:	return I1 (target_has_stencil () ? 8 : 0);
@@ -4548,24 +5376,24 @@ static int get_state (GLenum pname, float *v, int *kind)
 	case GL_MAX_TEXTURE_STACK_DEPTH:	return I1 (TEX_STACK);
 	case GL_NUM_COMPRESSED_TEXTURE_FORMATS:	return I1 (1);
 	case GL_COMPRESSED_TEXTURE_FORMATS:	return I1 (GL_ETC1_RGB8_OES);
-	case GL_NUM_SHADER_BINARY_FORMATS:	return I1 (0);
-	case GL_SHADER_BINARY_FORMATS:		return 0;
+	case GL_NUM_SHADER_BINARY_FORMATS:	return I1 (1);
+	case GL_SHADER_BINARY_FORMATS:		return I1 (PGL_SHADER_BINARY_PGPU);
 	case GL_NUM_PROGRAM_BINARY_FORMATS_OES:	return I1 (1);
 	case GL_PROGRAM_BINARY_FORMATS_OES:	return I1 (PGL_PROGRAM_BINARY_PGPU);
-	case GL_SHADER_COMPILER:		*kind = K_BOOL; return I1 (0);
+	case GL_SHADER_COMPILER:		*kind = K_BOOL; return I1 (pglc_available ());
 	case GL_IMPLEMENTATION_COLOR_READ_FORMAT:	return I1 (GL_RGBA);
 	case GL_IMPLEMENTATION_COLOR_READ_TYPE:	return I1 (GL_UNSIGNED_BYTE);
 
 	/* bindings */
-	case GL_ARRAY_BUFFER_BINDING:		return I1 (S.array_buffer);
-	case GL_ELEMENT_ARRAY_BUFFER_BINDING:	return I1 (S.element_buffer);
-	case GL_FRAMEBUFFER_BINDING:		return I1 (S.framebuffer);
-	case GL_RENDERBUFFER_BINDING:		return I1 (S.renderbuffer);
+	case GL_ARRAY_BUFFER_BINDING:		return I1 (name_of (NAMES_BUFFER, S.array_buffer));
+	case GL_ELEMENT_ARRAY_BUFFER_BINDING:	return I1 (name_of (NAMES_BUFFER, S.element_buffer));
+	case GL_FRAMEBUFFER_BINDING:		return I1 (name_of (NAMES_FRAMEBUFFER, S.framebuffer));
+	case GL_RENDERBUFFER_BINDING:		return I1 (name_of (NAMES_RENDERBUFFER, S.renderbuffer));
 	case GL_CURRENT_PROGRAM:		return I1 (S.program);
 	case GL_ACTIVE_TEXTURE:			return I1 (GL_TEXTURE0 + S.active_unit);
 	case GL_CLIENT_ACTIVE_TEXTURE:		return I1 (GL_TEXTURE0 + S.client_active_unit);
-	case GL_TEXTURE_BINDING_2D:		return I1 (S.bound_2d[S.active_unit]);
-	case GL_TEXTURE_BINDING_CUBE_MAP:	return I1 (S.bound_cube[S.active_unit]);
+	case GL_TEXTURE_BINDING_2D:		return I1 (name_of (NAMES_TEXTURE, S.bound_2d[S.active_unit]));
+	case GL_TEXTURE_BINDING_CUBE_MAP:	return I1 (name_of (NAMES_TEXTURE, S.bound_cube[S.active_unit]));
 
 	/* fragment state */
 	case GL_VIEWPORT:		return I4 (S.viewport[0], S.viewport[1], S.viewport[2], S.viewport[3]);
@@ -4638,18 +5466,18 @@ static int get_state (GLenum pname, float *v, int *kind)
 	case GL_VERTEX_ARRAY_SIZE:	return I1 (S.ff_arrays[PGPU_ATTR_POSITION].size);
 	case GL_VERTEX_ARRAY_TYPE:	return I1 (S.ff_arrays[PGPU_ATTR_POSITION].gl_type);
 	case GL_VERTEX_ARRAY_STRIDE:	return I1 (S.ff_arrays[PGPU_ATTR_POSITION].stride);
-	case GL_VERTEX_ARRAY_BUFFER_BINDING: return I1 (S.ff_arrays[PGPU_ATTR_POSITION].buffer);
+	case GL_VERTEX_ARRAY_BUFFER_BINDING: return I1 (name_of (NAMES_BUFFER, S.ff_arrays[PGPU_ATTR_POSITION].buffer));
 	case GL_COLOR_ARRAY_SIZE:	return I1 (S.ff_arrays[PGPU_ATTR_COLOR].size);
 	case GL_COLOR_ARRAY_TYPE:	return I1 (S.ff_arrays[PGPU_ATTR_COLOR].gl_type);
 	case GL_COLOR_ARRAY_STRIDE:	return I1 (S.ff_arrays[PGPU_ATTR_COLOR].stride);
-	case GL_COLOR_ARRAY_BUFFER_BINDING: return I1 (S.ff_arrays[PGPU_ATTR_COLOR].buffer);
+	case GL_COLOR_ARRAY_BUFFER_BINDING: return I1 (name_of (NAMES_BUFFER, S.ff_arrays[PGPU_ATTR_COLOR].buffer));
 	case GL_NORMAL_ARRAY_TYPE:	return I1 (S.ff_arrays[PGPU_ATTR_NORMAL].gl_type);
 	case GL_NORMAL_ARRAY_STRIDE:	return I1 (S.ff_arrays[PGPU_ATTR_NORMAL].stride);
-	case GL_NORMAL_ARRAY_BUFFER_BINDING: return I1 (S.ff_arrays[PGPU_ATTR_NORMAL].buffer);
+	case GL_NORMAL_ARRAY_BUFFER_BINDING: return I1 (name_of (NAMES_BUFFER, S.ff_arrays[PGPU_ATTR_NORMAL].buffer));
 	case GL_TEXTURE_COORD_ARRAY_SIZE: return I1 (S.ff_arrays[PGPU_ATTR_TEXCOORD].size);
 	case GL_TEXTURE_COORD_ARRAY_TYPE: return I1 (S.ff_arrays[PGPU_ATTR_TEXCOORD].gl_type);
 	case GL_TEXTURE_COORD_ARRAY_STRIDE: return I1 (S.ff_arrays[PGPU_ATTR_TEXCOORD].stride);
-	case GL_TEXTURE_COORD_ARRAY_BUFFER_BINDING: return I1 (S.ff_arrays[PGPU_ATTR_TEXCOORD].buffer);
+	case GL_TEXTURE_COORD_ARRAY_BUFFER_BINDING: return I1 (name_of (NAMES_BUFFER, S.ff_arrays[PGPU_ATTR_TEXCOORD].buffer));
 	}
 
 	/* enables */
@@ -4670,20 +5498,23 @@ static int get_state (GLenum pname, float *v, int *kind)
 
 void glGetFloatv (GLenum pname, GLfloat *params)
 {
-	float v[16];
+	double v[16];
 	int kind, n = get_state (pname, v, &kind);
-	if (!n && pname != GL_SHADER_BINARY_FORMATS)
+	if (!n)
 	{
 		ERROR (GL_INVALID_ENUM);
 	}
-	memcpy (params, v, n * sizeof (float));
+	for (int i = 0; i < n; i++)
+	{
+		params[i] = (GLfloat) v[i];
+	}
 }
 
 void glGetIntegerv (GLenum pname, GLint *params)
 {
-	float v[16];
+	double v[16];
 	int kind, n = get_state (pname, v, &kind);
-	if (!n && pname != GL_SHADER_BINARY_FORMATS)
+	if (!n)
 	{
 		ERROR (GL_INVALID_ENUM);
 	}
@@ -4697,22 +5528,22 @@ void glGetIntegerv (GLenum pname, GLint *params)
 		}
 		else
 		{
-			params[i] = (GLint) lrintf (v[i]);
+			params[i] = (GLint) (int64_t) llround (v[i]);	/* 32-bit masks wrap */
 		}
 	}
 }
 
 void glGetBooleanv (GLenum pname, GLboolean *params)
 {
-	float v[16];
+	double v[16];
 	int kind, n = get_state (pname, v, &kind);
-	if (!n && pname != GL_SHADER_BINARY_FORMATS)
+	if (!n)
 	{
 		ERROR (GL_INVALID_ENUM);
 	}
 	for (int i = 0; i < n; i++)
 	{
-		params[i] = v[i] != 0.0f ? GL_TRUE : GL_FALSE;
+		params[i] = v[i] != 0.0 ? GL_TRUE : GL_FALSE;
 	}
 }
 

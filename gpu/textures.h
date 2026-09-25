@@ -64,6 +64,10 @@ public:
 	boolean GetRenderTarget (u32 nId, unsigned nFace, u32 *pBus, unsigned *pWidth,
 				 unsigned *pHeight, boolean *pTFormat);
 
+	/// \return FALSE for formats without alpha (RGB, L, ETC1): they read alpha 1,
+	/// also after rendering into them (the TMU's RGBX8888 type)
+	boolean TargetHasAlpha (u32 nId) const;
+
 	/// \brief Read a texel (RGBA8888) after the V3D has rendered into the texture
 	/// (call Invalidate () first)
 	u32 ReadRGBA (u32 nId, unsigned nFace, unsigned x, unsigned y);
@@ -112,6 +116,7 @@ private:
 	void Layout (TTexture *pTexture);
 	u32 *TexelAddress (TTexture *pTexture, unsigned nFace, unsigned nLevel, unsigned x, unsigned y);
 	boolean Complete (const TTexture *pTexture) const;
+	static boolean HasAlpha (u32 nFormat);
 	boolean Alloc (TTexture *pTexture, TStorage *pStorage);
 	void Free (TStorage *pStorage);
 	void Retire (TStorage *pStorage);

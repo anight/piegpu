@@ -41,6 +41,9 @@ public:
 
 	void DumpStatus (void);
 
+	/// \brief Power cycle the V3D (after a job timed out)
+	boolean Reset (void);
+
 private:
 	static u32 Read (unsigned nOffset);
 	static void Write (unsigned nOffset, u32 nValue);
