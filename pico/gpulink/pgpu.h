@@ -17,7 +17,7 @@
 #include "pgpu_protocol.h"
 
 #define PGPU_STAGING_WORDS	4096		/* per buffer (two buffers) */
-#define PGPU_MAX_REPLY_PAYLOAD	16
+#define PGPU_MAX_REPLY_PAYLOAD	64
 
 typedef struct
 {
@@ -91,6 +91,18 @@ void pgpu_clear (uint32_t mask, uint32_t color, float depth);
 void pgpu_frame_end (uint32_t flags);
 void pgpu_viewport (int32_t x, int32_t y, uint32_t width, uint32_t height, float near, float far);
 
+/* framebuffers: render to level 0 of a texture (face 0-5 for cube maps),
+   optionally with depth and stencil (PGPU_FRAMEBUFFER_DEPTH_STENCIL) */
+void pgpu_framebuffer_create (uint32_t id, uint32_t texture, uint32_t face, uint32_t flags);
+void pgpu_framebuffer_delete (uint32_t id);
+void pgpu_bind_framebuffer (uint32_t id);	/* 0 = the panel */
+/* read RGBA8888 pixels of the bound framebuffer (GL coordinates, rows bottom up) */
+bool pgpu_read_pixels (int32_t x, int32_t y, uint32_t width, uint32_t height, uint32_t *pixels,
+		       uint32_t timeout_ms);
+/* like glCopyTexSubImage2D: from the bound framebuffer into a texture level */
+void pgpu_copy_tex_image (uint32_t texture, uint32_t level, uint32_t face, uint32_t xoffset,
+			  uint32_t yoffset, int32_t x, int32_t y, uint32_t width, uint32_t height);
+
 /* buffers (data is split into packets as needed) */
 void pgpu_buffer_create (uint32_t id, uint32_t size_bytes);
 void pgpu_buffer_data (uint32_t id, uint32_t offset_bytes, const void *data, uint32_t length_bytes);
@@ -98,6 +110,11 @@ void pgpu_buffer_delete (uint32_t id);
 
 /* textures (pixel rows bottom-up, each row padded to 4 bytes) */
 void pgpu_texture_create (uint32_t id, uint32_t width, uint32_t height, uint32_t format);
+void pgpu_texture_create_cube (uint32_t id, uint32_t size, uint32_t format);
+/* upload to a mip level (0 = base) and cube face (0-5: +X, -X, +Y, -Y, +Z, -Z) */
+void pgpu_texture_data_level (uint32_t id, uint32_t level, uint32_t face, uint32_t x, uint32_t y,
+			      uint32_t width, uint32_t height, uint32_t format, const void *pixels);
+void pgpu_generate_mipmap (uint32_t id);
 void pgpu_texture_data (uint32_t id, uint32_t x, uint32_t y, uint32_t width, uint32_t height,
 			uint32_t format, const void *pixels);
 void pgpu_texture_params (uint32_t id, uint32_t min_filter, uint32_t mag_filter,
@@ -112,6 +129,13 @@ void pgpu_disable (uint32_t caps);
 void pgpu_depth_func (uint32_t func);
 void pgpu_depth_mask (bool write);
 void pgpu_blend_func (uint32_t src, uint32_t dst);
+void pgpu_blend_func_separate (uint32_t src_rgb, uint32_t dst_rgb, uint32_t src_alpha, uint32_t dst_alpha);
+void pgpu_blend_equation (uint32_t mode_rgb, uint32_t mode_alpha);
+void pgpu_blend_color (float r, float g, float b, float a);
+void pgpu_stencil_func (uint32_t face, uint32_t func, uint32_t ref, uint32_t mask);	/* ENABLE STENCIL_TEST */
+void pgpu_stencil_op (uint32_t face, uint32_t fail, uint32_t zfail, uint32_t zpass);
+void pgpu_stencil_mask (uint32_t face, uint32_t mask);
+void pgpu_clear_stencil (uint32_t mask, uint32_t color, float depth, uint32_t stencil);	/* CLEAR with stencil */
 void pgpu_cull_face (uint32_t face);
 void pgpu_front_face (uint32_t winding);
 void pgpu_alpha_func (uint32_t func, float ref);

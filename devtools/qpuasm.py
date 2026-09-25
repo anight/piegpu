@@ -30,6 +30,9 @@ CONDS = {'never': 0, 'always': 1, 'zs': 2, 'zc': 3, 'ns': 4, 'nc': 5, 'cs': 6, '
 
 # r4 unpack modes (PM = 1): convert a colour byte to float 0..1
 UNPACK_R4 = {'8a': 4, '8b': 5, '8c': 6, '8d': 7}
+# regfile A unpack modes (PM = 0): a byte, as float 0..1 in float operations
+# (as an unsigned integer in integer operations); applies to every raddr_a read
+UNPACK_A = {'8a': 4, '8b': 5, '8c': 6, '8d': 7}
 
 ADD_OPS = {'nop': 0, 'fadd': 1, 'fsub': 2, 'fmin': 3, 'fmax': 4, 'fminabs': 5, 'fmaxabs': 6,
            'ftoi': 7, 'itof': 8, 'add': 12, 'sub': 13, 'shr': 14, 'asr': 15, 'ror': 16, 'shl': 17,
@@ -38,7 +41,7 @@ MUL_OPS = {'nop': 0, 'fmul': 1, 'mul24': 2, 'v8muld': 3, 'v8min': 4, 'v8max': 5}
 
 # write addresses (both files unless noted)
 WADDR = {'r0': 32, 'r1': 33, 'r2': 34, 'r3': 35, 'r5': 37, 'nop': 39,
-         'tlbz': 44, 'tlbc': 46, 'sfu_recip': 52, 'sfu_rsqrt': 53, 'sfu_exp': 54, 'sfu_log': 55,
+         'tlbs': 43, 'tlbz': 44, 'tlbc': 46, 'sfu_recip': 52, 'sfu_rsqrt': 53, 'sfu_exp': 54, 'sfu_log': 55,
          'tmu0_s': 56, 'tmu0_t': 57}
 TMU_DSTS = {'tmu0_s', 'tmu0_t'}
 SFU_DSTS = {'sfu_recip', 'sfu_rsqrt', 'sfu_exp', 'sfu_log'}
@@ -78,9 +81,13 @@ class Operand:
         self.kind = None	# 'acc', 'ra', 'rb', 'special', 'imm'
         self.value = None
         self.unpack = None	# r4 unpack mode
+        self.unpack_a = None	# regfile A unpack mode
         if isinstance(text, str) and text.startswith('r4.'):
             self.unpack = UNPACK_R4[text[3:]]
             text = 'r4'
+        elif isinstance(text, str) and text.startswith('ra') and '.' in text:
+            text, mode = text.split('.')
+            self.unpack_a = UNPACK_A[mode]
         if isinstance(text, (int, float)):
             code = small_imm_code(text)
             if code is None:
@@ -156,7 +163,7 @@ class Op:
         if self.dst is not None:
             if self.dst in SFU_DSTS:
                 res.add('r4')
-            elif self.dst in ('tlbz', 'tlbc'):
+            elif self.dst in ('tlbs', 'tlbz', 'tlbc'):
                 res.add('@tlb')
             elif self.dst in TMU_DSTS:
                 res.add('@tmu')
@@ -291,6 +298,11 @@ class Program:
         ops = self.ops
         cand = [ops[k] for k in chosen] + [ops[j]]
         if len(cand) == 1:
+            if cand[0].kind == 'alu' and self._assign(cand) is None:
+                raise ValueError('%s: cannot encode %s %s, %s (register file ports)'
+                                 % (self.name, cand[0].opcode, cand[0].dst,
+                                    ', '.join(s.text if isinstance(s.text, str) else repr(s.text)
+                                              for s in cand[0].srcs)))
             return True
         if any(o.kind != 'alu' for o in cand):
             return False
@@ -369,6 +381,15 @@ class Program:
             return None
         unpack = unpacks.pop() if unpacks else None
 
+        # regfile A unpack is per instruction too (PM = 0): every read of
+        # raddr_a gets it, and it excludes r4 unpack and mul pack (PM = 1)
+        unpacks_a = {s.unpack_a for op in cand for s in op.srcs if s.kind == 'ra'}
+        if len(unpacks_a) > 1:
+            return None
+        unpack_a = unpacks_a.pop() if unpacks_a else None
+        if unpack_a is not None and (unpack is not None or any(op.pack is not None for op in cand)):
+            return None
+
         # set flags: at most one op; the flags come from the add pipe if it is used
         sf_ops = [op for op in cand if op.sf]
         if len(sf_ops) > 1:
@@ -398,7 +419,7 @@ class Program:
         if ws is None:
             return None
         return dict(raddr_a=raddr_a, raddr_b=raddr_b, small_imm=small_imm, muxes=muxes, ws=ws,
-                    unpack=unpack, sf=bool(sf_ops))
+                    unpack=unpack, unpack_a=unpack_a, sf=bool(sf_ops))
 
     # --- encoding ----------------------------------------------------------
 
@@ -466,6 +487,8 @@ class Program:
             pm, pack = 1, mul_op.pack
         if info['unpack'] is not None:
             pm, unpack = 1, info['unpack']
+        if info.get('unpack_a') is not None:
+            pm, unpack = 0, info['unpack_a']
         cond_add = add_op.cond if add_op is not None else 0
         cond_mul = mul_op.cond if mul_op is not None else 0
         sf = 1 if info['sf'] else 0

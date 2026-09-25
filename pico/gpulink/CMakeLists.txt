@@ -27,14 +27,16 @@ function(glsl_program name)
 			--vs ${SHADERS}/${name}.vert --fs ${SHADERS}/${name}.frag ${ARGN} -o ${out}
 		DEPENDS ${SHADERS}/${name}.vert ${SHADERS}/${name}.frag
 			${GLSLC_DIR}/glslc.py ${GLSLC_DIR}/harness.c
+			${CMAKE_CURRENT_LIST_DIR}/../../devtools/qpuasm.py
 		VERBATIM)
 	target_sources(gpulink PRIVATE ${out})
 endfunction()
-glsl_program(plasma -a a_pos:float:2 -v triangles:none)
-glsl_program(cube -a a_pos:float:3 -a a_normal:byte_norm:3 -a a_uv:float:2 -v triangles:none)
-glsl_program(sparks -a a_pos:float:3 -a a_color:ubyte_norm:4 -v points:add)
-glsl_program(solid -a a_pos:float:2 -v triangles:none -v triangles:alpha -v lines:none)
-glsl_program(builtin -a a_pos:float:2 -v triangles:none -v points:none)
+glsl_program(plasma -a a_pos:float:2 -v triangles)
+glsl_program(cube -a a_pos:float:3 -a a_normal:byte_norm:3 -a a_uv:float:2 -v triangles)
+glsl_program(sparks -a a_pos:float:3 -a a_color:ubyte_norm:4 -v points)
+glsl_program(solid -a a_pos:float:2 -v triangles -v lines)
+glsl_program(builtin -a a_pos:float:2 -v triangles -v points)
+glsl_program(texview -a a_pos:float:2 -v triangles)
 target_include_directories(gpulink PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
 # console on UART0 (GP0/GP1) -> Debugprobe UART bridge

@@ -190,16 +190,21 @@ Coordinates follow OpenGL:
 - The Pico may start sending the next frame immediately; the ring buffer absorbs
   it. Back-pressure comes only from READY.
 
-### 6.2 Clearing
+### 6.2 Render targets, jobs and clearing
 
-The V3D renders in 64×64 tiles, so a clear is part of starting a frame, not a
-separate drawing operation.
-- `CLEAR` must come **before the first draw of a frame**. A `CLEAR` after a draw
-  in the same frame is an error: it's ignored and reported with `ERROR`.
-- If a frame has no colour `CLEAR`, the previous frame's colour contents are
-  kept, and without a depth `CLEAR` the previous depth and stencil contents are
-  kept. This is slower: the tiles are loaded from memory first.
-- `CLEAR` always clears the whole panel; the scissor rectangle doesn't apply.
+- Draws go to the bound **render target**: the panel (framebuffer 0) or a
+  texture (§7.2, `BIND_FRAMEBUFFER`). The Zero collects the draws for the bound
+  target and renders them as one V3D job when the target changes, when the
+  frame ends, or when pixels are read (`READ_PIXELS`, `COPY_TEX_IMAGE`).
+- **`CLEAR` works like `glClear`, at any time.** It respects the scissor
+  rectangle, the colour mask, the depth mask and the stencil write mask. At the
+  start of a job (no draws yet) without scissor or masks it is the tile
+  buffer's clear, which is free; otherwise it is drawn as a rectangle over the
+  target.
+- If the panel gets no colour `CLEAR` in a frame, it starts from the previous
+  frame's image; without a depth or stencil `CLEAR`, from the previous depth and
+  stencil. A texture target keeps its contents, and its depth and stencil, in the
+  same way. Keeping contents costs a load of the tiles from memory.
 
 ### 6.3 Object updates within a frame
 
@@ -236,9 +241,14 @@ Payload fields are listed word by word. `[n]` means n words.
 
 | Op | Name | Payload | Meaning |
 |---|---|---|---|
-| `0x10` | CLEAR | `u32 mask`, `color color`, `f32 depth` | Clear the frame at its start (§6.2). mask bit 0 = colour, bit 1 = depth. |
+| `0x10` | CLEAR | `u32 mask`, `color color`, `f32 depth` [, `u32 stencil`] | Clear the bound target (§6.2). mask bit 0 = colour, bit 1 = depth, bit 2 = stencil. |
 | `0x11` | FRAME_END | `u32 flags` | End the frame: render and present it. flags: bit 0 = request a `FRAME_DONE` reply. |
 | `0x12` | VIEWPORT | `s32 x`, `s32 y`, `u32 width`, `u32 height`, `f32 near`, `f32 far` | Like `glViewport` + `glDepthRangef`. |
+| `0x13` | FRAMEBUFFER_CREATE | `id framebuffer`, `u32 texture` (id \| cube face << 24), `u32 flags` | A render target: level 0 of the texture (RGBA), and with flags bit 0 its own depth and stencil buffer. Recreating an id replaces it. |
+| `0x14` | FRAMEBUFFER_DELETE | `id framebuffer` | Delete it; the panel is bound if it was bound. |
+| `0x15` | BIND_FRAMEBUFFER | `id framebuffer` | Draw to this target; 0 = the panel. Renders what the old target collected. |
+| `0x16` | READ_PIXELS | `s32 x`, `s32 y`, `u32 width`, `u32 height` | Like `glReadPixels` (RGBA, unsigned bytes) from the bound target: `PIXELS` replies (§9). At most 262144 pixels. |
+| `0x17` | COPY_TEX_IMAGE | `u32 texture` (id \| level << 16 \| face << 24), `u16 xoffset, u16 yoffset`, `s32 x`, `s32 y`, `u32 width`, `u32 height` | Like `glCopyTexSubImage2D`: pixels of the bound target into a texture level. |
 
 ### 7.3 Buffers (vertex and index data)
 
@@ -248,16 +258,23 @@ Payload fields are listed word by word. `[n]` means n words.
 | `0x21` | BUFFER_DATA | `id buffer`, `u32 offset_bytes`, `u32 length_bytes`, `bytes data[…]` | Write data. offset and length are multiples of 4. |
 | `0x22` | BUFFER_DELETE | `id buffer` | Delete it. |
 
-### 7.4 Textures (texture unit 0 only in v1)
+### 7.4 Textures
 
 | Op | Name | Payload | Meaning |
 |---|---|---|---|
-| `0x28` | TEXTURE_CREATE | `id texture`, `u16 width, u16 height`, `u32 format` | Create a texture. Width and height are powers of two, 1 … 1024. |
-| `0x29` | TEXTURE_DATA | `id texture`, `u16 x, u16 y`, `u16 width, u16 height`, `bytes pixels[…]` | Upload a rectangle, rows bottom-up (GL order), tightly packed, each row padded to 4 bytes. ETC1: x, y, width, height are multiples of 4 and the data is ETC1 blocks. |
+| `0x28` | TEXTURE_CREATE | `id texture`, `u16 width, u16 height`, `u32 format` | Create a texture, 1 … 2048 × 1 … 2048. format bit 8: a cube map (square; faces +X, −X, +Y, −Y, +Z, −Z). Power-of-two textures have a full mip chain, others only level 0. |
+| `0x29` | TEXTURE_DATA | `u32 texture` (id \| level << 16 \| face << 24), `u16 x, u16 y`, `u16 width, u16 height`, `bytes pixels[…]` | Upload a rectangle of a level, rows bottom-up (GL order), tightly packed, each row padded to 4 bytes. It defines the level (as `glTexImage2D`); a level may be sent in several parts. ETC1: x and y are multiples of 4 and the data is ETC1 blocks. |
 | `0x2A` | TEXTURE_PARAMS | `id texture`, `u32 min_filter`, `u32 mag_filter`, `u32 wrap_s`, `u32 wrap_t` | Filtering and wrapping (§10.6). |
 | `0x2B` | TEXTURE_DELETE | `id texture` | Delete it. |
 | `0x2C` | TEXTURE_BIND | `id texture` | Bind to unit 0 (0 = none). |
 | `0x2D` | TEX_ENV | `u32 mode`, `color env_color` | Texture environment: MODULATE, REPLACE, DECAL or BLEND (§10.7). |
+| `0x2E` | GENERATE_MIPMAP | `id texture` | Like `glGenerateMipmap` (box filter). |
+
+A texture that isn't complete by GL ES 2.0 rules (§3.8.2: every level a
+mipmapping filter needs, and for non-power-of-two sizes `CLAMP_TO_EDGE` and no
+mipmapping) samples as (0, 0, 0, 1) in programs and disables texturing in the
+fixed-function pipeline. The default minification filter is
+`NEAREST_MIPMAP_LINEAR`, as in GL.
 
 ### 7.5 Fragment state
 
@@ -272,6 +289,12 @@ Payload fields are listed word by word. `[n]` means n words.
 | `0x36` | FRONT_FACE | `u32 winding` | 0 = CCW, 1 = CW |
 | `0x37` | ALPHA_FUNC | `u32 func`, `f32 ref` | alpha test; func as in §10.2 |
 | `0x38` | COLOR_MASK | `u32 mask` | bits 0–3 = R, G, B, A writes enabled |
+| `0x3C` | BLEND_FUNC_SEPARATE | `u32 src_rgb`, `u32 dst_rgb`, `u32 src_alpha`, `u32 dst_alpha` | Like `glBlendFuncSeparate` (`BLEND_FUNC` sets both). |
+| `0x3D` | BLEND_EQUATION | `u32 mode_rgb`, `u32 mode_alpha` | ADD, SUBTRACT, REVERSE_SUBTRACT (§10.3). |
+| `0x3E` | BLEND_COLOR | `f32 r, g, b, a` | The constant colour of the CONSTANT_* factors. |
+| `0x60` | STENCIL_FUNC | `u32 face`, `u32 func`, `u32 ref`, `u32 mask` | Like `glStencilFuncSeparate` (face: FRONT, BACK, FRONT_AND_BACK). |
+| `0x61` | STENCIL_OP | `u32 face`, `u32 fail`, `u32 zfail`, `u32 zpass` | Like `glStencilOpSeparate` (§10.3). |
+| `0x62` | STENCIL_MASK | `u32 face`, `u32 mask` | Like `glStencilMaskSeparate`. |
 | `0x39` | SCISSOR | `s32 x`, `s32 y`, `u32 width`, `u32 height` | Like `glScissor` (window coordinates, origin bottom left); applies with `SCISSOR_TEST` enabled. |
 | `0x3A` | POLYGON_OFFSET | `f32 factor`, `f32 units` | Like `glPolygonOffset`; applies to triangles with `POLYGON_OFFSET_FILL` enabled. |
 | `0x3B` | LINE_WIDTH | `f32 width` | Like `glLineWidth`: 1 … 32 pixels (clamped). |
@@ -320,10 +343,12 @@ position + colour.
 
 A **program** is a vertex shader and a fragment shader, precompiled on the PC by
 `tools/glslc/glslc.py` (GLSL ES 1.00, through Mesa's `vc4` compiler). The blob
-(`protocol/pgpu_program.h`) holds QPU code for a few **variants**: primitive class
-(triangles, lines, points) × blend mode, chosen when compiling. The compiler also
-writes a C header with the blob, the attribute locations, the uniform storage
-offsets and the sampler indices.
+(`protocol/pgpu_program.h`) holds QPU code for the primitive classes chosen when
+compiling (triangles, lines, points), each with two fragment shader endings: a
+plain one, and one that blends and masks from uniforms, so every blend state
+and colour mask works with every program. The compiler also writes a C header
+with the blob, the attribute locations, the uniform storage offsets and the
+sampler indices.
 
 | Op | Name | Payload | Meaning |
 |---|---|---|---|
@@ -337,30 +362,32 @@ offsets and the sampler indices.
 | `0x87` | VERTEX_ATTRIB | `u32 index`, `f32 v[4]` | Current value of a generic attribute (0–7), used when its array is disabled. Default (0, 0, 0, 1). |
 | `0x88` | ATTRIB_ARRAY | `u32 index`, `id buffer`, `u32 offset_bytes`, `u32 stride_bytes`, `u32 size`, `u32 type` | Point generic attribute 0–7 at a buffer. stride 0 = tightly packed; at most 255. |
 | `0x89` | ATTRIBS_ENABLE | `u32 mask` | Which generic attributes come from arrays (bit n = attribute n). |
-| `0x8A` | PROGRAM_DRAW_INLINE | `u32 mode`, `u32 vertices`, `u32 attribute_mask`, `u32 index_count`, `u32 index_type`, then per attribute in the mask (ascending): `u32 format`, `bytes data[…]`; then `bytes indices[…]` | Draw with vertex data carried in the packet (client-side arrays). format = type \| size << 8, and must be the program's. The data is `vertices` values, tightly packed and padded to a word. index_count 0 = draw the vertices in order; otherwise index_count indices follow, u8 or u16. Attributes not in the mask come from `ATTRIB_ARRAY` (first vertex 0) or `VERTEX_ATTRIB`. |
+| `0x8A` | PROGRAM_DRAW_INLINE | `u32 mode`, `u32 vertices`, `u32 attribute_mask`, `u32 index_count`, `u32 index_type`, then per attribute in the mask (ascending): `u32 format`, `bytes data[…]`; then `bytes indices[…]` | Draw with vertex data carried in the packet (client-side arrays). format = type \| size << 8; other formats than the program's are converted. The data is `vertices` values, tightly packed and padded to a word. index_count 0 = draw the vertices in order; otherwise index_count indices follow, u8 or u16. Attributes not in the mask come from `ATTRIB_ARRAY` (first vertex 0) or `VERTEX_ATTRIB`. |
 
 **Drawing:** while a program is in use, `DRAW_ARRAYS` and `DRAW_ELEMENTS` use
 it and the generic attributes, and `PROGRAM_DRAW_INLINE` draws vertex data from
 the packet. `DRAW_INLINE` (the fixed-function layout) isn't available with
-programs (error 5). The Zero picks the variant that matches the primitive mode and the
-blend state (`ENABLE BLEND` and `BLEND_FUNC`); if the program has none, the draw
-is reported as `ERROR` 10.
+programs (error 5). The Zero picks the variant for the primitive mode; if the
+program wasn't compiled for it, the draw is reported as `ERROR` 10.
 
-- **Attributes:** an array must have exactly the type and size the program was
-  compiled for (error 5 otherwise). A disabled array uses the current value from
-  `VERTEX_ATTRIB`, converted to that format.
+- **Attributes:** arrays of any type and size can be used. If they differ from
+  what the program was compiled for (the fast path), the Zero converts the
+  vertices used (missing components (0, 0, 0, 1), as GL). A disabled array uses
+  the current value from `VERTEX_ATTRIB`.
 - **State that applies:** viewport and depth range, depth test and mask, culling
-  and front face, blending (through the variant), textures and their parameters,
-  scissor, polygon offset and line width.
+  and front face, blending (all of §10.3), colour mask, stencil, textures and
+  their parameters, scissor, polygon offset and line width.
   **Ignored:** lighting, fog, alpha test, texture environment, shade model and the
-  fixed-function matrices. The colour mask must be all on (error 10 otherwise).
-- **Textures:** all formats are sampled as RGBA; `A8` returns (1, 1, 1, A), unlike
-  GL ES 2.0's (0, 0, 0, A). A sampler whose unit has no texture reads (0, 0, 0, 1).
-- **GLSL:** GLSL ES 1.00 as compiled by Mesa's `vc4` driver, for the panel as a
-  window framebuffer (RGB565, rows top down): `gl_FragCoord`, `gl_FrontFacing`,
-  `gl_PointCoord` and `gl_DepthRange` follow GL. The framebuffer has no alpha
-  channel, so the fragment alpha written is 1 and `DST_ALPHA` reads 1. Not
-  supported: cube-map samplers, and integer arithmetic beyond what fits in floats.
+  fixed-function matrices.
+- **Textures:** 2D and cube-map samplers; formats as GL ES 2.0 (`A8` reads
+  (0, 0, 0, A), `L8` (L, L, L, 1)). A sampler whose unit has no complete
+  texture reads (0, 0, 0, 1).
+- **GLSL:** GLSL ES 1.00 as compiled by Mesa's `vc4` driver: `gl_FragCoord`,
+  `gl_FrontFacing`, `gl_PointCoord` and `gl_DepthRange` follow GL on the panel
+  and on texture targets, except `gl_PointCoord.y`, which is inverted when
+  drawing points into a texture. The panel has no alpha channel (`DST_ALPHA`
+  reads 1); texture targets have one. Not supported: integer arithmetic beyond
+  what fits in floats.
 - **Limits:** 64 programs, blob at most 65536 words, uniform storage at most 4096
   words, 8 attributes, 8 samplers, `count` at most 65535 per draw.
 - `DRAW_ARRAYS` with a program reads the arrays starting at `first`: `first` can
@@ -388,6 +415,9 @@ is reported as `ERROR` 10.
 | arrays | none enabled, none bound |
 | bound texture | none (all units) |
 | program | 0 (fixed function); no programs |
+| framebuffer | 0 (the panel); no framebuffers |
+| blending | ONE, ZERO for RGB and alpha; ADD; blend colour (0, 0, 0, 0) |
+| stencil | test off; func ALWAYS, ref 0, masks 0xFF; ops KEEP (both faces) |
 | scissor | disabled, (0, 0, width, height) |
 | polygon offset | disabled, factor 0, units 0 |
 | line width | 1 |
@@ -432,12 +462,12 @@ A reply to a request uses the request's opcode (`GET_INFO` → `INFO`, `PING` �
 | `0x03` | PONG | `u32 cookie` | `PING` |
 | `0x04` | STATUS | `u32 frames`, `u32 crc_errors`, `u32 command_errors`, `u32 ring_free_bytes`, `u32 last_frame_us` | `GET_STATUS` |
 | `0x11` | FRAME_DONE | `u32 frame_number`, `u32 render_us`, `u32 draws`, `u32 triangles` | After a frame whose `FRAME_END` had flag bit 0 set is handed to the panel |
+| `0x16` | PIXELS | `u32 offset`, `color pixels[1 … 61]` | `READ_PIXELS`: the pixels from `offset` (in pixels, rows bottom up), in as many replies as needed |
 | `0x7F` | ERROR | `u32 code`, `u32 opcode`, `u32 detail` | An invalid command (§6.4) or a CRC error (code 1, opcode 0) |
 
 Error codes: 1 = CRC, 2 = unknown opcode, 3 = bad length, 4 = bad id,
-5 = bad enum, 6 = no such object, 7 = out of memory, 8 = CLEAR after a draw,
-9 = limit exceeded, 10 = program (invalid blob, no matching variant, or
-unsupported state).
+5 = bad enum, 6 = no such object, 7 = out of memory, 8 = (not used any more),
+9 = limit exceeded, 10 = program (invalid blob or no variant for the primitive).
 
 `ERROR` detail: the offending id for id and object errors, the received LENGTH
 for length errors, the header word for CRC errors, otherwise 0.
@@ -470,7 +500,8 @@ that 1 bit. The next packet may follow directly after the CRC word.
 | 5 | LIGHT0 | 12 | NORMALIZE |
 | 6 | LIGHT1 | 13 | SCISSOR_TEST |
 | | | 14 | POLYGON_OFFSET_FILL |
-| | | 15–31 | reserved, must be 0 |
+| | | 15 | STENCIL_TEST |
+| | | 16–31 | reserved, must be 0 |
 
 ### 10.2 Compare functions (depth, alpha)
 
@@ -481,7 +512,15 @@ This is the same order as the V3D's depth-test field.
 
 0 ZERO, 1 ONE, 2 SRC_COLOR, 3 ONE_MINUS_SRC_COLOR, 4 SRC_ALPHA,
 5 ONE_MINUS_SRC_ALPHA, 6 DST_ALPHA, 7 ONE_MINUS_DST_ALPHA, 8 DST_COLOR,
-9 ONE_MINUS_DST_COLOR, 10 SRC_ALPHA_SATURATE (source only).
+9 ONE_MINUS_DST_COLOR, 10 SRC_ALPHA_SATURATE (source only), 11 CONSTANT_COLOR,
+12 ONE_MINUS_CONSTANT_COLOR, 13 CONSTANT_ALPHA, 14 ONE_MINUS_CONSTANT_ALPHA.
+
+Blend equations: 0 ADD, 1 SUBTRACT, 2 REVERSE_SUBTRACT.
+
+Stencil operations: 0 KEEP, 1 ZERO, 2 REPLACE, 3 INCR, 4 DECR, 5 INVERT,
+6 INCR_WRAP, 7 DECR_WRAP.
+
+In the fixed-function pipeline SRC_ALPHA_SATURATE is approximated by SRC_ALPHA.
 
 ### 10.4 Attributes
 
@@ -504,10 +543,9 @@ This is the same order as the V3D's depth-test field.
 ### 10.6 Texture parameters
 
 - Formats: 0 RGBA8888, 1 RGB565, 2 RGBA4444, 3 RGBA5551, 4 L8 (luminance),
-  5 A8 (alpha), 6 LA88, 7 ETC1 (4 bits per pixel).
+  5 A8 (alpha), 6 LA88, 7 ETC1 (4 bits per pixel), 8 RGB888.
 - Filters: 0 NEAREST, 1 LINEAR, 2 NEAREST_MIPMAP_NEAREST, 3 LINEAR_MIPMAP_NEAREST,
-  4 NEAREST_MIPMAP_LINEAR, 5 LINEAR_MIPMAP_LINEAR. Mipmaps are reserved in v1:
-  the mipmap filters behave like their base filter.
+  4 NEAREST_MIPMAP_LINEAR, 5 LINEAR_MIPMAP_LINEAR.
 - Wrap modes: 0 REPEAT, 1 CLAMP_TO_EDGE, 2 MIRRORED_REPEAT.
 
 ### 10.7 Primitive modes and texture environment
@@ -523,7 +561,9 @@ This is the same order as the V3D's depth-test field.
 | Limit | Value |
 |---|---|
 | buffers | 256 ids, total 16 MB |
-| textures | 128 ids, 1 … 1024 × 1 … 1024, total 32 MB |
+| textures | 128 ids, 1 … 2048 × 1 … 2048, total 32 MB |
+| framebuffers | 16 ids |
+| texture units | 8 |
 | lights | 4 |
 | vertices per draw | 65536 |
 | packet payload | 16384 words (64 KB) |
@@ -617,8 +657,14 @@ existing code; uploading to buffers once is the fast path.
   the hardware at 320×240: up to x −960 … 1280 px renders, x −1120 … 1440 px
   loses triangles, although the 12.4 fixed-point format reaches ±2048.
 - **Points and lines** are screen-space quads, 1 pixel and `LINE_WIDTH` wide.
-- **Depth and stencil** are stored after every frame (T-format, about 80 µs per
-  frame at 320×240) and loaded at the start of a frame without depth `CLEAR`.
+- **Jobs:** each render target's draws are one V3D job (binning, then rendering
+  64×64 tiles). Colour is loaded from memory unless cleared; depth and stencil
+  are stored after every job (T-format, about 80 µs at 320×240) and loaded
+  unless cleared. A frame that switches targets renders several jobs.
+- **Texture targets** are level 0 of a texture, in its tiled layout (T or LT
+  RGBA8888, the tile buffer's format), not y-flipped: rows in GL order.
+- **Stencil:** every fragment shader writes the three TLB stencil setup words
+  from uniforms (Mesa's encoding); with the test off they say "always pass, keep".
 - **Scissor** and the viewport become the V3D's clip window; polygon offset is
   its depth offset (factor and units as in Mesa's `vc4`).
 - **Programs** run in the V3D's GL shader mode: the binner runs the coordinate
@@ -626,16 +672,24 @@ existing code; uploading to buffers once is the fast path.
   Each draw gets a shader record, attribute records pointing straight into the
   buffers, and uniform streams resolved at draw time. Buffers used by a program
   draw are copied on write for the rest of the frame (§6.3). The viewport has a
-  negative y scale, because the panel's rows go top to bottom.
-- **Fragment shaders:** 40 built-in QPU programs (`gpu/shaders.py`, generated with
-  `devtools/qpuasm.py`): texture environment (none, MODULATE, REPLACE, DECAL,
-  BLEND) × fog × alpha test × blending. Blending and the colour mask are done in
-  the shader (tile buffer colour read); `SRC_ALPHA_SATURATE` is approximated by
-  `SRC_ALPHA`.
-- **Textures:** converted at upload to raster RGBA8888 (TMU type RGBA32R, R in
-  byte 0), rows bottom-up as sent. The TMU reads raster rows at a stride of
-  max(width, 4) texels (verified with widths 1, 2, 4, 8 and 64). ETC1 is decoded
-  on the ARM. No mipmaps.
+  negative y scale on the panel, because its rows go top to bottom.
+- **Program fragment shaders** are compiled by Mesa for an RGBA8888 window
+  framebuffer with blending off; `glslc` replaces the final colour write with one
+  of two endings (`devtools/qpuasm.py`): reorder Mesa's BGRA into the tile
+  buffer's RGBA (8 instructions), or load the tile buffer's colour and blend
+  per channel with 48 coefficient uniforms, which cover every blend factor and
+  equation, the constant colour and the colour mask (about 75 instructions).
+- **Fixed-function fragment shaders:** 40 built-in QPU programs (`gpu/shaders.py`,
+  generated with `devtools/qpuasm.py`): texture environment (none, MODULATE,
+  REPLACE, DECAL, BLEND) × fog × alpha test × blending. Blending and the colour
+  mask are done in the shader (tile buffer colour read), with the same
+  coefficients as programs; `SRC_ALPHA_SATURATE` is approximated by `SRC_ALPHA`.
+  For `A8` textures the texel's RGB is taken as 1 (GL ES 1.1 environments).
+- **Textures:** converted at upload to RGBA8888 (R in byte 0) in Mesa's tiled
+  layouts (LT for levels up to 16 pixels, else T), levels smallest first with
+  level 0 page aligned, cube faces as whole mip trees; rows bottom-up as sent.
+  ETC1 is decoded on the ARM. (Raster RGBA32R, used before, reads rows at a
+  stride of max(width, 4) texels: verified with widths 1, 2, 4, 8 and 64.)
 - **Output:** the V3D renders RGB565 directly into two alternating panel buffers.
   The ST7789 DMA driver sends them at 75 MHz (60 fps at 320×240).
 
@@ -644,6 +698,6 @@ existing code; uploading to buffers once is the fast path.
 - The exact READY thresholds and ring size, to be tuned against real workloads.
 - Whether `DRAW_INLINE` should get 16-bit formats (half the bandwidth for
   screen-space 2D).
-- Mipmaps (reserved in v1).
-- Programmable pipeline (option B): opcodes `0x80`–`0xBF`, program blobs compiled
-  offline (qpuasm now, later Mesa's `vc4` compiler via NIR on the PC).
+- The generic blend ending costs about 75 instructions per fragment; common
+  blend states could get cheaper specialised endings.
+- A GL ES API wrapper on the Pico (`gl*` names, state queries, `glGetError`).

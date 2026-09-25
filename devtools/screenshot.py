@@ -2,20 +2,24 @@
 """Extract a screenshot dumped by the gpu app (PGPU_OP_DEBUG_SCREENSHOT) from
 a Zero log file and write it as PNG.
 
-usage: devtools/screenshot.py [log] [out.png] [--scale N]
+usage: devtools/screenshot.py [log] [out.png] [--scale N] [--index N]
+  --index: which screenshot in the log (0 = first, default: the last)
 """
 import base64, struct, sys, zlib
 
 args = [a for a in sys.argv[1:] if not a.startswith('--')]
-scale = 1
+scale, index = 1, -1
 if '--scale' in sys.argv:
     scale = int(sys.argv[sys.argv.index('--scale') + 1])
-    args = [a for a in args if a != str(scale)]
+if '--index' in sys.argv:
+    index = int(sys.argv[sys.argv.index('--index') + 1])
+opts = [sys.argv[i + 1] for i, a in enumerate(sys.argv) if a in ('--scale', '--index')]
+args = [a for a in sys.argv[1:] if not a.startswith('--') and a not in opts]
 log = args[0] if args else 'devtools/logs/last.log'
 out = args[1] if len(args) > 1 else 'devtools/logs/screenshot.png'
 
 lines = open(log, errors='replace').read().splitlines()
-start = max(i for i, l in enumerate(lines) if l.startswith('#SCREENSHOT'))
+start = [i for i, l in enumerate(lines) if l.startswith('#SCREENSHOT')][index]
 _, w, h, fmt = lines[start].split()
 w, h = int(w), int(h)
 end = next(i for i in range(start, len(lines)) if lines[i].startswith('#END'))

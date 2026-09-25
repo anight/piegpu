@@ -9,7 +9,7 @@
  *	vs <file>
  *	fs <file>
  *	attrib <name> <float|byte|ubyte|short|ushort> <size 1-4> <normalized 0|1>
- *	variant <triangles|lines|points> <none|alpha|add|premul|multiply>
+ *	variant <triangles|lines|points>
  *
  * Attributes get locations 0, 1, ... in the order listed. Every active
  * uniform scalar is set to a unique marker value so that glslc.py can find
@@ -130,7 +130,7 @@ int main (int argc, char **argv)
 	char line[2048];
 	while (fgets (line, sizeof line, job))
 	{
-		char a[1024], b[64], c[64];
+		char a[1024], b[64];
 		int n, m;
 		if (sscanf (line, "vs %1023s", a) == 1)
 			strcpy (vs, a);
@@ -147,11 +147,11 @@ int main (int argc, char **argv)
 			attribs[nattribs].norm = m;
 			nattribs++;
 		}
-		else if (sscanf (line, "variant %63s %63s", b, c) == 2 && nvariants < 32)
+		else if (sscanf (line, "variant %63s", b) == 1 && nvariants < 32)
 		{
 			variants[nvariants].prim =   !strcmp (b, "points") ? GL_POINTS
 						   : !strcmp (b, "lines") ? GL_LINES : GL_TRIANGLES;
-			strcpy (variants[nvariants].blend, c);
+			strcpy (variants[nvariants].blend, "none");
 			nvariants++;
 		}
 	}
@@ -168,14 +168,16 @@ int main (int argc, char **argv)
 	}
 	eglBindAPI (EGL_OPENGL_ES_API);
 
-	/* render target: an RGB565 pbuffer with depth and stencil, like the
-	   Zero's panel: a window-system framebuffer (rows top down, so Mesa
-	   flips gl_FragCoord, gl_PointCoord and facing as for a window) */
+	/* render target: an 8888 pbuffer with depth and stencil. A window-system
+	   framebuffer like the Zero's panel (rows top down, so Mesa flips
+	   gl_FragCoord, gl_PointCoord and facing as for a window), with alpha:
+	   the fragment shader keeps the source alpha, which glslc's blend code
+	   needs. Mesa's colour output is BGRA (B in byte 0); glslc reorders it. */
 	EGLint config_attribs[] =
 	{
 		EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
 		EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
-		EGL_RED_SIZE, 5, EGL_GREEN_SIZE, 6, EGL_BLUE_SIZE, 5, EGL_ALPHA_SIZE, 0,
+		EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
 		EGL_DEPTH_SIZE, 24, EGL_STENCIL_SIZE, 8,
 		EGL_NONE
 	};
@@ -190,12 +192,12 @@ int main (int argc, char **argv)
 		eglGetConfigAttrib (dpy, configs[i], EGL_GREEN_SIZE, &g);
 		eglGetConfigAttrib (dpy, configs[i], EGL_BLUE_SIZE, &b);
 		eglGetConfigAttrib (dpy, configs[i], EGL_ALPHA_SIZE, &a);
-		if (r == 5 && g == 6 && b == 5 && a == 0)
+		if (r == 8 && g == 8 && b == 8 && a == 8)
 			config = configs[i];
 	}
 	if (!config)
 	{
-		printf ("error no RGB565 pbuffer config\n");
+		printf ("error no RGBA8888 pbuffer config\n");
 		return 1;
 	}
 	EGLint pbuffer_attribs[] = {EGL_WIDTH, 320, EGL_HEIGHT, 240, EGL_NONE};
@@ -216,6 +218,17 @@ int main (int argc, char **argv)
 
 	glViewport (0, 0, 320, 240);
 	glEnable (GL_DEPTH_TEST);
+
+	/* stencil test on, two-sided with uncommon write masks: the fragment
+	   shader then writes all three stencil setup words from uniforms (the
+	   Zero sets "always pass, keep" while the test is off) */
+	glEnable (GL_STENCIL_TEST);
+	glStencilFuncSeparate (GL_FRONT, GL_LESS, 1, 0x5A);
+	glStencilFuncSeparate (GL_BACK, GL_GREATER, 2, 0x3C);
+	glStencilOpSeparate (GL_FRONT, GL_INCR, GL_DECR, GL_REPLACE);
+	glStencilOpSeparate (GL_BACK, GL_DECR, GL_INCR, GL_INVERT);
+	glStencilMaskSeparate (GL_FRONT, 0x5A);
+	glStencilMaskSeparate (GL_BACK, 0x3C);
 
 	GLuint prog = glCreateProgram ();
 	glAttachShader (prog, compile (GL_VERTEX_SHADER, vs));
@@ -272,22 +285,30 @@ int main (int argc, char **argv)
 
 		if (type == GL_SAMPLER_2D || type == GL_SAMPLER_CUBE)
 		{
-			if (type == GL_SAMPLER_CUBE)
-			{
-				printf ("error %s: cube map samplers are not supported\n", name);
-				return 1;
-			}
 			GLint loc = glGetUniformLocation (prog, name);
 			glUniform1i (loc, sampler);
 			glActiveTexture (GL_TEXTURE0 + sampler);
 			GLuint tex;
 			glGenTextures (1, &tex);
-			glBindTexture (GL_TEXTURE_2D, tex);
-			glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA, 4 << sampler, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-			glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-			glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-			glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-			printf ("sampler %s %d\n", name, sampler);
+			if (type == GL_SAMPLER_2D)
+			{
+				glBindTexture (GL_TEXTURE_2D, tex);
+				glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA, 4 << sampler, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+				glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+				glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+				glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+			}
+			else
+			{
+				glBindTexture (GL_TEXTURE_CUBE_MAP, tex);
+				for (int f = 0; f < 6; f++)
+					glTexImage2D (GL_TEXTURE_CUBE_MAP_POSITIVE_X + f, 0, GL_RGBA, 4 << sampler,
+						      4 << sampler, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+				glTexParameteri (GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+				glTexParameteri (GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+				glTexParameteri (GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+			}
+			printf ("sampler %s %d %s\n", name, sampler, type == GL_SAMPLER_CUBE ? "cube" : "2d");
 			sampler++;
 			continue;
 		}

@@ -44,14 +44,12 @@
 
 enum pgpu_prim_class { PGPU_PRIM_TRIANGLES, PGPU_PRIM_LINES, PGPU_PRIM_POINTS };
 
-/* blending compiled into the fragment shader (factors as in BLEND_FUNC) */
+/* the fragment shader's ending (tools/glslc): how the colour gets to the
+   tile buffer */
 enum pgpu_blend_mode
 {
-	PGPU_BLEND_NONE,		/* blending disabled */
-	PGPU_BLEND_ALPHA,		/* SRC_ALPHA, ONE_MINUS_SRC_ALPHA */
-	PGPU_BLEND_ADD,			/* ONE, ONE */
-	PGPU_BLEND_PREMUL,		/* ONE, ONE_MINUS_SRC_ALPHA */
-	PGPU_BLEND_MULTIPLY		/* DST_COLOR, ZERO */
+	PGPU_BLEND_PLAIN,		/* no blending, colour mask all on */
+	PGPU_BLEND_GENERIC		/* blending and colour mask from PGPU_U_BLEND uniforms */
 };
 
 /* variant shader indices word: FS | VS << 8 | CS << 16 */
@@ -86,13 +84,19 @@ enum pgpu_uniform_kind
 	PGPU_U_TEXTURE_CONFIG_P1 = 7,
 	PGPU_U_TEXTURE_CONFIG_P2 = 8,
 	PGPU_U_TEXTURE_FIRST_LEVEL = 9,
+	PGPU_U_STENCIL = 22,		/* TLB stencil setup: data 0 front, 1 back, 2 write masks */
 	PGPU_U_UNIFORMS_ADDRESS = 24,	/* bus address of this uniform stream */
 
 	/* GL built-in state (Mesa state variables; data is the component 0-3),
 	   values as Mesa defines them for a window framebuffer (rows top down) */
 	PGPU_U_FB_Y_TRANSFORM = 32,	/* gl_FragCoord.y: -1, height, 1, 0 */
 	PGPU_U_DEPTH_RANGE = 33,	/* gl_DepthRange: near, far, far - near, 1 */
-	PGPU_U_POINT_Y_TRANSFORM = 34	/* gl_PointCoord.y: -1, 1, 0, 0 */
+	PGPU_U_POINT_Y_TRANSFORM = 34,	/* gl_PointCoord.y: -1, 1, 0, 0 */
+
+	/* blending: data = channel * 12 + term; per channel (R, G, B, A) the
+	   source factor, then the destination factor, each as coefficients of
+	   (1, As, Ad, Sc, Dc, min (As, 1 - Ad)); the equation's sign included */
+	PGPU_U_BLEND = 35
 };
 
 #endif

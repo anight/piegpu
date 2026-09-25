@@ -52,7 +52,7 @@ struct TGLDraw
 
 	// viewport (panel pixels, y down)
 	float fCentreX, fCentreY;
-	float fHalfWidth, fHalfHeight;	// the y scale is -fHalfHeight
+	float fHalfWidth, fScaleY;	// fScaleY: -half height for rows top down
 	float fZScale, fZOffset;
 
 	u8 nMode;			// primitive mode (same values as GL)
@@ -62,6 +62,26 @@ struct TGLDraw
 	u8 nIndexType;			// 0 u8, 1 u16
 	u32 nMaxIndex;
 };
+
+// where a job renders to
+struct TRenderTarget
+{
+	u32 nColorBus;			// colour buffer (store address)
+	unsigned nWidth, nHeight;
+	u16 nModeFlags;			// TILE_RENDERING_MODE_CONFIG flags: colour and memory format
+	u16 nLoadStore;			// LOAD_TILE_BUFFER_GENERAL bits for the colour buffer
+	u32 nZSBus;			// depth and stencil storage (T-format), 0: none
+};
+
+struct TJobClear
+{
+	u32 nColor;			// RGBA8888 (0xAABBGGRR)
+	float fDepth;			// 0 .. 1
+	u8 nStencil;
+};
+
+// depth and stencil storage (T-format, 4 bytes per pixel, generously padded)
+#define DEPTH_BUFFER_SIZE(w, h)		((((w) + 127) & ~127) * (((h) + 127) & ~127) * 4)
 
 struct TRenderStats
 {
@@ -105,13 +125,23 @@ public:
 	u32 *AllocUniforms (unsigned nWords, u32 *pBus);
 	u8 *AllocData (unsigned nBytes, u32 *pBus);	// 16-byte aligned, in the vertex pool
 
-	/// \brief Render the collected frame and hand it to the panel
-	/// \param bClearColor FALSE: start from the previous frame's image
-	/// \param nClearColor RGBA8888 (0xAABBGGRR)
-	/// \param bClearDepth FALSE: start from the previous frame's depth and stencil
-	/// \param fClearDepth 0 .. 1
-	boolean EndFrame (boolean bClearColor, u32 nClearColor, boolean bClearDepth, float fClearDepth,
-			  TRenderStats *pStats);
+	/// \brief The panel's back buffer as a target, and the previous frame's image
+	void GetPanelTarget (TRenderTarget *pTarget, u32 *pPreviousBus) const;
+
+	/// \brief Render the collected draws into a target (a job); the stats add up
+	/// \param nLoadColorBus colour to start from (target's format), 0: clear
+	/// \param bLoadZS start from the stored depth and stencil, else clear
+	boolean RenderJob (const TRenderTarget &rTarget, u32 nLoadColorBus, boolean bLoadZS,
+			   const TJobClear &rClear, TRenderStats *pStats);
+
+	/// \brief Hand the back buffer to the panel (FRAME pulse) and swap buffers
+	void Present (TRenderStats *pStats);
+
+	/// \return Draws collected for the next job
+	unsigned GetDraws (void) const		{ return m_nDraws; }
+
+	/// \return The back buffer (RGB565), for read-back
+	const u16 *GetBackBuffer (void) const	{ return m_pFrameBuffer[m_nBuffer]; }
 
 	/// \brief Drop the draws collected for the current frame
 	void DiscardFrame (void);
@@ -145,8 +175,7 @@ private:
 	u8 *m_pTileState;
 	u8 *m_pOverflow;
 	u16 *m_pFrameBuffer[2];
-	u32 *m_pDepthBuffer;		// depth and stencil between frames (T-format)
-	boolean m_bDepthValid;
+	u32 *m_pDepthBuffer;		// the panel's depth and stencil (T-format)
 	unsigned m_nBuffer;
 
 	struct TDraw

@@ -29,7 +29,8 @@ CHANNELS = 'rgba'
 
 # uniform kinds (shared with renderer.cpp through shaders.h)
 UNIFORM_KINDS = ['TEX_P0', 'TEX_P1', 'ENV_R', 'ENV_G', 'ENV_B', 'FOG_R', 'FOG_G', 'FOG_B',
-                 'ALPHA_REF', 'ALPHA_KG', 'ALPHA_KL', 'ALPHA_KE'] + \
+                 'ALPHA_REF', 'ALPHA_KG', 'ALPHA_KL', 'ALPHA_KE',
+                 'STENCIL0', 'STENCIL1', 'STENCIL2', 'TEX_RGB_MUL', 'TEX_RGB_ADD'] + \
                 ['BLEND_%s%d' % (c.upper(), k) for c in CHANNELS for k in range(10)]
 
 
@@ -52,6 +53,13 @@ def fragment_shader(tex, fog, alpha, blend):
         texel = ['rb0', 'rb1', 'rb2', 'rb3']
         for i, byte in enumerate(('8a', '8b', '8c', '8d')):	# R in byte 0
             p.mov(texel[i], 'r4.' + byte)
+        # ALPHA textures are stored (0, 0, 0, A) as GL ES 2.0 has them; GL ES
+        # 1.1 texture environments use their RGB as 1: RGB = RGB * mul + add
+        p.mov('ra8', p.unif('TEX_RGB_MUL'))
+        p.mov('ra9', p.unif('TEX_RGB_ADD'))
+        for i in range(3):
+            p.fmul('r0', texel[i], 'ra8')
+            p.fadd(texel[i], 'r0', 'ra9')
 
         mode = TEX_MODES[tex]
         if mode == 'MODULATE':				# C = Cf * Ct, A = Af * At
@@ -122,6 +130,9 @@ def fragment_shader(tex, fog, alpha, blend):
         for i in range(4):
             p.mov('r3.8' + 'abcd'[i], color[i])
 
+    # stencil setup (front, back, write masks; test off: always pass, keep)
+    for n in range(3):
+        p.mov('tlbs', p.unif('STENCIL%d' % n))
     p.mov('tlbz', 'rb15', cond=write_cond)
     p.mov('tlbc', 'r3', cond=write_cond)
     p.sig('thrend')

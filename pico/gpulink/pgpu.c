@@ -42,6 +42,11 @@ static uint64_t rx_bit;			/* parse position, bits, unwrapped */
 static repeating_timer_t rx_timer;
 
 #define REPLY_QUEUE	16
+
+/* PIXELS replies go straight here (pgpu_read_pixels) */
+static uint32_t *volatile pixel_sink;
+static uint32_t pixel_sink_words;
+static volatile uint32_t pixel_words_received;
 static pgpu_reply_t reply_queue[REPLY_QUEUE];
 static volatile uint32_t reply_head, reply_tail;	/* tail written by the parser */
 
@@ -127,6 +132,19 @@ static void rx_parse (void)
 		stats.replies++;
 
 		uint8_t opcode = PGPU_HEADER_OP (header);
+		if (opcode == PGPU_REPLY_PIXELS && length >= 1)
+		{
+			uint32_t *sink = pixel_sink;
+			uint32_t offset = words[1], n = length - 1;
+			if (sink && offset < pixel_sink_words)
+			{
+				if (n > pixel_sink_words - offset)
+					n = pixel_sink_words - offset;
+				memcpy (sink + offset, &words[2], n * 4);
+				pixel_words_received += n;
+			}
+			continue;
+		}
 		if (opcode == PGPU_REPLY_ERROR && length >= 3)
 		{
 			stats.zero_errors++;
@@ -568,7 +586,7 @@ void pgpu_buffer_data (uint32_t id, uint32_t offset_bytes, const void *data, uin
 
 /* ---- textures ------------------------------------------------------------ */
 
-static const uint8_t bytes_per_pixel[] = {4, 2, 2, 2, 1, 1, 2, 0};
+static const uint8_t bytes_per_pixel[] = {4, 2, 2, 2, 1, 1, 2, 0, 3};
 
 void pgpu_texture_create (uint32_t id, uint32_t width, uint32_t height, uint32_t format)
 {
@@ -597,20 +615,36 @@ static void texture_part (uint32_t id, uint32_t x, uint32_t y, uint32_t w, uint3
 	pgpu_end ();
 }
 
+void pgpu_texture_create_cube (uint32_t id, uint32_t size, uint32_t format)
+{
+	pgpu_texture_create (id, size, size, format | PGPU_TEXTURE_CUBE);
+}
+
+void pgpu_generate_mipmap (uint32_t id)		{ cmd1 (PGPU_OP_GENERATE_MIPMAP, id); }
+
 void pgpu_texture_data (uint32_t id, uint32_t x, uint32_t y, uint32_t width, uint32_t height,
 			uint32_t format, const void *pixels)
 {
+	pgpu_texture_data_level (id, 0, 0, x, y, width, height, format, pixels);
+}
+
+void pgpu_texture_data_level (uint32_t id, uint32_t level, uint32_t face, uint32_t x, uint32_t y,
+			      uint32_t width, uint32_t height, uint32_t format, const void *pixels)
+{
+	id = PGPU_TEXTURE_TARGET (id, level, face);
 	const uint8_t *src = pixels;
 
 	if (format == PGPU_ETC1)
 	{
 		/* 4x4 blocks of 8 bytes, block rows bottom-up */
-		uint32_t row_bytes = width / 4 * 8;
+		uint32_t row_bytes = (width + 3) / 4 * 8;
 		uint32_t rows_per_part = MAX_DATA_BYTES / row_bytes;
-		for (uint32_t by = 0; by < height / 4; by += rows_per_part)
+		uint32_t block_rows = (height + 3) / 4;
+		for (uint32_t by = 0; by < block_rows; by += rows_per_part)
 		{
-			uint32_t n = height / 4 - by < rows_per_part ? height / 4 - by : rows_per_part;
-			texture_part (id, x, y + by * 4, width, n * 4, src + by * row_bytes,
+			uint32_t n = block_rows - by < rows_per_part ? block_rows - by : rows_per_part;
+			uint32_t h = by * 4 + n * 4 > height ? height - by * 4 : n * 4;
+			texture_part (id, x, y + by * 4, width, h, src + by * row_bytes,
 				      row_bytes, row_bytes, n);
 		}
 		return;
@@ -1003,4 +1037,99 @@ bool pgpu_draw_elements_client (uint32_t mode, uint32_t count, uint32_t index_ty
 	}
 
 	return draw_inline_packet (mode, lo, hi - lo + 1, rebased, count);
+}
+
+void pgpu_blend_func_separate (uint32_t src_rgb, uint32_t dst_rgb, uint32_t src_alpha, uint32_t dst_alpha)
+{
+	uint32_t *p = pgpu_begin (PGPU_OP_BLEND_FUNC_SEPARATE, 4);
+	p[0] = src_rgb;
+	p[1] = dst_rgb;
+	p[2] = src_alpha;
+	p[3] = dst_alpha;
+	pgpu_end ();
+}
+
+void pgpu_blend_equation (uint32_t mode_rgb, uint32_t mode_alpha)	{ cmd2 (PGPU_OP_BLEND_EQUATION, mode_rgb, mode_alpha); }
+
+void pgpu_blend_color (float r, float g, float b, float a)
+{
+	uint32_t *p = pgpu_begin (PGPU_OP_BLEND_COLOR, 4);
+	p[0] = f2u (r);
+	p[1] = f2u (g);
+	p[2] = f2u (b);
+	p[3] = f2u (a);
+	pgpu_end ();
+}
+
+static void cmd4 (uint8_t op, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
+{
+	uint32_t *p = pgpu_begin (op, 4);
+	p[0] = a;
+	p[1] = b;
+	p[2] = c;
+	p[3] = d;
+	pgpu_end ();
+}
+
+void pgpu_stencil_func (uint32_t face, uint32_t func, uint32_t ref, uint32_t mask)
+{
+	cmd4 (PGPU_OP_STENCIL_FUNC, face, func, ref, mask);
+}
+
+void pgpu_stencil_op (uint32_t face, uint32_t fail, uint32_t zfail, uint32_t zpass)
+{
+	cmd4 (PGPU_OP_STENCIL_OP, face, fail, zfail, zpass);
+}
+
+void pgpu_stencil_mask (uint32_t face, uint32_t mask)	{ cmd2 (PGPU_OP_STENCIL_MASK, face, mask); }
+
+void pgpu_clear_stencil (uint32_t mask, uint32_t color, float depth, uint32_t stencil)
+{
+	cmd4 (PGPU_OP_CLEAR, mask, color, f2u (depth), stencil);
+}
+
+/* ---- framebuffers ---------------------------------------------------------- */
+
+void pgpu_framebuffer_create (uint32_t id, uint32_t texture, uint32_t face, uint32_t flags)
+{
+	uint32_t *p = pgpu_begin (PGPU_OP_FRAMEBUFFER_CREATE, 3);
+	p[0] = id;
+	p[1] = texture | face << 24;
+	p[2] = flags;
+	pgpu_end ();
+}
+
+void pgpu_framebuffer_delete (uint32_t id)	{ cmd1 (PGPU_OP_FRAMEBUFFER_DELETE, id); }
+void pgpu_bind_framebuffer (uint32_t id)	{ cmd1 (PGPU_OP_BIND_FRAMEBUFFER, id); }
+
+bool pgpu_read_pixels (int32_t x, int32_t y, uint32_t width, uint32_t height, uint32_t *pixels,
+		       uint32_t timeout_ms)
+{
+	pixel_sink_words = width * height;
+	pixel_words_received = 0;
+	pixel_sink = pixels;
+
+	cmd4 (PGPU_OP_READ_PIXELS, (uint32_t) x, (uint32_t) y, width, height);
+	pgpu_flush ();
+
+	absolute_time_t end = make_timeout_time_ms (timeout_ms);
+	while (pixel_words_received < pixel_sink_words && !time_reached (end))
+	{
+		tight_loop_contents ();
+	}
+	pixel_sink = NULL;
+	return pixel_words_received >= pixel_sink_words;
+}
+
+void pgpu_copy_tex_image (uint32_t texture, uint32_t level, uint32_t face, uint32_t xoffset,
+			  uint32_t yoffset, int32_t x, int32_t y, uint32_t width, uint32_t height)
+{
+	uint32_t *p = pgpu_begin (PGPU_OP_COPY_TEX_IMAGE, 6);
+	p[0] = PGPU_TEXTURE_TARGET (texture, level, face);
+	p[1] = xoffset | yoffset << 16;
+	p[2] = (uint32_t) x;
+	p[3] = (uint32_t) y;
+	p[4] = width;
+	p[5] = height;
+	pgpu_end ();
 }

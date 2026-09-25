@@ -35,6 +35,11 @@ enum pgpu_opcode
 	PGPU_OP_CLEAR		= 0x10,
 	PGPU_OP_FRAME_END	= 0x11,
 	PGPU_OP_VIEWPORT	= 0x12,
+	PGPU_OP_FRAMEBUFFER_CREATE = 0x13,
+	PGPU_OP_FRAMEBUFFER_DELETE = 0x14,
+	PGPU_OP_BIND_FRAMEBUFFER = 0x15,
+	PGPU_OP_READ_PIXELS	= 0x16,
+	PGPU_OP_COPY_TEX_IMAGE	= 0x17,
 
 	/* buffers */
 	PGPU_OP_BUFFER_CREATE	= 0x20,
@@ -48,6 +53,7 @@ enum pgpu_opcode
 	PGPU_OP_TEXTURE_DELETE	= 0x2B,
 	PGPU_OP_TEXTURE_BIND	= 0x2C,
 	PGPU_OP_TEX_ENV		= 0x2D,
+	PGPU_OP_GENERATE_MIPMAP	= 0x2E,
 
 	/* fragment state */
 	PGPU_OP_ENABLE		= 0x30,
@@ -62,8 +68,11 @@ enum pgpu_opcode
 	PGPU_OP_SCISSOR		= 0x39,
 	PGPU_OP_POLYGON_OFFSET	= 0x3A,
 	PGPU_OP_LINE_WIDTH	= 0x3B,
+	PGPU_OP_BLEND_FUNC_SEPARATE = 0x3C,
+	PGPU_OP_BLEND_EQUATION	= 0x3D,
+	PGPU_OP_BLEND_COLOR	= 0x3E,
 
-	/* transform, lighting, fog, current values */
+	/* transform, lighting, fog, current values (0x40-0x4F) */
 	PGPU_OP_LOAD_MATRIX	= 0x40,
 	PGPU_OP_LIGHT		= 0x41,
 	PGPU_OP_MATERIAL	= 0x42,
@@ -80,6 +89,11 @@ enum pgpu_opcode
 	PGPU_OP_DRAW_ARRAYS	= 0x52,
 	PGPU_OP_DRAW_ELEMENTS	= 0x53,
 	PGPU_OP_DRAW_INLINE	= 0x54,
+
+	/* stencil */
+	PGPU_OP_STENCIL_FUNC	= 0x60,
+	PGPU_OP_STENCIL_OP	= 0x61,
+	PGPU_OP_STENCIL_MASK	= 0x62,
 
 	/* programs (GL ES 2.0 subset) */
 	PGPU_OP_PROGRAM_CREATE	= 0x80,
@@ -106,6 +120,7 @@ enum pgpu_reply
 	PGPU_REPLY_PONG		= 0x03,
 	PGPU_REPLY_STATUS	= 0x04,
 	PGPU_REPLY_FRAME_DONE	= 0x11,
+	PGPU_REPLY_PIXELS	= 0x16,
 	PGPU_REPLY_ERROR	= 0x7F
 };
 
@@ -128,6 +143,10 @@ enum pgpu_error
 /* CLEAR mask */
 #define PGPU_CLEAR_COLOR		(1u << 0)
 #define PGPU_CLEAR_DEPTH		(1u << 1)
+#define PGPU_CLEAR_STENCIL		(1u << 2)
+
+/* FRAMEBUFFER_CREATE flags */
+#define PGPU_FRAMEBUFFER_DEPTH_STENCIL	(1u << 0)
 
 /* FRAME_END flags */
 #define PGPU_FRAME_REPLY		(1u << 0)
@@ -148,7 +167,8 @@ enum pgpu_error
 #define PGPU_CAP_NORMALIZE		(1u << 12)
 #define PGPU_CAP_SCISSOR_TEST		(1u << 13)
 #define PGPU_CAP_POLYGON_OFFSET_FILL	(1u << 14)
-#define PGPU_CAP_ALL			0x7FFFu
+#define PGPU_CAP_STENCIL_TEST		(1u << 15)
+#define PGPU_CAP_ALL			0xFFFFu
 
 /* compare functions (same order as the V3D depth-test field) */
 enum pgpu_func
@@ -180,8 +200,20 @@ enum pgpu_blend
 {
 	PGPU_ZERO, PGPU_ONE, PGPU_SRC_COLOR, PGPU_ONE_MINUS_SRC_COLOR,
 	PGPU_SRC_ALPHA, PGPU_ONE_MINUS_SRC_ALPHA, PGPU_DST_ALPHA, PGPU_ONE_MINUS_DST_ALPHA,
-	PGPU_DST_COLOR, PGPU_ONE_MINUS_DST_COLOR, PGPU_SRC_ALPHA_SATURATE
+	PGPU_DST_COLOR, PGPU_ONE_MINUS_DST_COLOR, PGPU_SRC_ALPHA_SATURATE,
+	PGPU_CONSTANT_COLOR, PGPU_ONE_MINUS_CONSTANT_COLOR,
+	PGPU_CONSTANT_ALPHA, PGPU_ONE_MINUS_CONSTANT_ALPHA
 };
+
+/* STENCIL_OP */
+enum pgpu_stencil_op
+{
+	PGPU_KEEP, PGPU_ZERO_OP, PGPU_REPLACE_OP, PGPU_INCR, PGPU_DECR, PGPU_INVERT,
+	PGPU_INCR_WRAP, PGPU_DECR_WRAP
+};
+
+/* BLEND_EQUATION */
+enum pgpu_blend_equation { PGPU_FUNC_ADD, PGPU_FUNC_SUBTRACT, PGPU_FUNC_REVERSE_SUBTRACT };
 
 /* array component types (10.5), DRAW_ELEMENTS index types */
 enum pgpu_type
@@ -195,8 +227,11 @@ enum pgpu_index_type { PGPU_INDEX_U8, PGPU_INDEX_U16 };
 enum pgpu_format
 {
 	PGPU_RGBA8888, PGPU_RGB565, PGPU_RGBA4444, PGPU_RGBA5551,
-	PGPU_L8, PGPU_A8, PGPU_LA88, PGPU_ETC1
+	PGPU_L8, PGPU_A8, PGPU_LA88, PGPU_ETC1, PGPU_RGB888
 };
+#define PGPU_TEXTURE_CUBE		(1u << 8)	/* TEXTURE_CREATE format flag */
+/* TEXTURE_DATA first word: id | level << 16 | cube face (+X, -X, +Y, -Y, +Z, -Z) << 24 */
+#define PGPU_TEXTURE_TARGET(id, level, face)	((id) | (level) << 16 | (face) << 24)
 enum pgpu_filter
 {
 	PGPU_NEAREST, PGPU_LINEAR, PGPU_NEAREST_MIPMAP_NEAREST, PGPU_LINEAR_MIPMAP_NEAREST,

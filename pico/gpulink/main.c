@@ -26,6 +26,7 @@
 #include "sparks_program.h"
 #include "solid_program.h"
 #include "builtin_program.h"
+#include "texview_program.h"
 
 #define WIDTH	320
 #define HEIGHT	240
@@ -33,7 +34,7 @@
 
 /* object ids */
 enum { BUF_CUBE = 1, BUF_CUBE_INDEX, BUF_SPHERE, BUF_SPHERE_INDEX, BUF_STARS, BUF_QUAD, BUF_SPARKS };
-enum { PROG_PLASMA = 1, PROG_CUBE, PROG_SPARKS, PROG_SOLID, PROG_BUILTIN };
+enum { PROG_PLASMA = 1, PROG_CUBE, PROG_SPARKS, PROG_SOLID, PROG_BUILTIN, PROG_TEXVIEW };
 enum { BUF_TEST = 20, BUF_ROW };
 enum { TEX_CHECKER = 1, TEX_QUADRANTS, TEX_SPRITE };
 
@@ -723,6 +724,7 @@ static void upload_programs (void)
 	pgpu_program_create (PROG_SPARKS, sparks_program, SPARKS_WORDS);
 	pgpu_program_create (PROG_SOLID, solid_program, SOLID_WORDS);
 	pgpu_program_create (PROG_BUILTIN, builtin_program, BUILTIN_WORDS);
+	pgpu_program_create (PROG_TEXVIEW, texview_program, TEXVIEW_WORDS);
 
 	static const float quad[8] = {-1, -1, 1, -1, 1, 1, -1, 1};
 	pgpu_buffer_create (BUF_QUAD, sizeof quad);
@@ -1096,6 +1098,590 @@ static void self_test_3 (void)
 	sleep_ms (3000);
 }
 
+/* ---- self test 4: blending with programs -----------------------------------
+ *
+ * Ten cells (2 rows of 5, 60x60 pixels from the top left): destination
+ * D = (0.25, 0.5, 0.75), then source S = (0.5, 0.25, 1.0, alpha 0.5) with:
+ *   0 SRC_ALPHA, ONE_MINUS_SRC_ALPHA       (0.375, 0.375, 0.875)
+ *   1 SUBTRACT ONE, ONE                    (0.25, 0, 0.25)
+ *   2 REVERSE_SUBTRACT ONE, ONE            (0, 0.25, 0)
+ *   3 CONSTANT_COLOR (0.5, 1, 0.25), ZERO  (0.25, 0.25, 0.25)
+ *   4 ONE, ONE_MINUS_CONSTANT_ALPHA (0.25) (0.6875, 0.625, 1)
+ *   5 DST_COLOR, ZERO                      (0.125, 0.125, 0.75)
+ *   6 no blending, colour mask R and B     (0.5, 0.5, 1)
+ *   7 DST_ALPHA, ZERO (panel alpha = 1)    (0.5, 0.25, 1)
+ *   8 separate: RGB ONE, ONE; alpha ZERO   (0.75, 0.75, 1)
+ *   9 ONE_MINUS_DST_COLOR, ONE_MINUS_SRC_COLOR (0.5, 0.5625, 0.75)
+ */
+static void self_test_4 (void)
+{
+	pgpu_viewport (0, 0, WIDTH, HEIGHT, 0.0f, 1.0f);
+	pgpu_disable (PGPU_CAP_ALL);
+	pgpu_color_mask (true, true, true, true);
+	pgpu_clear (PGPU_CLEAR_COLOR | PGPU_CLEAR_DEPTH, PGPU_RGBA (0, 0, 0, 255), 1.0f);
+	pgpu_use_program (PROG_SOLID);
+	pgpu_attrib_array (SOLID_A_POS, BUF_TEST, 0, 0, 2, PGPU_FLOAT);
+	pgpu_attribs_enable (1u << SOLID_A_POS);
+
+	for (int cell = 0; cell < 10; cell++)
+	{
+		/* cell in clip space: 60 pixels = 0.375 x, 0.5 y */
+		float x = -1.0f + (cell % 5) * 0.375f + 0.02f, y = 1.0f - (cell / 5 + 1) * 0.5f + 0.02f;
+
+		pgpu_disable (PGPU_CAP_BLEND);
+		pgpu_color_mask (true, true, true, true);
+		rect (x, y, 0.33f, 0.44f, 0.25f, 0.5f, 0.75f, 1.0f);
+		pgpu_draw_arrays (PGPU_TRIANGLE_FAN, 0, 4);
+
+		pgpu_enable (PGPU_CAP_BLEND);
+		pgpu_blend_equation (PGPU_FUNC_ADD, PGPU_FUNC_ADD);
+		switch (cell)
+		{
+		case 0: pgpu_blend_func (PGPU_SRC_ALPHA, PGPU_ONE_MINUS_SRC_ALPHA); break;
+		case 1: pgpu_blend_func (PGPU_ONE, PGPU_ONE);
+			pgpu_blend_equation (PGPU_FUNC_SUBTRACT, PGPU_FUNC_SUBTRACT); break;
+		case 2: pgpu_blend_func (PGPU_ONE, PGPU_ONE);
+			pgpu_blend_equation (PGPU_FUNC_REVERSE_SUBTRACT, PGPU_FUNC_REVERSE_SUBTRACT); break;
+		case 3: pgpu_blend_color (0.5f, 1.0f, 0.25f, 1.0f);
+			pgpu_blend_func (PGPU_CONSTANT_COLOR, PGPU_ZERO); break;
+		case 4: pgpu_blend_color (0, 0, 0, 0.25f);
+			pgpu_blend_func (PGPU_ONE, PGPU_ONE_MINUS_CONSTANT_ALPHA); break;
+		case 5: pgpu_blend_func (PGPU_DST_COLOR, PGPU_ZERO); break;
+		case 6: pgpu_disable (PGPU_CAP_BLEND);
+			pgpu_color_mask (true, false, true, true); break;
+		case 7: pgpu_blend_func (PGPU_DST_ALPHA, PGPU_ZERO); break;
+		case 8: pgpu_blend_func_separate (PGPU_ONE, PGPU_ONE, PGPU_ZERO, PGPU_ZERO); break;
+		case 9: pgpu_blend_func (PGPU_ONE_MINUS_DST_COLOR, PGPU_ONE_MINUS_SRC_COLOR); break;
+		}
+		rect (x, y, 0.33f, 0.44f, 0.5f, 0.25f, 1.0f, 0.5f);
+		pgpu_draw_arrays (PGPU_TRIANGLE_FAN, 0, 4);
+	}
+	pgpu_disable (PGPU_CAP_BLEND);
+	pgpu_color_mask (true, true, true, true);
+	pgpu_blend_func (PGPU_ONE, PGPU_ZERO);
+	pgpu_blend_equation (PGPU_FUNC_ADD, PGPU_FUNC_ADD);
+	pgpu_use_program (0);
+
+	pgpu_frame_end (0);
+	pgpu_begin (PGPU_OP_DEBUG_SCREENSHOT, 0);
+	pgpu_end ();
+	pgpu_flush ();
+	printf ("gpulink: self test 4 frame sent, screenshot requested\n");
+	sleep_ms (3000);
+}
+
+/* ---- self test 5: stencil, attribute format conversion -------------------------
+ *
+ * Expected (identity matrices, clip space):
+ *   top band:   green (program) inside the middle square, red (fixed function)
+ *               outside it: stencil 1 was written there with the colour mask off
+ *   2nd row:    two overlapping triangles, culling off: the front one writes
+ *               stencil 2, the back one 3; shown as blue (2) and yellow (3)
+ *               rectangles; a stencil write mask of 0 changes nothing (no white)
+ *   bottom:     three cubes that must look the same: float arrays (left),
+ *               short positions + float normals + ubyte_norm texcoords (middle),
+ *               and the same through client-side arrays (right)
+ */
+static void self_test_5 (void)
+{
+	float identity[16];
+	mat_identity (identity);
+
+	pgpu_viewport (0, 0, WIDTH, HEIGHT, 0.0f, 1.0f);
+	pgpu_use_program (0);
+	pgpu_disable (PGPU_CAP_ALL);
+	pgpu_arrays_enable (0);
+	pgpu_attribs_enable (0);
+	pgpu_color_mask (true, true, true, true);
+	pgpu_depth_mask (true);
+	pgpu_load_matrix (PGPU_PROJECTION, identity);
+	pgpu_load_matrix (PGPU_MODELVIEW, identity);
+	pgpu_load_matrix (PGPU_TEXTURE, identity);
+	pgpu_clear_stencil (PGPU_CLEAR_COLOR | PGPU_CLEAR_DEPTH | PGPU_CLEAR_STENCIL,
+			    PGPU_RGBA (0, 0, 0, 255), 1.0f, 0);
+
+	/* stencil 1 in the middle square, colour mask off */
+	pgpu_enable (PGPU_CAP_STENCIL_TEST);
+	pgpu_stencil_func (PGPU_FRONT_AND_BACK, PGPU_ALWAYS, 1, 0xFF);
+	pgpu_stencil_op (PGPU_FRONT_AND_BACK, PGPU_KEEP, PGPU_KEEP, PGPU_REPLACE_OP);
+	pgpu_color_mask (false, false, false, false);
+	ff_quad (-0.3f, 0.5f, 0.3f, 0.95f, 0, PGPU_RGBA (255, 255, 255, 255));
+	pgpu_color_mask (true, true, true, true);
+
+	/* green where 1 (program), red elsewhere in the band (fixed function) */
+	pgpu_stencil_op (PGPU_FRONT_AND_BACK, PGPU_KEEP, PGPU_KEEP, PGPU_KEEP);
+	pgpu_stencil_func (PGPU_FRONT_AND_BACK, PGPU_EQUAL, 1, 0xFF);
+	pgpu_use_program (PROG_SOLID);
+	pgpu_attrib_array (SOLID_A_POS, BUF_TEST, 0, 0, 2, PGPU_FLOAT);
+	pgpu_attribs_enable (1u << SOLID_A_POS);
+	rect (-0.95f, 0.55f, 1.9f, 0.35f, 0, 1, 0, 1);
+	pgpu_draw_arrays (PGPU_TRIANGLE_FAN, 0, 4);
+	pgpu_use_program (0);
+	pgpu_stencil_func (PGPU_FRONT_AND_BACK, PGPU_NOTEQUAL, 1, 0xFF);
+	ff_quad (-0.95f, 0.55f, 0.95f, 0.9f, 0, PGPU_RGBA (255, 0, 0, 255));
+
+	/* two-sided: front face writes 2, back face 3 */
+	pgpu_stencil_func (PGPU_FRONT_AND_BACK, PGPU_ALWAYS, 0, 0xFF);
+	pgpu_stencil_func (PGPU_FRONT, PGPU_ALWAYS, 2, 0xFF);
+	pgpu_stencil_func (PGPU_BACK, PGPU_ALWAYS, 3, 0xFF);
+	pgpu_stencil_op (PGPU_FRONT_AND_BACK, PGPU_KEEP, PGPU_KEEP, PGPU_REPLACE_OP);
+	pgpu_color_mask (false, false, false, false);
+	{
+		uint32_t words[6 * 4], *p = words, c = PGPU_RGBA (255, 255, 255, 255);
+		put_pc (&p, -0.9f, -0.2f, 0, c);	/* CCW: front */
+		put_pc (&p, -0.3f, -0.2f, 0, c);
+		put_pc (&p, -0.3f, 0.4f, 0, c);
+		put_pc (&p, 0.3f, -0.2f, 0, c);		/* CW: back */
+		put_pc (&p, 0.3f, 0.4f, 0, c);
+		put_pc (&p, 0.9f, -0.2f, 0, c);
+		pgpu_draw_inline (PGPU_TRIANGLES, 6, A (POSITION) | A (COLOR), words, 4);
+	}
+	/* write mask 0: this REPLACE with 7 must not change anything */
+	pgpu_stencil_mask (PGPU_FRONT_AND_BACK, 0);
+	pgpu_stencil_func (PGPU_FRONT_AND_BACK, PGPU_ALWAYS, 7, 0xFF);
+	ff_quad (-0.95f, -0.25f, 0.95f, 0.45f, 0, PGPU_RGBA (255, 255, 255, 255));
+	pgpu_stencil_mask (PGPU_FRONT_AND_BACK, 0xFF);
+	pgpu_color_mask (true, true, true, true);
+	pgpu_stencil_op (PGPU_FRONT_AND_BACK, PGPU_KEEP, PGPU_KEEP, PGPU_KEEP);
+	pgpu_stencil_func (PGPU_FRONT_AND_BACK, PGPU_EQUAL, 2, 0xFF);
+	ff_quad (-0.95f, -0.25f, 0.95f, 0.45f, 0, PGPU_RGBA (0, 0, 255, 255));
+	pgpu_stencil_func (PGPU_FRONT_AND_BACK, PGPU_EQUAL, 3, 0xFF);
+	ff_quad (-0.95f, -0.25f, 0.95f, 0.45f, 0, PGPU_RGBA (255, 255, 0, 255));
+	pgpu_stencil_func (PGPU_FRONT_AND_BACK, PGPU_EQUAL, 7, 0xFF);
+	ff_quad (-0.95f, -0.25f, 0.95f, 0.45f, 0, PGPU_RGBA (255, 255, 255, 255));
+	pgpu_disable (PGPU_CAP_STENCIL_TEST);
+
+	/* the cube three times, in other array formats (converted by the Zero) */
+	static int16_t pos_s[24][3];
+	static float normal_f[24][3];
+	static uint8_t uv_b[24][2];
+	static struct cube_vertex cv[24];		/* the float cube, as uploaded */
+	static bool once;
+	if (!once)
+	{
+		/* rebuild the cube's vertices (as upload_cube ()) */
+		static const struct { int n[3], u[3], v[3]; } faces[6] =
+		{
+			{{ 1, 0, 0}, {0, 0,-1}, {0, 1, 0}}, {{-1, 0, 0}, {0, 0, 1}, {0, 1, 0}},
+			{{ 0, 1, 0}, {1, 0, 0}, {0, 0,-1}}, {{ 0,-1, 0}, {1, 0, 0}, {0, 0, 1}},
+			{{ 0, 0, 1}, {1, 0, 0}, {0, 1, 0}}, {{ 0, 0,-1}, {-1, 0, 0}, {0, 1, 0}},
+		};
+		static const float corners[4][2] = {{-1,-1}, {1,-1}, {1,1}, {-1,1}};
+		for (int f = 0; f < 6; f++)
+			for (int i = 0; i < 4; i++)
+			{
+				int v = f * 4 + i;
+				for (int k = 0; k < 3; k++)
+				{
+					int c = faces[f].n[k] + (int) corners[i][0] * faces[f].u[k]
+						+ (int) corners[i][1] * faces[f].v[k];	/* -1 or 1 */
+					pos_s[v][k] = (int16_t) c;
+					cv[v].pos[k] = 0.5f * c;
+					normal_f[v][k] = (float) faces[f].n[k];
+				}
+				uv_b[v][0] = corners[i][0] > 0 ? 255 : 0;
+				uv_b[v][1] = corners[i][1] > 0 ? 255 : 0;
+			}
+		pgpu_buffer_create (BUF_ROW + 2, sizeof pos_s);
+		pgpu_buffer_data (BUF_ROW + 2, 0, pos_s, sizeof pos_s);
+		pgpu_buffer_create (BUF_ROW + 3, sizeof normal_f);
+		pgpu_buffer_data (BUF_ROW + 3, 0, normal_f, sizeof normal_f);
+		pgpu_buffer_create (BUF_ROW + 4, sizeof uv_b);
+		pgpu_buffer_data (BUF_ROW + 4, 0, uv_b, sizeof uv_b);
+		once = true;
+	}
+
+	float proj[16], view[16], vp[16], model[16], a[16], mvp[16], scaled[16];
+	mat_perspective (proj, 1.0f, (float) WIDTH / HEIGHT, 0.5f, 20.0f);
+	mat_rotate_y (model, 0.6f);
+	mat_rotate_x (a, 0.4f);
+	mat_multiply (model, model, a);
+	float light[3] = {0, 0, 5}, white[3] = {1, 1, 1}, eye[3] = {0, 0, 5};
+	pgpu_enable (PGPU_CAP_DEPTH_TEST | PGPU_CAP_CULL_FACE);
+	pgpu_use_program (PROG_CUBE);
+	PGPU_UNIFORM (PROG_CUBE, cube_u_light_pos, light);
+	PGPU_UNIFORM (PROG_CUBE, cube_u_light_color, white);
+	PGPU_UNIFORM (PROG_CUBE, cube_u_eye, eye);
+	pgpu_texture_bind_unit (0, TEX_CHECKER);
+	for (int i = 0; i < 3; i++)
+	{
+		mat_translate (view, -1.9f + 1.9f * i, -1.1f, -4.5f);
+		mat_multiply (vp, proj, view);
+		mat_multiply (mvp, vp, model);
+		if (i > 0)
+		{
+			mat_scale (a, 0.5f);		/* short positions are +-1 */
+			mat_multiply (scaled, mvp, a);
+			PGPU_UNIFORM (PROG_CUBE, cube_u_mvp, scaled);
+			mat_multiply (scaled, model, a);
+			PGPU_UNIFORM (PROG_CUBE, cube_u_model, scaled);
+		}
+		else
+		{
+			PGPU_UNIFORM (PROG_CUBE, cube_u_mvp, mvp);
+			PGPU_UNIFORM (PROG_CUBE, cube_u_model, model);
+		}
+
+		if (i == 0)
+		{
+			pgpu_attrib_array (CUBE_A_POS, BUF_CUBE, 0, sizeof (struct cube_vertex), 3, PGPU_FLOAT);
+			pgpu_attrib_array (CUBE_A_NORMAL, BUF_CUBE, 12, sizeof (struct cube_vertex), 3, PGPU_BYTE_NORM);
+			pgpu_attrib_array (CUBE_A_UV, BUF_CUBE, 16, sizeof (struct cube_vertex), 2, PGPU_FLOAT);
+			pgpu_attribs_enable (1u << CUBE_A_POS | 1u << CUBE_A_NORMAL | 1u << CUBE_A_UV);
+			pgpu_draw_elements (PGPU_TRIANGLES, 36, PGPU_INDEX_U8, BUF_CUBE_INDEX, 0);
+		}
+		else if (i == 1)
+		{
+			pgpu_attrib_array (CUBE_A_POS, BUF_ROW + 2, 0, 0, 3, PGPU_SHORT);
+			pgpu_attrib_array (CUBE_A_NORMAL, BUF_ROW + 3, 0, 0, 3, PGPU_FLOAT);
+			pgpu_attrib_array (CUBE_A_UV, BUF_ROW + 4, 0, 0, 2, PGPU_UBYTE_NORM);
+			pgpu_attribs_enable (1u << CUBE_A_POS | 1u << CUBE_A_NORMAL | 1u << CUBE_A_UV);
+			pgpu_draw_elements (PGPU_TRIANGLES, 36, PGPU_INDEX_U8, BUF_CUBE_INDEX, 0);
+		}
+		else
+		{
+			static uint8_t index[36];
+			static const uint8_t quad[6] = {0, 1, 2, 0, 2, 3};
+			for (int k = 0; k < 36; k++)
+				index[k] = (k / 6) * 4 + quad[k % 6];
+			pgpu_attribs_enable (0);
+			pgpu_client_attrib_pointer (CUBE_A_POS, 3, PGPU_SHORT, 0, pos_s);
+			pgpu_client_attrib_pointer (CUBE_A_NORMAL, 3, PGPU_FLOAT, 0, normal_f);
+			pgpu_client_attrib_pointer (CUBE_A_UV, 2, PGPU_UBYTE_NORM, 0, uv_b);
+			pgpu_draw_elements_client (PGPU_TRIANGLES, 36, PGPU_INDEX_U8, index);
+			for (int k = 0; k < 3; k++)
+				pgpu_client_attrib_pointer (k, 0, 0, 0, NULL);
+		}
+	}
+	pgpu_use_program (0);
+	pgpu_disable (PGPU_CAP_ALL);
+
+	pgpu_frame_end (0);
+	pgpu_begin (PGPU_OP_DEBUG_SCREENSHOT, 0);
+	pgpu_end ();
+	pgpu_flush ();
+	printf ("gpulink: self test 5 frame sent, screenshot requested\n");
+	sleep_ms (3000);
+}
+
+/* ---- self test 6: textures ------------------------------------------------------
+ *
+ * Expected (texview program; cells from the top left):
+ *   row 1: a 64x64 texture with a solid colour per mip level (0 red, 1 green,
+ *          2 blue, 3 yellow), NEAREST_MIPMAP_NEAREST, drawn 48, 24, 12 and 6
+ *          pixels wide: red, green, blue, yellow
+ *   row 2: a 1-pixel black and white checkerboard with GENERATE_MIPMAP, drawn
+ *          48 and 12 pixels wide: the small one mid grey; a 100x60 texture
+ *          (horizontal red ramp): clamped and linear it shows, with REPEAT it
+ *          is incomplete: black
+ *   row 3: cube map faces +X red, -X green, +Y blue, -Y yellow, +Z magenta,
+ *          -Z cyan, sampled in those directions
+ *   row 4: RGB888 quadrants (bottom red, green; top blue, white); an A8
+ *          texture (alpha 128): RGB black, alpha mid grey; the fixed-function
+ *          star sprite (A8, MODULATE) still yellow
+ */
+enum { TEX_MIPLEVELS = 40, TEX_GENERATED, TEX_NPOT, TEX_SKY, TEX_RGB, TEX_ALPHA };
+
+static void texview (float x, float y, float w, float h, float mode)
+{
+	float rc[4] = {x, y, w, h};
+	PGPU_UNIFORM (PROG_TEXVIEW, texview_u_rect, rc);
+	pgpu_program_uniform1f (PROG_TEXVIEW, texview_u_mode, mode);
+	pgpu_draw_arrays (PGPU_TRIANGLE_FAN, 0, 4);
+}
+
+static void self_test_6 (void)
+{
+	static uint32_t pixels[64 * 64];
+	static const uint32_t level_colors[7] =
+	{
+		PGPU_RGBA (255, 0, 0, 255), PGPU_RGBA (0, 255, 0, 255), PGPU_RGBA (0, 0, 255, 255),
+		PGPU_RGBA (255, 255, 0, 255), PGPU_RGBA (255, 0, 255, 255), PGPU_RGBA (0, 255, 255, 255),
+		PGPU_RGBA (255, 255, 255, 255),
+	};
+
+	/* per-level colours */
+	pgpu_texture_create (TEX_MIPLEVELS, 64, 64, PGPU_RGBA8888);
+	for (int level = 0, size = 64; size >= 1; level++, size /= 2)
+	{
+		for (int i = 0; i < size * size; i++)
+			pixels[i] = level_colors[level];
+		pgpu_texture_data_level (TEX_MIPLEVELS, level, 0, 0, 0, size, size, PGPU_RGBA8888, pixels);
+	}
+	pgpu_texture_params (TEX_MIPLEVELS, PGPU_NEAREST_MIPMAP_NEAREST, PGPU_NEAREST,
+			     PGPU_CLAMP_TO_EDGE, PGPU_CLAMP_TO_EDGE);
+
+	/* checkerboard, mipmaps generated */
+	for (int y = 0; y < 64; y++)
+		for (int x = 0; x < 64; x++)
+			pixels[y * 64 + x] = (x ^ y) & 1 ? PGPU_RGBA (255, 255, 255, 255) : PGPU_RGBA (0, 0, 0, 255);
+	pgpu_texture_create (TEX_GENERATED, 64, 64, PGPU_RGBA8888);
+	pgpu_texture_data (TEX_GENERATED, 0, 0, 64, 64, PGPU_RGBA8888, pixels);
+	pgpu_generate_mipmap (TEX_GENERATED);
+	pgpu_texture_params (TEX_GENERATED, PGPU_LINEAR_MIPMAP_LINEAR, PGPU_NEAREST,
+			     PGPU_REPEAT, PGPU_REPEAT);
+
+	/* non-power-of-two: 100x60, red ramp */
+	static uint8_t npot[100 * 60 * 3];
+	for (int y = 0; y < 60; y++)
+		for (int x = 0; x < 100; x++)
+		{
+			uint8_t *p = &npot[(y * 100 + x) * 3];
+			p[0] = (uint8_t) (x * 255 / 99);
+			p[1] = 0;
+			p[2] = 0;
+		}
+	pgpu_texture_create (TEX_NPOT, 100, 60, PGPU_RGB888);
+	pgpu_texture_data (TEX_NPOT, 0, 0, 100, 60, PGPU_RGB888, npot);
+
+	/* cube map */
+	static const uint32_t face_colors[6] =
+	{
+		PGPU_RGBA (255, 0, 0, 255), PGPU_RGBA (0, 255, 0, 255), PGPU_RGBA (0, 0, 255, 255),
+		PGPU_RGBA (255, 255, 0, 255), PGPU_RGBA (255, 0, 255, 255), PGPU_RGBA (0, 255, 255, 255),
+	};
+	pgpu_texture_create_cube (TEX_SKY, 16, PGPU_RGBA8888);
+	for (int f = 0; f < 6; f++)
+	{
+		for (int i = 0; i < 16 * 16; i++)
+			pixels[i] = face_colors[f];
+		pgpu_texture_data_level (TEX_SKY, 0, f, 0, 0, 16, 16, PGPU_RGBA8888, pixels);
+	}
+	pgpu_texture_params (TEX_SKY, PGPU_NEAREST, PGPU_NEAREST, PGPU_CLAMP_TO_EDGE, PGPU_CLAMP_TO_EDGE);
+
+	/* RGB888 2x2 quadrants, rows padded to 4 bytes */
+	static const uint8_t rgb[16] = {255, 0, 0, 0, 255, 0, 0, 0,   0, 0, 255, 255, 255, 255, 0, 0};
+	pgpu_texture_create (TEX_RGB, 2, 2, PGPU_RGB888);
+	pgpu_texture_data (TEX_RGB, 0, 0, 2, 2, PGPU_RGB888, rgb);
+	pgpu_texture_params (TEX_RGB, PGPU_NEAREST, PGPU_NEAREST, PGPU_CLAMP_TO_EDGE, PGPU_CLAMP_TO_EDGE);
+
+	/* A8, alpha 128 */
+	static uint8_t alpha[16];
+	memset (alpha, 128, sizeof alpha);
+	pgpu_texture_create (TEX_ALPHA, 4, 4, PGPU_A8);
+	pgpu_texture_data (TEX_ALPHA, 0, 0, 4, 4, PGPU_A8, alpha);
+	pgpu_texture_params (TEX_ALPHA, PGPU_NEAREST, PGPU_NEAREST, PGPU_CLAMP_TO_EDGE, PGPU_CLAMP_TO_EDGE);
+
+	pgpu_viewport (0, 0, WIDTH, HEIGHT, 0.0f, 1.0f);
+	pgpu_use_program (0);
+	pgpu_disable (PGPU_CAP_ALL);
+	pgpu_color_mask (true, true, true, true);
+	pgpu_clear (PGPU_CLEAR_COLOR | PGPU_CLEAR_DEPTH, PGPU_RGBA (0, 0, 0, 255), 1.0f);
+
+	pgpu_use_program (PROG_TEXVIEW);
+	pgpu_attrib_array (TEXVIEW_A_POS, BUF_TEST, 0, 0, 2, PGPU_FLOAT);
+	pgpu_attribs_enable (1u << TEXVIEW_A_POS);
+	pgpu_program_sampler (PROG_TEXVIEW, TEXVIEW_U_TEX, 0);
+	pgpu_program_sampler (PROG_TEXVIEW, TEXVIEW_U_CUBE, 1);
+
+	/* pixel to clip space helpers: x px from the left, y px from the top */
+	#define PX(x)	(-1.0f + (x) / 160.0f)
+	#define PY(y)	(1.0f - (y) / 120.0f)
+	#define PW(w)	((w) / 160.0f)
+	#define PH(h)	((h) / 120.0f)
+
+	/* row 1: mip levels */
+	pgpu_texture_bind_unit (0, TEX_MIPLEVELS);
+	static const int sizes[4] = {48, 24, 12, 6};
+	for (int i = 0; i < 4; i++)
+		texview (PX (8 + i * 60), PY (8 + sizes[i]), PW (sizes[i]), PH (sizes[i]), 0);
+
+	/* row 2: generated mipmaps, NPOT clamped and repeated */
+	pgpu_texture_bind_unit (0, TEX_GENERATED);
+	texview (PX (8), PY (68 + 48), PW (48), PH (48), 0);
+	texview (PX (68), PY (68 + 12), PW (12), PH (12), 0);
+	pgpu_texture_bind_unit (0, TEX_NPOT);
+	pgpu_texture_params (TEX_NPOT, PGPU_LINEAR, PGPU_LINEAR, PGPU_CLAMP_TO_EDGE, PGPU_CLAMP_TO_EDGE);
+	texview (PX (128), PY (68 + 48), PW (80), PH (48), 0);
+	pgpu_texture_params (TEX_NPOT, PGPU_LINEAR, PGPU_LINEAR, PGPU_REPEAT, PGPU_REPEAT);	/* per draw */
+	texview (PX (224), PY (68 + 48), PW (80), PH (48), 0);
+
+	/* row 3: cube map faces */
+	pgpu_texture_bind_unit (1, TEX_SKY);
+	static const float dirs[6][3] = {{1, 0.1f, 0.2f}, {-1, 0.1f, 0.2f}, {0.1f, 1, 0.2f},
+					  {0.1f, -1, 0.2f}, {0.1f, 0.2f, 1}, {0.1f, 0.2f, -1}};
+	for (int f = 0; f < 6; f++)
+	{
+		PGPU_UNIFORM (PROG_TEXVIEW, texview_u_dir, dirs[f]);
+		texview (PX (8 + f * 52), PY (128 + 40), PW (40), PH (40), 3);
+	}
+
+	/* row 4: RGB888, A8 (RGB, alpha) */
+	pgpu_texture_bind_unit (0, TEX_RGB);
+	texview (PX (8), PY (184 + 48), PW (48), PH (48), 0);
+	pgpu_texture_bind_unit (0, TEX_ALPHA);
+	texview (PX (68), PY (184 + 48), PW (48), PH (48), 1);
+	texview (PX (128), PY (184 + 48), PW (48), PH (48), 2);
+
+	/* the fixed-function star sprite: A8 texture, MODULATE, yellow */
+	float ortho[16], identity[16];
+	mat_ortho (ortho, 0, WIDTH, 0, HEIGHT, -1, 1);
+	mat_identity (identity);
+	pgpu_use_program (0);
+	pgpu_load_matrix (PGPU_PROJECTION, ortho);
+	pgpu_load_matrix (PGPU_MODELVIEW, identity);
+	pgpu_load_matrix (PGPU_TEXTURE, identity);
+	pgpu_enable (PGPU_CAP_TEXTURE_2D | PGPU_CAP_ALPHA_TEST);
+	pgpu_alpha_func (PGPU_GREATER, 0.5f);
+	pgpu_texture_bind (TEX_SPRITE);
+	pgpu_tex_env (PGPU_MODULATE, 0);
+	pgpu_color (PGPU_RGBA (255, 216, 50, 255));
+	quad_2d (190, 8, 48, 48);
+	pgpu_color (PGPU_RGBA (255, 255, 255, 255));
+	pgpu_disable (PGPU_CAP_ALL);
+
+	pgpu_frame_end (0);
+	pgpu_begin (PGPU_OP_DEBUG_SCREENSHOT, 0);
+	pgpu_end ();
+	pgpu_flush ();
+	printf ("gpulink: self test 6 frame sent, screenshot requested\n");
+	sleep_ms (3000);
+}
+
+/* ---- self test 7: render to texture, CLEAR anywhere, read-back, copy ----------
+ *
+ * Expected:
+ *   left:       a 128x128 texture rendered through a framebuffer (with depth):
+ *               blue background, the lit textured cube (program) and a yellow
+ *               triangle (fixed function) at its bottom left; shown upright
+ *   top right:  green square with a smaller red one inside: red drawn first,
+ *               then a scissored CLEAR (green) after the draw, then red again
+ *               in the middle, with depth test LESS against a depth-only CLEAR
+ *               to 1.0 (a green rim, red inside)
+ *   middle right: the texture's centre pixel and the panel's pixel at (300,
+ *               150), read back with READ_PIXELS and drawn as squares: cube
+ *               colour, and green
+ *   bottom right: the top left 48x48 pixels of the panel copied into a
+ *               texture (COPY_TEX_IMAGE) and drawn
+ */
+enum { TEX_TARGET = 50, TEX_COPY };
+#define FB_TEST 1
+
+static void self_test_7 (void)
+{
+	float identity[16];
+	mat_identity (identity);
+
+	pgpu_texture_create (TEX_TARGET, 128, 128, PGPU_RGBA8888);
+	pgpu_texture_params (TEX_TARGET, PGPU_LINEAR, PGPU_LINEAR, PGPU_CLAMP_TO_EDGE, PGPU_CLAMP_TO_EDGE);
+	pgpu_framebuffer_create (FB_TEST, TEX_TARGET, 0, PGPU_FRAMEBUFFER_DEPTH_STENCIL);
+
+	/* the panel: black */
+	pgpu_use_program (0);
+	pgpu_disable (PGPU_CAP_ALL);
+	pgpu_color_mask (true, true, true, true);
+	pgpu_depth_mask (true);
+	pgpu_viewport (0, 0, WIDTH, HEIGHT, 0.0f, 1.0f);
+	pgpu_clear (PGPU_CLEAR_COLOR | PGPU_CLEAR_DEPTH, PGPU_RGBA (0, 0, 0, 255), 1.0f);
+
+	/* render into the texture */
+	pgpu_bind_framebuffer (FB_TEST);
+	pgpu_viewport (0, 0, 128, 128, 0.0f, 1.0f);
+	pgpu_clear (PGPU_CLEAR_COLOR | PGPU_CLEAR_DEPTH, PGPU_RGBA (40, 60, 160, 255), 1.0f);
+	{
+		float proj[16], view[16], vp[16], model[16], a[16], mvp[16];
+		mat_perspective (proj, 1.0f, 1.0f, 0.5f, 20.0f);
+		mat_translate (view, 0.0f, 0.0f, -3.0f);
+		mat_multiply (vp, proj, view);
+		mat_rotate_y (model, 0.6f);
+		mat_rotate_x (a, 0.5f);
+		mat_multiply (model, model, a);
+		mat_multiply (mvp, vp, model);
+		float light[3] = {0, 2, 5}, white[3] = {1, 1, 1}, eye[3] = {0, 0, 3};
+		pgpu_enable (PGPU_CAP_DEPTH_TEST | PGPU_CAP_CULL_FACE);
+		pgpu_use_program (PROG_CUBE);
+		PGPU_UNIFORM (PROG_CUBE, cube_u_mvp, mvp);
+		PGPU_UNIFORM (PROG_CUBE, cube_u_model, model);
+		PGPU_UNIFORM (PROG_CUBE, cube_u_light_pos, light);
+		PGPU_UNIFORM (PROG_CUBE, cube_u_light_color, white);
+		PGPU_UNIFORM (PROG_CUBE, cube_u_eye, eye);
+		pgpu_texture_bind_unit (0, TEX_CHECKER);
+		pgpu_attrib_array (CUBE_A_POS, BUF_CUBE, 0, sizeof (struct cube_vertex), 3, PGPU_FLOAT);
+		pgpu_attrib_array (CUBE_A_NORMAL, BUF_CUBE, 12, sizeof (struct cube_vertex), 3, PGPU_BYTE_NORM);
+		pgpu_attrib_array (CUBE_A_UV, BUF_CUBE, 16, sizeof (struct cube_vertex), 2, PGPU_FLOAT);
+		pgpu_attribs_enable (1u << CUBE_A_POS | 1u << CUBE_A_NORMAL | 1u << CUBE_A_UV);
+		pgpu_draw_elements (PGPU_TRIANGLES, 36, PGPU_INDEX_U8, BUF_CUBE_INDEX, 0);
+		pgpu_use_program (0);
+		pgpu_disable (PGPU_CAP_ALL);
+		pgpu_load_matrix (PGPU_PROJECTION, identity);
+		pgpu_load_matrix (PGPU_MODELVIEW, identity);
+		pgpu_load_matrix (PGPU_TEXTURE, identity);
+		uint32_t words[3 * 4], *p = words, y = PGPU_RGBA (255, 230, 0, 255);
+		put_pc (&p, -0.95f, -0.95f, 0, y);
+		put_pc (&p, -0.45f, -0.95f, 0, y);
+		put_pc (&p, -0.95f, -0.45f, 0, y);
+		pgpu_draw_inline (PGPU_TRIANGLES, 3, A (POSITION) | A (COLOR), words, 4);
+	}
+	uint32_t centre = 0;
+	bool ok_centre = pgpu_read_pixels (64, 64, 1, 1, &centre, 200);
+
+	/* back to the panel: show the texture */
+	pgpu_bind_framebuffer (0);
+	pgpu_viewport (0, 0, WIDTH, HEIGHT, 0.0f, 1.0f);
+	float ortho[16];
+	mat_ortho (ortho, 0, WIDTH, 0, HEIGHT, -1, 1);
+	pgpu_load_matrix (PGPU_PROJECTION, ortho);
+	pgpu_load_matrix (PGPU_MODELVIEW, identity);
+	pgpu_enable (PGPU_CAP_TEXTURE_2D);
+	pgpu_texture_bind (TEX_TARGET);
+	pgpu_tex_env (PGPU_REPLACE, 0);
+	quad_2d (8, 56, 128, 128);
+	pgpu_disable (PGPU_CAP_TEXTURE_2D);
+
+	/* CLEAR after draws: scissored colour, then depth only */
+	uint32_t words[4 * 4], *p;
+	#define RECT(x0, y0, x1, y1, z, c) \
+		(p = words, put_pc (&p, x0, y0, z, c), put_pc (&p, x1, y0, z, c), \
+		 put_pc (&p, x1, y1, z, c), put_pc (&p, x0, y1, z, c), \
+		 pgpu_draw_inline (PGPU_TRIANGLE_FAN, 4, A (POSITION) | A (COLOR), words, 4))
+	RECT (240, 150, 310, 220, 0, PGPU_RGBA (255, 0, 0, 255));
+	pgpu_enable (PGPU_CAP_SCISSOR_TEST);
+	pgpu_scissor (240, 150, 70, 70);
+	pgpu_clear (PGPU_CLEAR_COLOR, PGPU_RGBA (0, 200, 0, 255), 1.0f);
+	pgpu_disable (PGPU_CAP_SCISSOR_TEST);
+	pgpu_clear (PGPU_CLEAR_DEPTH, 0, 0.3f);			/* depth 0.3 everywhere ... */
+	pgpu_enable (PGPU_CAP_SCISSOR_TEST);
+	pgpu_scissor (255, 165, 40, 40);
+	pgpu_clear (PGPU_CLEAR_DEPTH, 0, 1.0f);			/* ... 1.0 in the middle */
+	pgpu_disable (PGPU_CAP_SCISSOR_TEST);
+	pgpu_enable (PGPU_CAP_DEPTH_TEST);
+	pgpu_depth_func (PGPU_LESS);
+	RECT (240, 150, 310, 220, 0, PGPU_RGBA (255, 0, 0, 255));	/* z 0 -> 0.5: red only in the middle */
+	pgpu_disable (PGPU_CAP_DEPTH_TEST);
+
+	/* read-back: the texture's centre (read above), the panel at (300, 150) */
+	uint32_t panel = 0;
+	bool ok_panel = pgpu_read_pixels (300, 150, 1, 1, &panel, 200);
+	printf ("gpulink: READ_PIXELS texture centre %s %08lx, panel (300, 150) %s %08lx\n",
+		ok_centre ? "ok" : "TIMEOUT", (unsigned long) centre,
+		ok_panel ? "ok" : "TIMEOUT", (unsigned long) panel);
+	RECT (240, 90, 270, 120, 0, centre);
+	RECT (280, 90, 310, 120, 0, panel);
+
+	/* copy the panel's top left 48x48 (the texture's top left corner) */
+	pgpu_texture_create (TEX_COPY, 64, 64, PGPU_RGBA8888);
+	pgpu_texture_params (TEX_COPY, PGPU_NEAREST, PGPU_NEAREST, PGPU_CLAMP_TO_EDGE, PGPU_CLAMP_TO_EDGE);
+	pgpu_copy_tex_image (TEX_COPY, 0, 0, 0, 0, 8, 136, 48, 48);
+	pgpu_enable (PGPU_CAP_TEXTURE_2D);
+	pgpu_texture_bind (TEX_COPY);
+	{
+		uint32_t w5[4 * 5], *q = w5;
+		put_pt (&q, 250, 10, 0, 0);
+		put_pt (&q, 298, 10, 0.75f, 0);
+		put_pt (&q, 298, 58, 0.75f, 0.75f);
+		put_pt (&q, 250, 58, 0, 0.75f);
+		pgpu_draw_inline (PGPU_TRIANGLE_FAN, 4, A (POSITION) | A (TEXCOORD), w5, 5);
+	}
+	pgpu_disable (PGPU_CAP_TEXTURE_2D);
+
+	pgpu_frame_end (0);
+	pgpu_begin (PGPU_OP_DEBUG_SCREENSHOT, 0);
+	pgpu_end ();
+	pgpu_flush ();
+	printf ("gpulink: self test 7 frame sent, screenshot requested\n");
+	sleep_ms (3000);
+}
+
 /* ---- replies ----------------------------------------------------------------- */
 
 static unsigned choose_reply_phase (void)
@@ -1152,6 +1738,10 @@ int main (void)
 	self_test ();
 	program_self_test ();
 	self_test_3 ();
+	self_test_4 ();
+	self_test_5 ();
+	self_test_6 ();
+	self_test_7 ();
 
 	uint32_t frames = 0, timeouts = 0, frame_done = 0, last_frame_number = 0, render_us = 0;
 	absolute_time_t next_report = make_timeout_time_ms (1000);

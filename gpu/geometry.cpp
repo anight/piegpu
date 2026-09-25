@@ -346,13 +346,22 @@ void CGeometry::Light (const TGLState &rState, const float *pEye, const float *p
 // choose the fragment shader variant and fill its uniforms
 void CGeometry::SetupDraw (const TGLState &rState, boolean bFaces)
 {
-	u32 P0 = 0, P1 = 0;
+	// an incomplete texture (or a cube map) disables texturing (GL ES 1.1)
+	CTextures::TConfig Tex;
+	memset (&Tex, 0, sizeof Tex);
 	unsigned nTex = 0;
 	if (   (rState.nEnables & PGPU_CAP_TEXTURE_2D)
-	    && m_pTextures->Use (rState.nBoundTexture, &P0, &P1))
+	    && m_pTextures->Use (rState.nBoundTexture, &Tex) && !Tex.bCube)
 	{
 		nTex = rState.nTexEnvMode + 1;
+		// ALPHA textures: RGB is Cf in every environment but DECAL (undefined);
+		// MODULATE with RGB 1 gives that (A = Af At, exact but for REPLACE's At)
+		if (Tex.bAlphaFormat)
+		{
+			nTex = PGPU_MODULATE + 1;
+		}
 	}
+	u32 P0 = Tex.P0, P1 = Tex.P1;
 
 	unsigned nFog = !!(rState.nEnables & PGPU_CAP_FOG);
 	unsigned nAlpha = (rState.nEnables & PGPU_CAP_ALPHA_TEST) && rState.nAlphaFunc != PGPU_ALWAYS;
@@ -363,21 +372,9 @@ void CGeometry::SetupDraw (const TGLState &rState, boolean bFaces)
 	m_nVaryings = Shader.nVaryings;
 
 	// blend factor -> coefficients k0 + k1 As + k2 Ad + k3 Cs + k4 Cd
-	static const float Factors[11][5] =
-	{
-		{0, 0, 0, 0, 0},	// ZERO
-		{1, 0, 0, 0, 0},	// ONE
-		{0, 0, 0, 1, 0},	// SRC_COLOR
-		{1, 0, 0, -1, 0},	// ONE_MINUS_SRC_COLOR
-		{0, 1, 0, 0, 0},	// SRC_ALPHA
-		{1, -1, 0, 0, 0},	// ONE_MINUS_SRC_ALPHA
-		{0, 0, 1, 0, 0},	// DST_ALPHA
-		{1, 0, -1, 0, 0},	// ONE_MINUS_DST_ALPHA
-		{0, 0, 0, 0, 1},	// DST_COLOR
-		{1, 0, 0, 0, -1},	// ONE_MINUS_DST_COLOR
-		{0, 1, 0, 0, 0},	// SRC_ALPHA_SATURATE: approximated by SRC_ALPHA
-	};
-	boolean bBlendOn = !!(rState.nEnables & PGPU_CAP_BLEND);
+	float K[4][12];
+	BlendCoefficients (rState, rState.bTargetAlpha, K);
+
 
 	for (unsigned i = 0; i < Shader.nUniforms; i++)
 	{
@@ -388,6 +385,8 @@ void CGeometry::SetupDraw (const TGLState &rState, boolean bFaces)
 		{
 		case UNIFORM_TEX_P0:	nValue = P0; break;
 		case UNIFORM_TEX_P1:	nValue = P1; break;
+		case UNIFORM_TEX_RGB_MUL: nValue = FloatBits (Tex.bAlphaFormat ? 0.0f : 1.0f); break;
+		case UNIFORM_TEX_RGB_ADD: nValue = FloatBits (Tex.bAlphaFormat ? 1.0f : 0.0f); break;
 		case UNIFORM_ENV_R:	nValue = FloatBits (rState.TexEnvColor[0]); break;
 		case UNIFORM_ENV_G:	nValue = FloatBits (rState.TexEnvColor[1]); break;
 		case UNIFORM_ENV_B:	nValue = FloatBits (rState.TexEnvColor[2]); break;
@@ -395,6 +394,14 @@ void CGeometry::SetupDraw (const TGLState &rState, boolean bFaces)
 		case UNIFORM_FOG_G:	nValue = FloatBits (rState.FogColor[1]); break;
 		case UNIFORM_FOG_B:	nValue = FloatBits (rState.FogColor[2]); break;
 		case UNIFORM_ALPHA_REF:	nValue = FloatBits (rState.fAlphaRef); break;
+
+		case UNIFORM_STENCIL0:
+		case UNIFORM_STENCIL1:
+		case UNIFORM_STENCIL2: {
+			u32 W[3];
+			StencilWords (rState, W);
+			nValue = W[nKind - UNIFORM_STENCIL0];
+			} break;
 
 		case UNIFORM_ALPHA_KG:	// pass if alpha > ref
 		case UNIFORM_ALPHA_KL:	// pass if alpha < ref
@@ -409,28 +416,14 @@ void CGeometry::SetupDraw (const TGLState &rState, boolean bFaces)
 			} break;
 
 		default: {
+			// fixed-function shaders: k0-k4 source, k5-k9 destination, terms
+			// (1, As, Ad, Cs, Cd); SRC_ALPHA_SATURATE's term approximated by As
 			assert (nKind >= UNIFORM_BLEND_R0);
 			unsigned nIndex = nKind - UNIFORM_BLEND_R0;
 			unsigned nChannel = nIndex / 10, k = nIndex % 10;
-			boolean bMasked = !(rState.nColorMask & (1 << nChannel));
-			float fCoeff;
-			if (bMasked)			// keep the destination
-			{
-				fCoeff = k == 5 ? 1.0f : 0.0f;
-			}
-			else if (!bBlendOn)		// colour mask only: plain write
-			{
-				fCoeff = k == 0 ? 1.0f : 0.0f;
-			}
-			else
-			{
-				u32 nFactor = k < 5 ? rState.nBlendSrc : rState.nBlendDst;
-				fCoeff = Factors[nFactor > 10 ? 1 : nFactor][k % 5];
-				if (nFactor == 10 && nChannel == 3)	// SATURATE: alpha factor 1
-				{
-					fCoeff = k % 5 == 0 ? 1.0f : 0.0f;
-				}
-			}
+			const float *pSide = &K[nChannel][k < 5 ? 0 : 6];
+			unsigned t = k % 5;
+			float fCoeff = pSide[t] + (t == 1 ? pSide[5] : 0.0f);
 			nValue = FloatBits (fCoeff);
 			} break;
 		}
@@ -459,12 +452,7 @@ void CGeometry::SetupDraw (const TGLState &rState, boolean bFaces)
 
 	m_LineState.nConfigBits = CFG_FORWARD | CFG_REVERSE | nDepth;	// lines and points: no culling
 
-	u32 nBits = CFG_FORWARD | CFG_REVERSE;
-	// the panel's y axis points down, so GL's CCW appears clockwise on screen
-	if (rState.nFrontFace == PGPU_CCW)
-	{
-		nBits |= CFG_CLOCKWISE;
-	}
+	u32 nBits = CFG_FORWARD | CFG_REVERSE | ClockwiseBit (rState);
 	if (rState.nEnables & PGPU_CAP_CULL_FACE)
 	{
 		if (rState.nCullFace == PGPU_BACK || rState.nCullFace == PGPU_FRONT_AND_BACK)
@@ -472,9 +460,9 @@ void CGeometry::SetupDraw (const TGLState &rState, boolean bFaces)
 		if (rState.nCullFace == PGPU_FRONT || rState.nCullFace == PGPU_FRONT_AND_BACK)
 			nBits &= ~CFG_FORWARD;
 	}
-	GetDrawState (rState, m_pRenderer->GetWidth (), m_pRenderer->GetHeight (), FALSE, &m_LineState);
+	GetDrawState (rState, FALSE, &m_LineState);
 	m_TriangleState.nConfigBits = nBits | nDepth;
-	GetDrawState (rState, m_pRenderer->GetWidth (), m_pRenderer->GetHeight (), TRUE, &m_TriangleState);
+	GetDrawState (rState, TRUE, &m_TriangleState);
 
 	m_bTwoSide = (rState.nEnables & PGPU_CAP_LIGHTING) && rState.bTwoSide && bFaces;
 }
@@ -584,7 +572,8 @@ void CGeometry::Emit (const TVertex &v, unsigned nSide, const float *pColorOverr
 
 	pOut[0] = S.ViewportX + (v.Clip[0] * fInvW + 1.0f) * 0.5f * S.ViewportW;
 	// GL window origin is bottom-left, the panel's top-left
-	pOut[1] = m_pRenderer->GetHeight () - (S.ViewportY + (v.Clip[1] * fInvW + 1.0f) * 0.5f * S.ViewportH);
+	float y = S.ViewportY + (v.Clip[1] * fInvW + 1.0f) * 0.5f * S.ViewportH;
+	pOut[1] = S.bFlipY ? S.nTargetHeight - y : y;	// the panel's rows go top down
 	pOut[2] = Clamp01 (S.DepthNear + (v.Clip[2] * fInvW + 1.0f) * 0.5f * (S.DepthFar - S.DepthNear));
 	pOut[3] = fInvW;
 
@@ -756,15 +745,125 @@ void CGeometry::Point (const TVertex *a)
 	EmitQuad (Corner, *a, *a, 2);
 }
 
-void CGeometry::GetDrawState (const TGLState &S, unsigned nWidth, unsigned nHeight,
-			      boolean bFaces, TDrawState *pState)
+void CGeometry::BlendCoefficients (const TGLState &S, boolean bDstAlpha, float K[4][12])
 {
-	s32 x0 = 0, y0 = 0, x1 = nWidth, y1 = nHeight;
+	enum { T1, TAS, TAD, TSC, TDC, TSAT };
+	memset (K, 0, sizeof (float) * 4 * 12);
+
+	for (unsigned c = 0; c < 4; c++)
+	{
+		float *Fs = &K[c][0], *Fd = &K[c][6];
+
+		if (!(S.nColorMask & (1 << c)))
+		{
+			Fd[T1] = 1.0f;			// keep the destination
+			continue;
+		}
+		if (!(S.nEnables & PGPU_CAP_BLEND))
+		{
+			Fs[T1] = 1.0f;
+			continue;
+		}
+
+		u32 nFactor[2] = {c < 3 ? S.nBlendSrc : S.nBlendSrcA, c < 3 ? S.nBlendDst : S.nBlendDstA};
+		u32 nEquation = c < 3 ? S.nBlendEqRGB : S.nBlendEqA;
+		float fSign[2] =
+		{
+			nEquation == PGPU_FUNC_REVERSE_SUBTRACT ? -1.0f : 1.0f,
+			nEquation == PGPU_FUNC_SUBTRACT ? -1.0f : 1.0f
+		};
+
+		for (unsigned side = 0; side < 2; side++)
+		{
+			float *F = side ? Fd : Fs;
+			switch (nFactor[side])
+			{
+			case PGPU_ZERO:					break;
+			case PGPU_ONE:			F[T1] = 1;	break;
+			case PGPU_SRC_COLOR:		F[TSC] = 1;	break;
+			case PGPU_ONE_MINUS_SRC_COLOR:	F[T1] = 1; F[TSC] = -1;	break;
+			case PGPU_SRC_ALPHA:		F[TAS] = 1;	break;
+			case PGPU_ONE_MINUS_SRC_ALPHA:	F[T1] = 1; F[TAS] = -1;	break;
+			case PGPU_DST_ALPHA:		F[TAD] = 1;	break;
+			case PGPU_ONE_MINUS_DST_ALPHA:	F[T1] = 1; F[TAD] = -1;	break;
+			case PGPU_DST_COLOR:		F[TDC] = 1;	break;
+			case PGPU_ONE_MINUS_DST_COLOR:	F[T1] = 1; F[TDC] = -1;	break;
+			case PGPU_SRC_ALPHA_SATURATE:	if (c < 3) F[TSAT] = 1; else F[T1] = 1;	break;
+			case PGPU_CONSTANT_COLOR:	F[T1] = S.BlendColor[c];	break;
+			case PGPU_ONE_MINUS_CONSTANT_COLOR: F[T1] = 1.0f - S.BlendColor[c]; break;
+			case PGPU_CONSTANT_ALPHA:	F[T1] = S.BlendColor[3];	break;
+			case PGPU_ONE_MINUS_CONSTANT_ALPHA: F[T1] = 1.0f - S.BlendColor[3]; break;
+			}
+
+			if (!bDstAlpha)				// destination alpha is 1
+			{
+				F[T1] += F[TAD];
+				F[TAD] = 0.0f;
+				F[TSAT] = 0.0f;			// min (As, 1 - 1) = 0
+			}
+
+			for (unsigned t = 0; t < 6; t++)
+			{
+				F[t] *= fSign[side];
+			}
+		}
+	}
+}
+
+// TLB stencil setup words, as Mesa's vc4 (vc4_state.c): face (31-30),
+// write mask code (29-28), zfail (27-25), zpass (24-22) and fail (21-19)
+// ops, function (18-16), reference (15-8), value mask (7-0); the third word
+// sets both full write masks
+void CGeometry::StencilWords (const TGLState &S, u32 W[3])
+{
+	// pgpu_stencil_op -> V3D: ZERO 0, KEEP 1, REPLACE 2, INCR 3, DECR 4,
+	// INVERT 5, INCR_WRAP 6, DECR_WRAP 7
+	static const u8 OpMap[8] = {1, 0, 2, 3, 4, 5, 6, 7};
+	boolean bTest = !!(S.nEnables & PGPU_CAP_STENCIL_TEST);
+
+	for (unsigned f = 0; f < 2; f++)
+	{
+		u32 nWord;
+		if (bTest)
+		{
+			nWord =   OpMap[S.StencilZFail[f] & 7] << 25
+				| OpMap[S.StencilZPass[f] & 7] << 22
+				| OpMap[S.StencilFail[f] & 7] << 19
+				| (S.StencilFunc[f] & 7) << 16
+				| (S.StencilRef[f] & 0xFF) << 8
+				| (S.StencilValueMask[f] & 0xFF);
+		}
+		else
+		{
+			nWord = 1 << 25 | 1 << 22 | 1 << 19 | PGPU_ALWAYS << 16 | 0xFF;
+		}
+		W[f] = nWord | (f == 0 ? 1U : 2U) << 30;
+	}
+
+	// the full write masks (the mask codes in the first words aren't used)
+	W[2] = bTest ? (S.StencilWriteMask[0] & 0xFF) | (S.StencilWriteMask[1] & 0xFF) << 8 : 0;
+}
+
+u32 CGeometry::ClockwiseBit (const TGLState &S)
+{
+	// with the panel's rows going top down, GL's CCW appears clockwise
+	return (S.nFrontFace == PGPU_CCW) == !!S.bFlipY ? CFG_CLOCKWISE : 0;
+}
+
+void CGeometry::GetDrawState (const TGLState &S, boolean bFaces, TDrawState *pState)
+{
+	s32 nHeight = S.nTargetHeight;
+	s32 x0 = 0, y0 = 0, x1 = S.nTargetWidth, y1 = nHeight;
 	if (S.nEnables & PGPU_CAP_SCISSOR_TEST)
 	{
-		// GL window coordinates to panel rows (top down)
+		// GL window coordinates to target rows
 		s32 sx0 = S.ScissorX, sx1 = S.ScissorX + (s32) S.ScissorW;
-		s32 sy0 = (s32) nHeight - (S.ScissorY + (s32) S.ScissorH), sy1 = (s32) nHeight - S.ScissorY;
+		s32 sy0 = S.ScissorY, sy1 = S.ScissorY + (s32) S.ScissorH;
+		if (S.bFlipY)
+		{
+			sy0 = nHeight - (S.ScissorY + (s32) S.ScissorH);
+			sy1 = nHeight - S.ScissorY;
+		}
 		if (sx0 > x0) x0 = sx0;
 		if (sy0 > y0) y0 = sy0;
 		if (sx1 < x1) x1 = sx1;

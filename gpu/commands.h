@@ -72,7 +72,7 @@ private:
 
 	struct TViewport
 	{
-		float fCentreX, fCentreY, fHalfWidth, fHalfHeight, fZScale, fZOffset;
+		float fCentreX, fCentreY, fHalfWidth, fScaleY, fZScale, fZOffset;	// fScaleY signed
 		unsigned nClipX, nClipY, nClipWidth, nClipHeight;
 	};
 
@@ -103,6 +103,7 @@ private:
 	{
 		u32 nMask;			// attributes in the packet
 		const u8 *pAttribute[PGPU_MAX_ATTRIBUTES];
+		u32 Format[PGPU_MAX_ATTRIBUTES];	// type | size << 8
 		const u8 *pIndices;		// nullptr: not indexed
 		unsigned nIndexBytes;
 	};
@@ -148,16 +149,41 @@ private:
 	u32 m_nGenericEnabled;
 	float m_GenericValue[PGPU_MAX_ATTRIBUTES][4];
 	u32 m_TextureUnit[PGPU_MAX_TEXTURE_UNITS];	// unit 0 is also m_State.nBoundTexture
+	float m_BlendK[4][12];			// blend coefficients of the current program draw
 
 	TInputVertex *m_pInput;			// vertex fetch buffer
 	u32 *m_pIndices;
 
-	// frame
-	boolean m_bFrameHasDraw;
-	boolean m_bClearColor;
-	boolean m_bClearDepth;
-	u32 m_nClearColor;
-	float m_fClearDepth;
+	// framebuffer objects (render to texture)
+	struct TFramebuffer
+	{
+		boolean bValid;
+		u32 nTexture;			// colour: level 0 of this texture
+		unsigned nFace;			// cube map face
+		boolean bDepthStencil;
+		u8 *pZS;			// depth and stencil (allocated when rendered)
+		unsigned nZSBytes;
+		boolean bZSValid;		// stored by a job
+	};
+	static const unsigned MaxFramebuffers = 16;
+	TFramebuffer m_Framebuffers[MaxFramebuffers + 1];	// ids 1 .. MaxFramebuffers
+	u32 m_nFramebuffer;		// bound, 0 = the panel
+
+	// the job: what the renderer collects for the bound target
+	boolean m_bJobPending;		// draws or a clear to render
+	boolean m_bJobClearColor, m_bJobClearZS;
+	TJobClear m_JobClear;
+	boolean m_bPanelDrawn;		// a job rendered into the back buffer this frame
+	boolean m_bPanelZSValid;
+	TRenderStats m_FrameStats;
+
+	void UpdateTarget (void);
+	void FlushJob (boolean bForce);
+	void EndJob (void);
+	u32 Clear (u32 nMask, u32 nColor, float fDepth, u8 nStencil);
+	u32 ReadRect (s32 x, s32 y, unsigned nWidth, unsigned nHeight, u32 *pOut);
+	u32 FramebufferCreate (u32 nId, u32 nTexture, u32 nFlags);
+	void FramebufferFree (TFramebuffer *pFramebuffer);
 	unsigned m_nFrameNumber;
 	unsigned m_nLastFrameUs;
 

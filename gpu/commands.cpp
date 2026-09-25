@@ -135,6 +135,32 @@ static void ConvertValue (const float *pValue, u32 nType, unsigned nSize, u8 *pO
 	}
 }
 
+// Convert nCount elements of an array into another format (missing
+// components (0, 0, 0, 1), as in GL) into the frame's vertex pool
+static u8 *ConvertArray (CRenderer *pRenderer, const u8 *pSrc, unsigned nSrcStride, u32 nSrcType,
+			 unsigned nSrcSize, unsigned nCount, u32 nDstType, unsigned nDstSize, u32 *pBus)
+{
+	unsigned nDstBytes = nDstSize * TypeBytes[nDstType];
+	u8 *pDst = pRenderer->AllocData (nCount * nDstBytes, pBus);
+	if (!pDst)
+	{
+		return nullptr;
+	}
+
+	u8 *p = pDst;
+	for (unsigned i = 0; i < nCount; i++, pSrc += nSrcStride, p += nDstBytes)
+	{
+		float v[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+		for (unsigned k = 0; k < nSrcSize; k++)
+		{
+			v[k] = Component (pSrc + k * TypeBytes[nSrcType], nSrcType);
+		}
+		ConvertValue (v, nDstType, nDstSize, p);
+	}
+
+	return pDst;
+}
+
 CCommands::CCommands (CRenderer *pRenderer, CReceiver *pReceiver)
 :	m_pRenderer (pRenderer),
 	m_pReceiver (pReceiver),
@@ -142,8 +168,7 @@ CCommands::CCommands (CRenderer *pRenderer, CReceiver *pReceiver)
 	m_nBufferBytes (0),
 	m_nRetiredBuffers (0),
 	m_nProgram (0),
-	m_nClearColor (PGPU_RGBA (0, 0, 0, 255)),
-	m_fClearDepth (1.0f),
+	m_nFramebuffer (0),
 	m_nFrameNumber (0),
 	m_nLastFrameUs (0),
 	m_nTotalFrames (0),
@@ -154,10 +179,12 @@ CCommands::CCommands (CRenderer *pRenderer, CReceiver *pReceiver)
 	m_pIndices = new u32[CGeometry::MaxVertices];
 	memset (&m_Stats, 0, sizeof m_Stats);
 
+	memset (m_Framebuffers, 0, sizeof m_Framebuffers);
+	memset (&m_FrameStats, 0, sizeof m_FrameStats);
+	m_bJobPending = m_bJobClearColor = m_bJobClearZS = FALSE;
+	m_bPanelDrawn = m_bPanelZSValid = FALSE;
+
 	DefaultState ();
-	m_bFrameHasDraw = FALSE;
-	m_bClearColor = FALSE;
-	m_bClearDepth = FALSE;
 }
 
 CCommands::~CCommands (void)
@@ -181,12 +208,15 @@ void CCommands::Reset (void)
 	}
 	m_nRetiredBuffers = 0;
 
+	for (unsigned i = 1; i <= MaxFramebuffers; i++)
+	{
+		FramebufferFree (&m_Framebuffers[i]);
+	}
+	m_nFramebuffer = 0;
+	m_bJobPending = m_bJobClearColor = m_bJobClearZS = FALSE;
+	m_bPanelDrawn = FALSE;
+
 	DefaultState ();
-	m_bFrameHasDraw = FALSE;
-	m_bClearColor = FALSE;
-	m_bClearDepth = FALSE;
-	m_nClearColor = PGPU_RGBA (0, 0, 0, 255);
-	m_fClearDepth = 1.0f;
 }
 
 // docs/protocol.md 7.9
@@ -201,12 +231,20 @@ void CCommands::DefaultState (void)
 
 	S.ViewportW = m_pRenderer->GetWidth ();
 	S.ViewportH = m_pRenderer->GetHeight ();
+	UpdateTarget ();
 	S.DepthFar = 1.0f;
 
 	S.nDepthFunc = PGPU_LESS;
 	S.bDepthMask = TRUE;
-	S.nBlendSrc = 1;		// ONE
-	S.nBlendDst = 0;		// ZERO
+	S.nBlendSrc = S.nBlendSrcA = PGPU_ONE;
+	S.nBlendDst = S.nBlendDstA = PGPU_ZERO;
+	S.nBlendEqRGB = S.nBlendEqA = PGPU_FUNC_ADD;
+	for (unsigned f = 0; f < 2; f++)
+	{
+		S.StencilFunc[f] = PGPU_ALWAYS;
+		S.StencilValueMask[f] = S.StencilWriteMask[f] = 0xFF;
+		S.StencilFail[f] = S.StencilZFail[f] = S.StencilZPass[f] = PGPU_KEEP;
+	}
 	S.nCullFace = PGPU_BACK;
 	S.nFrontFace = PGPU_CCW;
 	S.nAlphaFunc = PGPU_ALWAYS;
@@ -277,14 +315,19 @@ void CCommands::Execute (u32 nHeader, const u32 *pPayload)
 	static const struct { u8 uchOpcode; u16 usLength; } Lengths[] =
 	{
 		{PGPU_OP_RESET, 0}, {PGPU_OP_GET_INFO, 0}, {PGPU_OP_PING, 1}, {PGPU_OP_GET_STATUS, 0},
-		{PGPU_OP_CLEAR, 3}, {PGPU_OP_FRAME_END, 1}, {PGPU_OP_VIEWPORT, 6},
+		{PGPU_OP_CLEAR, VARIABLE}, {PGPU_OP_FRAME_END, 1}, {PGPU_OP_VIEWPORT, 6},
+		{PGPU_OP_FRAMEBUFFER_CREATE, 3}, {PGPU_OP_FRAMEBUFFER_DELETE, 1},
+		{PGPU_OP_BIND_FRAMEBUFFER, 1}, {PGPU_OP_READ_PIXELS, 4}, {PGPU_OP_COPY_TEX_IMAGE, 6},
+		{PGPU_OP_STENCIL_FUNC, 4}, {PGPU_OP_STENCIL_OP, 4}, {PGPU_OP_STENCIL_MASK, 2},
 		{PGPU_OP_BUFFER_CREATE, 2}, {PGPU_OP_BUFFER_DATA, VARIABLE}, {PGPU_OP_BUFFER_DELETE, 1},
 		{PGPU_OP_TEXTURE_CREATE, 3}, {PGPU_OP_TEXTURE_DATA, VARIABLE}, {PGPU_OP_TEXTURE_PARAMS, 5},
 		{PGPU_OP_TEXTURE_DELETE, 1}, {PGPU_OP_TEXTURE_BIND, 1}, {PGPU_OP_TEX_ENV, 2},
+		{PGPU_OP_GENERATE_MIPMAP, 1},
 		{PGPU_OP_ENABLE, 1}, {PGPU_OP_DISABLE, 1}, {PGPU_OP_DEPTH_FUNC, 1},
 		{PGPU_OP_DEPTH_MASK, 1}, {PGPU_OP_BLEND_FUNC, 2}, {PGPU_OP_CULL_FACE, 1},
 		{PGPU_OP_FRONT_FACE, 1}, {PGPU_OP_ALPHA_FUNC, 2}, {PGPU_OP_COLOR_MASK, 1},
 		{PGPU_OP_SCISSOR, 4}, {PGPU_OP_POLYGON_OFFSET, 2}, {PGPU_OP_LINE_WIDTH, 1},
+		{PGPU_OP_BLEND_FUNC_SEPARATE, 4}, {PGPU_OP_BLEND_EQUATION, 2}, {PGPU_OP_BLEND_COLOR, 4},
 		{PGPU_OP_LOAD_MATRIX, 17}, {PGPU_OP_LIGHT, 11}, {PGPU_OP_MATERIAL, 5},
 		{PGPU_OP_LIGHT_MODEL, 2}, {PGPU_OP_FOG, 5}, {PGPU_OP_SHADE_MODEL, 1},
 		{PGPU_OP_COLOR, 1}, {PGPU_OP_NORMAL, 3}, {PGPU_OP_TEXCOORD, 2},
@@ -365,25 +408,103 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 	// frame
 
 	case PGPU_OP_CLEAR:
-		if (m_bFrameHasDraw)
+		if (nLength != 3 && nLength != 4)		// mask, colour, depth [, stencil]
 		{
-			return PGPU_ERR_CLEAR_AFTER_DRAW;
+			return PGPU_ERR_LENGTH;
 		}
-		if (p[0] & ~(PGPU_CLEAR_COLOR | PGPU_CLEAR_DEPTH))
+		if (p[0] & ~(PGPU_CLEAR_COLOR | PGPU_CLEAR_DEPTH | PGPU_CLEAR_STENCIL))
 		{
 			return PGPU_ERR_ENUM;
 		}
-		if (p[0] & PGPU_CLEAR_COLOR)
+		return Clear (p[0], p[1], AsFloat (p[2]), nLength == 4 ? p[3] & 0xFF : 0);
+
+	case PGPU_OP_FRAMEBUFFER_CREATE:
+		*pDetail = p[0];
+		return FramebufferCreate (p[0], p[1], p[2]);
+
+	case PGPU_OP_FRAMEBUFFER_DELETE:
+		*pDetail = p[0];
+		if (p[0] < 1 || p[0] > MaxFramebuffers)
 		{
-			m_nClearColor = p[1];
-			m_bClearColor = TRUE;
+			return PGPU_ERR_ID;
 		}
-		if (p[0] & PGPU_CLEAR_DEPTH)
+		if (!m_Framebuffers[p[0]].bValid)
 		{
-			m_fClearDepth = AsFloat (p[2]);
-			m_bClearDepth = TRUE;
+			return PGPU_ERR_OBJECT;
 		}
+		if (p[0] == m_nFramebuffer)
+		{
+			FlushJob (FALSE);
+			m_nFramebuffer = 0;
+			UpdateTarget ();
+		}
+		FramebufferFree (&m_Framebuffers[p[0]]);
 		break;
+
+	case PGPU_OP_BIND_FRAMEBUFFER:
+		*pDetail = p[0];
+		if (p[0] > MaxFramebuffers)
+		{
+			return PGPU_ERR_ID;
+		}
+		if (p[0] && !m_Framebuffers[p[0]].bValid)
+		{
+			return PGPU_ERR_OBJECT;
+		}
+		if (p[0] != m_nFramebuffer)
+		{
+			FlushJob (FALSE);		// render what the old target collected
+			m_nFramebuffer = p[0];
+		}
+		UpdateTarget ();
+		break;
+
+	case PGPU_OP_READ_PIXELS: {
+		// x, y, width, height -> PIXELS replies (word offset, RGBA8888 rows bottom up)
+		unsigned nWords = p[2] * p[3];
+		if (nWords == 0 || nWords > 256 * 1024)
+		{
+			return PGPU_ERR_LIMIT;
+		}
+		u32 *pPixels = new u32[nWords];
+		u32 nError = ReadRect ((s32) p[0], (s32) p[1], p[2], p[3], pPixels);
+		unsigned nRetries = 0;
+		for (unsigned nOffset = 0; !nError && nOffset < nWords && nRetries < 1000000; )
+		{
+			u32 Reply[62];
+			unsigned n = nWords - nOffset < 61 ? nWords - nOffset : 61;
+			Reply[0] = nOffset;
+			memcpy (Reply + 1, pPixels + nOffset, n * 4);
+			if (!m_pReceiver->SendReply (PGPU_REPLY_PIXELS, Reply, 1 + n))
+			{
+				m_pReceiver->UpdateTx ();		// backlog full: wait for the link
+				nRetries++;
+				continue;
+			}
+			nOffset += n;
+		}
+		delete [] pPixels;
+		return nError;
+		}
+
+	case PGPU_OP_COPY_TEX_IMAGE: {
+		// texture | level << 16 | face << 24, xoffset | yoffset << 16, x, y, width, height
+		unsigned nWords = p[4] * p[5];
+		if (nWords == 0 || nWords > 256 * 1024)
+		{
+			return PGPU_ERR_LIMIT;
+		}
+		*pDetail = p[0] & 0xFFFF;
+		u32 *pPixels = new u32[nWords];
+		u32 nError = ReadRect ((s32) p[2], (s32) p[3], p[4], p[5], pPixels);
+		if (!nError)
+		{
+			nError = m_Textures.WriteRGBA (p[0] & 0xFFFF, (p[0] >> 16) & 0xFF, p[0] >> 24,
+						       p[1] & 0xFFFF, p[1] >> 16, p[4], p[5], pPixels);
+		}
+		delete [] pPixels;
+		return nError;
+		}
 
 	case PGPU_OP_FRAME_END:
 		EndFrame (p[0]);
@@ -420,7 +541,12 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 
 	case PGPU_OP_TEXTURE_CREATE:
 		*pDetail = p[0];
-		return m_Textures.Create (p[0], p[1] & 0xFFFF, p[1] >> 16, p[2]);
+		if (p[2] & ~(0xFFu | PGPU_TEXTURE_CUBE))
+		{
+			return PGPU_ERR_ENUM;
+		}
+		return m_Textures.Create (p[0], p[1] & 0xFFFF, p[1] >> 16, p[2] & 0xFF,
+					  !!(p[2] & PGPU_TEXTURE_CUBE));
 
 	case PGPU_OP_TEXTURE_DATA:
 		if (nLength < 3)
@@ -428,8 +554,13 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 			return PGPU_ERR_LENGTH;
 		}
 		*pDetail = p[0];
-		return m_Textures.Data (p[0], p[1] & 0xFFFF, p[1] >> 16, p[2] & 0xFFFF, p[2] >> 16,
+		return m_Textures.Data (p[0] & 0xFFFF, (p[0] >> 16) & 0xFF, p[0] >> 24,
+					p[1] & 0xFFFF, p[1] >> 16, p[2] & 0xFFFF, p[2] >> 16,
 					p + 3, nLength - 3);
+
+	case PGPU_OP_GENERATE_MIPMAP:
+		*pDetail = p[0];
+		return m_Textures.GenerateMipmap (p[0]);
 
 	case PGPU_OP_TEXTURE_PARAMS:
 		*pDetail = p[0];
@@ -510,12 +641,37 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 		break;
 
 	case PGPU_OP_BLEND_FUNC:
-		if (p[0] > 10 || p[1] > 9)
+	case PGPU_OP_BLEND_FUNC_SEPARATE: {
+		// SRC_ALPHA_SATURATE is a source factor only
+		boolean bSeparate = nOpcode == PGPU_OP_BLEND_FUNC_SEPARATE;
+		u32 nSrcA = bSeparate ? p[2] : p[0], nDstA = bSeparate ? p[3] : p[1];
+		if (   p[0] > PGPU_ONE_MINUS_CONSTANT_ALPHA || nSrcA > PGPU_ONE_MINUS_CONSTANT_ALPHA
+		    || p[1] > PGPU_ONE_MINUS_CONSTANT_ALPHA || nDstA > PGPU_ONE_MINUS_CONSTANT_ALPHA
+		    || p[1] == PGPU_SRC_ALPHA_SATURATE || nDstA == PGPU_SRC_ALPHA_SATURATE)
 		{
 			return PGPU_ERR_ENUM;
 		}
 		S.nBlendSrc = p[0];
 		S.nBlendDst = p[1];
+		S.nBlendSrcA = nSrcA;
+		S.nBlendDstA = nDstA;
+		} break;
+
+	case PGPU_OP_BLEND_EQUATION:
+		if (p[0] > PGPU_FUNC_REVERSE_SUBTRACT || p[1] > PGPU_FUNC_REVERSE_SUBTRACT)
+		{
+			return PGPU_ERR_ENUM;
+		}
+		S.nBlendEqRGB = p[0];
+		S.nBlendEqA = p[1];
+		break;
+
+	case PGPU_OP_BLEND_COLOR:
+		for (unsigned i = 0; i < 4; i++)
+		{
+			float f = AsFloat (p[i]);
+			S.BlendColor[i] = f < 0.0f ? 0.0f : f > 1.0f ? 1.0f : f;	// clamped (ES 2.0)
+		}
 		break;
 
 	case PGPU_OP_CULL_FACE:
@@ -549,6 +705,48 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 			return PGPU_ERR_ENUM;
 		}
 		S.nColorMask = p[0];
+		break;
+
+	case PGPU_OP_STENCIL_FUNC:
+	case PGPU_OP_STENCIL_OP:
+		if (   p[0] > PGPU_FRONT_AND_BACK || p[1] > 7
+		    || (nOpcode == PGPU_OP_STENCIL_OP && (p[2] > 7 || p[3] > 7)))
+		{
+			return PGPU_ERR_ENUM;
+		}
+		for (unsigned f = 0; f < 2; f++)
+		{
+			if (p[0] != PGPU_FRONT_AND_BACK && p[0] != f)
+			{
+				continue;
+			}
+			if (nOpcode == PGPU_OP_STENCIL_FUNC)
+			{
+				S.StencilFunc[f] = p[1];
+				S.StencilRef[f] = p[2] > 255 ? 255 : p[2];	// clamped to the 8 bits
+				S.StencilValueMask[f] = p[3] & 0xFF;
+			}
+			else
+			{
+				S.StencilFail[f] = p[1];
+				S.StencilZFail[f] = p[2];
+				S.StencilZPass[f] = p[3];
+			}
+		}
+		break;
+
+	case PGPU_OP_STENCIL_MASK:
+		if (p[0] > PGPU_FRONT_AND_BACK)
+		{
+			return PGPU_ERR_ENUM;
+		}
+		for (unsigned f = 0; f < 2; f++)
+		{
+			if (p[0] == PGPU_FRONT_AND_BACK || p[0] == f)
+			{
+				S.StencilWriteMask[f] = p[1] & 0xFF;
+			}
+		}
 		break;
 
 	case PGPU_OP_SCISSOR:
@@ -986,7 +1184,7 @@ u32 CCommands::Draw (u32 nMode, unsigned nVertices, const u32 *pIndices, unsigne
 	u32 nError = m_Geometry.Draw (m_State, nMode, m_pInput, nVertices, pIndices, nCount);
 	if (!nError)
 	{
-		m_bFrameHasDraw = TRUE;
+		m_bJobPending = TRUE;
 	}
 
 	return nError;
@@ -1121,25 +1319,28 @@ u32 CCommands::DrawInline (const u32 *p, unsigned nLength)
 
 void CCommands::EndFrame (u32 nFlags)
 {
-	// a frame without a colour or depth CLEAR starts from the previous frame's
-	// image or depth and stencil
-	TRenderStats R;
-	if (!m_pRenderer->EndFrame (m_bClearColor, m_nClearColor, m_bClearDepth, m_fClearDepth, &R))
+	// the bound framebuffer's job, then the panel: its back buffer gets the
+	// frame (from the previous frame's image, if nothing was drawn or cleared)
+	u32 nBound = m_nFramebuffer;
+	if (nBound)
 	{
-		LOGERR ("V3D job failed");
+		FlushJob (FALSE);
+		m_nFramebuffer = 0;
+		UpdateTarget ();
 	}
-	m_Textures.EndFrame ();
-	m_Programs.EndFrame ();
-	for (unsigned i = 0; i < m_nRetiredBuffers; i++)
+	if (!nBound || !m_bPanelDrawn)
 	{
-		delete [] m_RetiredBuffers[i];
+		FlushJob (TRUE);
 	}
-	m_nRetiredBuffers = 0;
-	for (unsigned i = 1; i <= MaxBuffers; i++)
+	m_pRenderer->Present (&m_FrameStats);
+	m_bPanelDrawn = FALSE;
+	if (nBound)
 	{
-		m_Buffers[i].bUsed = FALSE;
+		m_nFramebuffer = nBound;
+		UpdateTarget ();
 	}
 
+	const TRenderStats &R = m_FrameStats;
 	m_nFrameNumber++;
 	m_nTotalFrames++;
 	m_nLastFrameUs = R.nRenderUs;
@@ -1157,10 +1358,306 @@ void CCommands::EndFrame (u32 nFlags)
 		Reply (PGPU_REPLY_FRAME_DONE, Done, 4);
 	}
 
-	m_bFrameHasDraw = FALSE;
-	m_bClearColor = FALSE;
-	m_bClearDepth = FALSE;
-	m_bClearDepth = FALSE;
+	memset (&m_FrameStats, 0, sizeof m_FrameStats);
+}
+
+// the render target's size and orientation in the state (the panel: rows top
+// down, no alpha; a texture: GL row order, alpha)
+void CCommands::UpdateTarget (void)
+{
+	TGLState &S = m_State;
+	S.nTargetWidth = m_pRenderer->GetWidth ();
+	S.nTargetHeight = m_pRenderer->GetHeight ();
+	S.bFlipY = TRUE;
+	S.bTargetAlpha = FALSE;
+
+	if (m_nFramebuffer)
+	{
+		const TFramebuffer &F = m_Framebuffers[m_nFramebuffer];
+		u32 nBus;
+		unsigned nWidth, nHeight;
+		boolean bT;
+		if (m_Textures.GetRenderTarget (F.nTexture, F.nFace, &nBus, &nWidth, &nHeight, &bT))
+		{
+			S.nTargetWidth = nWidth;
+			S.nTargetHeight = nHeight;
+		}
+		S.bFlipY = FALSE;
+		S.bTargetAlpha = TRUE;
+	}
+}
+
+// render what the renderer collected into the bound target (bForce: also
+// without draws or a clear)
+void CCommands::FlushJob (boolean bForce)
+{
+	if (!bForce && !m_bJobPending && !m_pRenderer->GetDraws ())
+	{
+		return;
+	}
+
+	TRenderTarget T;
+	u32 nLoadColor;
+	boolean bLoadZS;
+	if (!m_nFramebuffer)
+	{
+		u32 nPrevious;
+		m_pRenderer->GetPanelTarget (&T, &nPrevious);
+		nLoadColor = m_bJobClearColor ? 0 : m_bPanelDrawn ? T.nColorBus : nPrevious;
+		bLoadZS = !m_bJobClearZS && m_bPanelZSValid;
+	}
+	else
+	{
+		TFramebuffer &F = m_Framebuffers[m_nFramebuffer];
+		boolean bT;
+		if (!m_Textures.GetRenderTarget (F.nTexture, F.nFace, &T.nColorBus, &T.nWidth,
+						 &T.nHeight, &bT))
+		{
+			m_pRenderer->DiscardFrame ();		// no colour buffer: nothing to render
+			EndJob ();
+			return;
+		}
+		// RGBA8888 in the texture's tiled layout (R in byte 0, as the tile buffer)
+		T.nModeFlags = 1 << 2 | (bT ? 1 : 2) << 6;
+		T.nLoadStore = 1 | (bT ? 1 : 2) << 4;
+		T.nZSBus = 0;
+		if (F.bDepthStencil)
+		{
+			unsigned nBytes = DEPTH_BUFFER_SIZE (T.nWidth, T.nHeight);
+			if (F.nZSBytes != nBytes)
+			{
+				delete [] F.pZS;
+				F.pZS = new u8[nBytes + 4096];
+				F.nZSBytes = nBytes;
+				F.bZSValid = FALSE;
+			}
+			T.nZSBus = CV3D::BusAddress ((void *) (((uintptr) F.pZS + 4095) & ~(uintptr) 4095));
+		}
+		nLoadColor = m_bJobClearColor ? 0 : T.nColorBus;
+		bLoadZS = !m_bJobClearZS && F.bZSValid;
+	}
+
+	if (!m_pRenderer->RenderJob (T, nLoadColor, bLoadZS, m_JobClear, &m_FrameStats))
+	{
+		LOGERR ("V3D job failed");
+	}
+
+	if (!m_nFramebuffer)
+	{
+		m_bPanelDrawn = TRUE;
+		m_bPanelZSValid = TRUE;
+	}
+	else
+	{
+		TFramebuffer &F = m_Framebuffers[m_nFramebuffer];
+		F.bZSValid = F.bDepthStencil;
+		m_Textures.Invalidate (F.nTexture);	// written by the V3D
+	}
+
+	EndJob ();
+}
+
+// the job has rendered: storage replaced during it can be freed
+void CCommands::EndJob (void)
+{
+	m_Textures.EndFrame ();
+	m_Programs.EndFrame ();
+	for (unsigned i = 0; i < m_nRetiredBuffers; i++)
+	{
+		delete [] m_RetiredBuffers[i];
+	}
+	m_nRetiredBuffers = 0;
+	for (unsigned i = 1; i <= MaxBuffers; i++)
+	{
+		m_Buffers[i].bUsed = FALSE;
+	}
+
+	m_bJobPending = m_bJobClearColor = m_bJobClearZS = FALSE;
+}
+
+// CLEAR: at the start of a job it is the job's clear; otherwise (or when
+// scissored, masked or clearing only one of depth and stencil) it is drawn
+// as a rectangle over the target
+u32 CCommands::Clear (u32 nMask, u32 nColor, float fDepth, u8 nStencil)
+{
+	const TGLState &S = m_State;
+	boolean bColor = !!(nMask & PGPU_CLEAR_COLOR);
+	boolean bDepth = !!(nMask & PGPU_CLEAR_DEPTH);
+	boolean bStencil = !!(nMask & PGPU_CLEAR_STENCIL);
+	if (!bColor && !bDepth && !bStencil)
+	{
+		return 0;
+	}
+
+	boolean bZSValid = m_nFramebuffer ? m_Framebuffers[m_nFramebuffer].bZSValid : m_bPanelZSValid;
+	boolean bFast =    !m_pRenderer->GetDraws ()
+			&& !(S.nEnables & PGPU_CAP_SCISSOR_TEST)
+			&& (!bColor || (S.nColorMask & 0xF) == 0xF)
+			&& (!bDepth || S.bDepthMask)
+			&& (!bStencil || (S.StencilWriteMask[0] & S.StencilWriteMask[1] & 0xFF) == 0xFF)
+			&& (bDepth == bStencil || !bZSValid || m_bJobClearZS);
+	if (bFast)
+	{
+		if (bColor)
+		{
+			m_bJobClearColor = TRUE;
+			m_JobClear.nColor = nColor;
+		}
+		if (bDepth || bStencil)
+		{
+			if (!m_bJobClearZS)
+			{
+				m_JobClear.fDepth = 1.0f;
+				m_JobClear.nStencil = 0;
+			}
+			m_bJobClearZS = TRUE;
+			if (bDepth)
+			{
+				m_JobClear.fDepth = fDepth;
+			}
+			if (bStencil)
+			{
+				m_JobClear.nStencil = nStencil;
+			}
+		}
+		m_bJobPending = TRUE;
+		return 0;
+	}
+
+	// a rectangle over the target: identity matrices, the clear depth as z,
+	// masks and scissor as set, stencil REPLACE with the clear value
+	TGLState C = S;
+	memset (C.Modelview, 0, sizeof C.Modelview);
+	C.Modelview[0] = C.Modelview[5] = C.Modelview[10] = C.Modelview[15] = 1.0f;
+	memcpy (C.Projection, C.Modelview, sizeof C.Modelview);
+	memcpy (C.Texture, C.Modelview, sizeof C.Modelview);
+	C.ViewportX = C.ViewportY = 0.0f;
+	C.ViewportW = S.nTargetWidth;
+	C.ViewportH = S.nTargetHeight;
+	C.DepthNear = 0.0f;
+	C.DepthFar = 1.0f;
+	C.nEnables = S.nEnables & PGPU_CAP_SCISSOR_TEST;
+	C.nColorMask = bColor ? S.nColorMask : 0;
+	C.nShadeModel = 0;
+	if (bDepth)
+	{
+		C.nEnables |= PGPU_CAP_DEPTH_TEST;
+		C.nDepthFunc = PGPU_ALWAYS;
+		C.bDepthMask = S.bDepthMask;
+	}
+	if (bStencil)
+	{
+		C.nEnables |= PGPU_CAP_STENCIL_TEST;
+		for (unsigned f = 0; f < 2; f++)
+		{
+			C.StencilFunc[f] = PGPU_ALWAYS;
+			C.StencilRef[f] = nStencil;
+			C.StencilFail[f] = C.StencilZFail[f] = C.StencilZPass[f] = PGPU_REPLACE_OP;
+		}
+	}
+
+	float fZ = (fDepth < 0.0f ? 0.0f : fDepth > 1.0f ? 1.0f : fDepth) * 2.0f - 1.0f;
+	static const float Corners[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
+	for (unsigned i = 0; i < 4; i++)
+	{
+		TInputVertex &V = m_pInput[i];
+		memset (&V, 0, sizeof V);
+		V.Position[0] = Corners[i][0];
+		V.Position[1] = Corners[i][1];
+		V.Position[2] = fZ;
+		V.Position[3] = 1.0f;
+		SetColor (V.Color, nColor);
+	}
+	u32 nError = m_Geometry.Draw (C, PGPU_TRIANGLE_FAN, m_pInput, 4, nullptr, 4);
+	if (!nError)
+	{
+		m_bJobPending = TRUE;
+	}
+	return nError;
+}
+
+// pixels of the bound target (GL coordinates, rows bottom up) as RGBA8888;
+// renders the collected draws first
+u32 CCommands::ReadRect (s32 x, s32 y, unsigned nWidth, unsigned nHeight, u32 *pOut)
+{
+	FlushJob (FALSE);
+
+	unsigned W = m_State.nTargetWidth, H = m_State.nTargetHeight;
+	const u16 *pPanel = nullptr;
+	u32 nTexture = 0;
+	unsigned nFace = 0;
+	if (!m_nFramebuffer)
+	{
+		// the frame so far, or the previous frame if nothing was rendered yet
+		pPanel = m_bPanelDrawn ? m_pRenderer->GetBackBuffer () : m_pRenderer->GetLastFrame ();
+		CV3D::Flush (pPanel, W * H * 2);		// written by the V3D
+	}
+	else
+	{
+		nTexture = m_Framebuffers[m_nFramebuffer].nTexture;
+		nFace = m_Framebuffers[m_nFramebuffer].nFace;
+	}
+
+	for (unsigned row = 0; row < nHeight; row++)
+	{
+		for (unsigned i = 0; i < nWidth; i++)
+		{
+			s32 px = x + (s32) i, py = y + (s32) row;
+			u32 nPixel = 0;
+			if (px >= 0 && py >= 0 && (unsigned) px < W && (unsigned) py < H)
+			{
+				if (pPanel)
+				{
+					u16 v = pPanel[(H - 1 - py) * W + px];	// rows top down
+					u32 r = v >> 11, g = (v >> 5) & 0x3F, b = v & 0x1F;
+					nPixel =   (r << 3 | r >> 2) | (g << 2 | g >> 4) << 8
+						 | (b << 3 | b >> 2) << 16 | 0xFFu << 24;
+				}
+				else
+				{
+					nPixel = m_Textures.ReadRGBA (nTexture, nFace, px, py);
+				}
+			}
+			pOut[row * nWidth + i] = nPixel;
+		}
+	}
+
+	return 0;
+}
+
+u32 CCommands::FramebufferCreate (u32 nId, u32 nTexture, u32 nFlags)
+{
+	if (nId < 1 || nId > MaxFramebuffers)
+	{
+		return PGPU_ERR_ID;
+	}
+	if (nFlags & ~PGPU_FRAMEBUFFER_DEPTH_STENCIL)
+	{
+		return PGPU_ERR_ENUM;
+	}
+	if (nId == m_nFramebuffer)
+	{
+		FlushJob (FALSE);
+	}
+
+	TFramebuffer &F = m_Framebuffers[nId];
+	FramebufferFree (&F);
+	F.bValid = TRUE;
+	F.nTexture = nTexture & 0xFFFF;
+	F.nFace = nTexture >> 24;
+	F.bDepthStencil = !!(nFlags & PGPU_FRAMEBUFFER_DEPTH_STENCIL);
+	if (nId == m_nFramebuffer)
+	{
+		UpdateTarget ();
+	}
+
+	return 0;
+}
+
+void CCommands::FramebufferFree (TFramebuffer *F)
+{
+	delete [] F->pZS;
+	memset (F, 0, sizeof *F);
 }
 
 void CCommands::Reply (u8 uchOpcode, const u32 *pPayload, unsigned nLength)
@@ -1200,11 +1697,7 @@ u32 CCommands::ConfigBits (boolean bFaces) const
 
 	if (bFaces)
 	{
-		// the panel's y axis points down, so GL's CCW appears clockwise on screen
-		if (S.nFrontFace == PGPU_CCW)
-		{
-			nBits |= CFG_CLOCKWISE;
-		}
+		nBits |= CGeometry::ClockwiseBit (S);
 		if (S.nEnables & PGPU_CAP_CULL_FACE)
 		{
 			if (S.nCullFace == PGPU_BACK || S.nCullFace == PGPU_FRONT_AND_BACK)
@@ -1230,52 +1723,37 @@ u32 CCommands::ConfigBits (boolean bFaces) const
 	return nBits;
 }
 
-// the blend mode compiled into the fragment shader, ~0 if none matches
+// the fragment shader ending needed: plain, or blending and colour mask from uniforms
 u32 CCommands::BlendMode (void) const
 {
-	const TGLState &S = m_State;
-	if (!(S.nEnables & PGPU_CAP_BLEND))
-	{
-		return PGPU_BLEND_NONE;
-	}
-
-	static const struct { u8 uchSrc, uchDst, uchMode; } Modes[] =
-	{
-		{PGPU_ONE, PGPU_ZERO, PGPU_BLEND_NONE},
-		{PGPU_SRC_ALPHA, PGPU_ONE_MINUS_SRC_ALPHA, PGPU_BLEND_ALPHA},
-		{PGPU_ONE, PGPU_ONE, PGPU_BLEND_ADD},
-		{PGPU_ONE, PGPU_ONE_MINUS_SRC_ALPHA, PGPU_BLEND_PREMUL},
-		{PGPU_DST_COLOR, PGPU_ZERO, PGPU_BLEND_MULTIPLY},
-	};
-	for (auto &M : Modes)
-	{
-		if (S.nBlendSrc == M.uchSrc && S.nBlendDst == M.uchDst)
-		{
-			return M.uchMode;
-		}
-	}
-
-	return ~0U;
+	return   (m_State.nEnables & PGPU_CAP_BLEND) || (m_State.nColorMask & 0xF) != 0xF
+	       ? PGPU_BLEND_GENERIC : PGPU_BLEND_PLAIN;
 }
 
-// viewport transform and clip window, in panel pixels with y down
+// viewport transform and clip window, in target pixels (the panel's rows top down)
 boolean CCommands::GetViewport (TViewport *pVP) const
 {
 	const TGLState &S = m_State;
-	float fHeight = m_pRenderer->GetHeight ();
+	float fHeight = S.nTargetHeight;
+	float fHalfHeight = S.ViewportH * 0.5f;
 
 	pVP->fHalfWidth = S.ViewportW * 0.5f;
-	pVP->fHalfHeight = S.ViewportH * 0.5f;
 	pVP->fCentreX = S.ViewportX + pVP->fHalfWidth;
-	pVP->fCentreY = fHeight - (S.ViewportY + pVP->fHalfHeight);
+	pVP->fCentreY = S.bFlipY ? fHeight - (S.ViewportY + fHalfHeight) : S.ViewportY + fHalfHeight;
+	pVP->fScaleY = S.bFlipY ? -fHalfHeight : fHalfHeight;
 	pVP->fZScale = (S.DepthFar - S.DepthNear) * 0.5f;
 	pVP->fZOffset = (S.DepthFar + S.DepthNear) * 0.5f;
 
 	// the hardware clips against a guard band: clip the rendering to the
 	// viewport (and the panel)
 	s32 x0 = (s32) S.ViewportX, x1 = (s32) (S.ViewportX + S.ViewportW);
-	s32 y0 = (s32) (fHeight - (S.ViewportY + S.ViewportH)), y1 = (s32) (fHeight - S.ViewportY);
-	s32 w = m_pRenderer->GetWidth (), h = (s32) fHeight;
+	s32 y0 = (s32) S.ViewportY, y1 = (s32) (S.ViewportY + S.ViewportH);
+	if (S.bFlipY)
+	{
+		y0 = (s32) (fHeight - (S.ViewportY + S.ViewportH));
+		y1 = (s32) (fHeight - S.ViewportY);
+	}
+	s32 w = S.nTargetWidth, h = (s32) fHeight;
 	if (x0 < 0) x0 = 0;
 	if (y0 < 0) y0 = 0;
 	if (x1 > w) x1 = w;
@@ -1314,25 +1792,40 @@ u32 *CCommands::BuildUniforms (const TProgram *pProgram, const TProgramShader *p
 		case PGPU_U_CONSTANT:		nValue = nData; break;
 		case PGPU_U_UNIFORM:		nValue = pProgram->pUniforms[nData]; break;
 		case PGPU_U_VIEWPORT_X_SCALE:	f = rVP.fHalfWidth * 16.0f; memcpy (&nValue, &f, 4); break;
-		case PGPU_U_VIEWPORT_Y_SCALE:	f = -rVP.fHalfHeight * 16.0f; memcpy (&nValue, &f, 4); break;
+		case PGPU_U_VIEWPORT_Y_SCALE:	f = rVP.fScaleY * 16.0f; memcpy (&nValue, &f, 4); break;
 		case PGPU_U_VIEWPORT_Z_OFFSET:	memcpy (&nValue, &rVP.fZOffset, 4); break;
 		case PGPU_U_VIEWPORT_Z_SCALE:	memcpy (&nValue, &rVP.fZScale, 4); break;
 		case PGPU_U_UNIFORMS_ADDRESS:	nValue = *pBus; break;
 
 		case PGPU_U_TEXTURE_CONFIG_P0:
-		case PGPU_U_TEXTURE_CONFIG_P1: {
-			u32 P0, P1;
-			u32 nTexture = m_TextureUnit[pProgram->SamplerUnit[nData]];
-			if (!m_Textures.Use (nTexture, &P0, &P1))
+		case PGPU_U_TEXTURE_CONFIG_P1:
+		case PGPU_U_TEXTURE_CONFIG_P2: {
+			// P2 (cube maps): data is the sampler | bias/LOD flag << 16
+			CTextures::TConfig Tex;
+			u32 nTexture = m_TextureUnit[pProgram->SamplerUnit[nData & 0xFFFF]];
+			if (!m_Textures.Use (nTexture, &Tex))
 			{
-				m_Textures.UseFallback (&P0, &P1);	// reads (0, 0, 0, 1)
+				m_Textures.UseFallback (&Tex);		// reads (0, 0, 0, 1)
 			}
-			nValue = nKind == PGPU_U_TEXTURE_CONFIG_P0 ? P0 : P1;
+			nValue =   nKind == PGPU_U_TEXTURE_CONFIG_P0 ? Tex.P0
+				 : nKind == PGPU_U_TEXTURE_CONFIG_P1 ? Tex.P1
+				 : Tex.P2 | ((nData >> 16) & 1);
 			} break;
 
-		case PGPU_U_FB_Y_TRANSFORM: {	// the panel is a window framebuffer: rows top down
-			const float Values[4] = {-1.0f, (float) m_pRenderer->GetHeight (), 1.0f, 0.0f};
-			memcpy (&nValue, &Values[nData], 4);
+		case PGPU_U_STENCIL: {
+			u32 W[3];
+			CGeometry::StencilWords (m_State, W);
+			nValue = W[nData];
+			} break;
+
+		case PGPU_U_BLEND:
+			memcpy (&nValue, &m_BlendK[nData / 12][nData % 12], 4);
+			break;
+
+		case PGPU_U_FB_Y_TRANSFORM: {	// as Mesa: window (rows top down) or texture target
+			float H = m_State.nTargetHeight;
+			const float Flipped[4] = {-1.0f, H, 1.0f, 0.0f}, Straight[4] = {1.0f, 0.0f, -1.0f, H};
+			memcpy (&nValue, m_State.bFlipY ? &Flipped[nData] : &Straight[nData], 4);
 			} break;
 
 		case PGPU_U_DEPTH_RANGE: {
@@ -1341,12 +1834,12 @@ u32 *CCommands::BuildUniforms (const TProgram *pProgram, const TProgramShader *p
 			memcpy (&nValue, &Values[nData], 4);
 			} break;
 
-		case PGPU_U_POINT_Y_TRANSFORM: {	// upper-left origin on a window framebuffer
-			const float Values[4] = {-1.0f, 1.0f, 0.0f, 0.0f};
-			memcpy (&nValue, &Values[nData], 4);
+		case PGPU_U_POINT_Y_TRANSFORM: {	// upper-left origin (flipped when rows go top down)
+			const float Flipped[4] = {-1.0f, 1.0f, 0.0f, 0.0f}, Straight[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+			memcpy (&nValue, m_State.bFlipY ? &Flipped[nData] : &Straight[nData], 4);
 			} break;
 
-		default:			// P2 (cube maps only), first level
+		default:			// first level: 0
 			nValue = 0;
 			break;
 		}
@@ -1405,11 +1898,13 @@ u32 CCommands::ProgramDrawInline (const u32 *p, unsigned nLength, u32 *pDetail)
 			return PGPU_ERR_LENGTH;
 		}
 		u32 nFormat = p[w++];
-		if (nFormat != pProgram->Attributes[i])
+		if (   PGPU_ATTR_TYPE (nFormat) >= TYPES
+		    || PGPU_ATTR_SIZE (nFormat) < 1 || PGPU_ATTR_SIZE (nFormat) > 4)
 		{
 			*pDetail = i;
-			return PGPU_ERR_ENUM;		// not the program's attribute format
+			return PGPU_ERR_ENUM;
 		}
+		Inline.Format[i] = nFormat;		// converted if not the program's
 		unsigned nBytes = PGPU_ATTR_SIZE (nFormat) * TypeBytes[PGPU_ATTR_TYPE (nFormat)] * nVertices;
 		unsigned nWords = (nBytes + 3) / 4;
 		if (w + nWords > nLength)
@@ -1453,17 +1948,9 @@ u32 CCommands::ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
 	{
 		return PGPU_ERR_LIMIT;
 	}
-	if ((m_State.nColorMask & 0xF) != 0xF)
-	{
-		*pDetail = 1;
-		return PGPU_ERR_PROGRAM;
-	}
-
 	unsigned nPrim =   nMode == PGPU_POINTS ? PGPU_PRIM_POINTS
 			 : nMode <= PGPU_LINE_STRIP ? PGPU_PRIM_LINES : PGPU_PRIM_TRIANGLES;
-	u32 nBlend = BlendMode ();
-	const TProgramVariant *pVariant = nBlend == ~0U ? nullptr
-					  : CPrograms::FindVariant (pProgram, nPrim, nBlend);
+	const TProgramVariant *pVariant = CPrograms::FindVariant (pProgram, nPrim, BlendMode ());
 	if (!pVariant)
 	{
 		*pDetail = 2;
@@ -1491,6 +1978,41 @@ u32 CCommands::ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
 		return PGPU_ERR_MEMORY;
 	}
 
+	// the vertices an indexed draw uses, for arrays that must be converted
+	unsigned nMinIndex = 0, nMaxUsed = 0;
+	boolean bRangeKnown = FALSE;
+	auto IndexRange = [&] (void) -> boolean
+	{
+		if (bRangeKnown)
+		{
+			return TRUE;
+		}
+		const u8 *pIndices;
+		if (pInline)
+		{
+			pIndices = pInline->pIndices;
+		}
+		else
+		{
+			const TBuffer &IB = m_Buffers[nIndexBuffer];
+			if (   nIndexBuffer < 1 || nIndexBuffer > MaxBuffers || !IB.pData
+			    || (u64) nIndexOffset + (u64) nCount * (nIndexType ? 2 : 1) > IB.nSize)
+			{
+				return FALSE;
+			}
+			pIndices = IB.pData + nIndexOffset;
+		}
+		nMinIndex = 0xFFFFFFFF;
+		for (unsigned k = 0; k < nCount; k++)
+		{
+			unsigned n = nIndexType ? pIndices[2 * k] | pIndices[2 * k + 1] << 8 : pIndices[k];
+			if (n < nMinIndex) nMinIndex = n;
+			if (n > nMaxUsed) nMaxUsed = n;
+		}
+		bRangeKnown = TRUE;
+		return TRUE;
+	};
+
 	u32 nMaxIndex = 0xFFFF;
 	u8 *pAttribute = pRecord + SHADER_RECORD_BYTES;
 	for (unsigned i = 0; i < nAttributes; i++, pAttribute += ATTRIBUTE_RECORD_BYTES)
@@ -1503,13 +2025,24 @@ u32 CCommands::ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
 
 		if (pInline && (pInline->nMask & (1 << i)))
 		{
-			// vertex data from the packet into the frame's vertex pool
-			u8 *pData = m_pRenderer->AllocData (nVertices * nBytes, &nAddress);
-			if (!pData)
+			// vertex data from the packet into the frame's vertex pool,
+			// converted to the program's format if needed
+			u32 nSrcType = PGPU_ATTR_TYPE (pInline->Format[i]);
+			unsigned nSrcSize = PGPU_ATTR_SIZE (pInline->Format[i]);
+			if (nSrcType == nType && nSrcSize == nSize)
+			{
+				u8 *pData = m_pRenderer->AllocData (nVertices * nBytes, &nAddress);
+				if (!pData)
+				{
+					return PGPU_ERR_MEMORY;
+				}
+				memcpy (pData, pInline->pAttribute[i], nVertices * nBytes);
+			}
+			else if (!ConvertArray (m_pRenderer, pInline->pAttribute[i], nSrcSize * TypeBytes[nSrcType],
+						nSrcType, nSrcSize, nVertices, nType, nSize, &nAddress))
 			{
 				return PGPU_ERR_MEMORY;
 			}
-			memcpy (pData, pInline->pAttribute[i], nVertices * nBytes);
 			nStride = nBytes;
 			if (nStride > 255)
 			{
@@ -1529,15 +2062,47 @@ u32 CCommands::ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
 				*pDetail = A.nBuffer;
 				return PGPU_ERR_OBJECT;
 			}
-			if (A.nType != nType || A.nSize != nSize)
-			{
-				*pDetail = i;
-				return PGPU_ERR_ENUM;	// not the format the program was compiled for
-			}
-			nStride = A.nStride ? A.nStride : nBytes;
-			if (nStride > 255 || A.nOffset > B.nSize || nBytes > B.nSize - A.nOffset)
+			unsigned nSrcBytes = A.nSize * TypeBytes[A.nType];
+			nStride = A.nStride ? A.nStride : nSrcBytes;
+			if (A.nOffset > B.nSize || nSrcBytes > B.nSize - A.nOffset)
 			{
 				return PGPU_ERR_LIMIT;
+			}
+
+			if (A.nType != nType || A.nSize != nSize || nStride > 255)
+			{
+				// not the format the program was compiled for (or a stride
+				// the V3D can't do): convert the vertices used
+				unsigned nLast = (B.nSize - A.nOffset - nSrcBytes) / (nStride ? nStride : 1);
+				unsigned nFirstUsed = nFirst, nUsed = nCount;
+				if (bIndexed)
+				{
+					if (!IndexRange ())
+					{
+						return PGPU_ERR_LIMIT;
+					}
+					nFirstUsed = nMinIndex;
+					nUsed = nMaxUsed - nMinIndex + 1;
+				}
+				if (nFirstUsed + nUsed - 1 > nLast)
+				{
+					return PGPU_ERR_LIMIT;
+				}
+				u32 nBus;
+				if (!ConvertArray (m_pRenderer, B.pData + A.nOffset + nFirstUsed * nStride, nStride,
+						   A.nType, A.nSize, nUsed, nType, nSize, &nBus))
+				{
+					return PGPU_ERR_MEMORY;
+				}
+				// the V3D adds index * stride: for indexed draws, the converted
+				// data starts at the smallest index
+				nAddress = bIndexed ? nBus - nMinIndex * nBytes : nBus;
+				nStride = nBytes;
+				if (bIndexed && nMaxUsed < nMaxIndex)
+				{
+					nMaxIndex = nMaxUsed;
+				}
+				goto record;
 			}
 
 			unsigned nLast = (B.nSize - A.nOffset - nBytes) / nStride;	// last vertex in the buffer
@@ -1574,6 +2139,7 @@ u32 CCommands::ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
 			nStride = 0;
 		}
 
+	record:
 		CControlList Rec (pAttribute, ATTRIBUTE_RECORD_BYTES);
 		Rec.Add32 (nAddress);
 		Rec.Add8 (nBytes - 1);
@@ -1616,6 +2182,7 @@ u32 CCommands::ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
 	}
 
 	// uniform streams
+	CGeometry::BlendCoefficients (m_State, m_State.bTargetAlpha, m_BlendK);
 	u32 nFSUniforms, nVSUniforms, nCSUniforms;
 	if (   !BuildUniforms (pProgram, pVariant->pFS, VP, &nFSUniforms)
 	    || !BuildUniforms (pProgram, pVariant->pVS, VP, &nVSUniforms)
@@ -1648,8 +2215,7 @@ u32 CCommands::ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
 
 	TGLDraw G;
 	G.State.nConfigBits = ConfigBits (nPrim == PGPU_PRIM_TRIANGLES);
-	CGeometry::GetDrawState (m_State, m_pRenderer->GetWidth (), m_pRenderer->GetHeight (),
-				 nPrim == PGPU_PRIM_TRIANGLES, &G.State);
+	CGeometry::GetDrawState (m_State, nPrim == PGPU_PRIM_TRIANGLES, &G.State);
 	// the hardware clips against a guard band: clip the rendering to the viewport too
 	unsigned x0 = VP.nClipX > G.State.nClipX ? VP.nClipX : G.State.nClipX;
 	unsigned y0 = VP.nClipY > G.State.nClipY ? VP.nClipY : G.State.nClipY;
@@ -1669,7 +2235,7 @@ u32 CCommands::ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
 	G.fCentreX = VP.fCentreX;
 	G.fCentreY = VP.fCentreY;
 	G.fHalfWidth = VP.fHalfWidth;
-	G.fHalfHeight = VP.fHalfHeight;
+	G.fScaleY = VP.fScaleY;
 	G.fZScale = VP.fZScale;
 	G.fZOffset = VP.fZOffset;
 	G.nMode = nMode;
@@ -1685,7 +2251,7 @@ u32 CCommands::ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
 	}
 
 	m_Programs.Use (pProgram);
-	m_bFrameHasDraw = TRUE;
+	m_bJobPending = TRUE;
 	m_Stats.nProgramDraws++;
 
 	return 0;

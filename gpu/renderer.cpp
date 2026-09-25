@@ -26,9 +26,6 @@
 #define STORE_DISABLE_ZS_CLEAR		(1 << 14)
 #define STORE_DISABLE_VG_MASK_CLEAR	(1 << 15)
 
-// depth and stencil (32 bits per pixel) in T-format: 4 KB tiles of 32x32
-// pixels, generously padded
-#define DEPTH_BUFFER_SIZE(w, h)		((((w) + 127) & ~127) * (((h) + 127) & ~127) * 4)
 
 #define V3D_DEPTH_OFFSET		101
 #define V3D_LINE_WIDTH			99
@@ -88,7 +85,6 @@ boolean CRenderer::Initialize (void)
 	m_pDraws = new TDraw[MaxDraws];
 
 	m_pDepthBuffer = (u32 *) CV3D::Alloc (DEPTH_BUFFER_SIZE (m_nWidth, m_nHeight));
-	m_bDepthValid = FALSE;
 
 	// all fragment shader variants in one block (8-byte instructions)
 	unsigned nWords = 0;
@@ -230,9 +226,24 @@ u8 *CRenderer::AllocData (unsigned nBytes, u32 *pBus)
 	return m_pVertexPool + nOffset;
 }
 
-boolean CRenderer::EndFrame (boolean bClearColor, u32 nClearColor, boolean bClearDepth, float fClearDepth,
-			     TRenderStats *pStats)
+void CRenderer::GetPanelTarget (TRenderTarget *pTarget, u32 *pPreviousBus) const
 {
+	pTarget->nColorBus = CV3D::BusAddress (m_pFrameBuffer[m_nBuffer]);	// the back buffer
+	pTarget->nWidth = m_nWidth;
+	pTarget->nHeight = m_nHeight;
+	pTarget->nModeFlags = 0;			// BGR565 dithered, raster
+	pTarget->nLoadStore = LOADSTORE_BUFFER_COLOR | LOADSTORE_TILING_RASTER | LOADSTORE_FORMAT_BGR565;
+	pTarget->nZSBus = CV3D::BusAddress (m_pDepthBuffer);
+	*pPreviousBus = CV3D::BusAddress (m_pFrameBuffer[m_nBuffer ^ 1]);
+}
+
+boolean CRenderer::RenderJob (const TRenderTarget &rTarget, u32 nLoadColorBus, boolean bLoadZS,
+			      const TJobClear &rClear, TRenderStats *pStats)
+{
+	unsigned nTilesX = (rTarget.nWidth + V3D_TILE_SIZE-1) / V3D_TILE_SIZE;
+	unsigned nTilesY = (rTarget.nHeight + V3D_TILE_SIZE-1) / V3D_TILE_SIZE;
+	assert (nTilesX * nTilesY <= MAX_TILES);
+
 	CV3D::Flush (m_pVertexPool, m_nVertexBytes);
 	CV3D::Flush (m_pUniformPool, m_nUniformWords * 4);
 	CV3D::Flush (m_pRecordPool, m_nRecordBytes);
@@ -262,8 +273,8 @@ boolean CRenderer::EndFrame (boolean bClearColor, u32 nClearColor, boolean bClea
 	Bin.Add32 (CV3D::BusAddress (m_pTileAlloc));
 	Bin.Add32 (TILE_ALLOC_SIZE);
 	Bin.Add32 (CV3D::BusAddress (m_pTileState));
-	Bin.Add8 (m_nTilesX);
-	Bin.Add8 (m_nTilesY);
+	Bin.Add8 (nTilesX);
+	Bin.Add8 (nTilesY);
 	Bin.Add8 (0x04);			// auto-initialise tile state data array
 
 	Bin.Add8 (V3D_START_TILE_BINNING);
@@ -271,8 +282,8 @@ boolean CRenderer::EndFrame (boolean bClearColor, u32 nClearColor, boolean bClea
 	Bin.Add8 (V3D_CLIP_WINDOW);
 	Bin.Add16 (0);
 	Bin.Add16 (0);
-	Bin.Add16 (m_nWidth);
-	Bin.Add16 (m_nHeight);
+	Bin.Add16 (rTarget.nWidth);
+	Bin.Add16 (rTarget.nHeight);
 
 	Bin.Add8 (V3D_VIEWPORT_OFFSET);
 	Bin.Add16 (0);
@@ -282,8 +293,8 @@ boolean CRenderer::EndFrame (boolean bClearColor, u32 nClearColor, boolean bClea
 	TDrawState Last;
 	memset (&Last, 0xFF, sizeof Last);	// nothing emitted yet
 	Last.nClipX = Last.nClipY = 0;		// the clip window emitted above
-	Last.nClipWidth = m_nWidth;
-	Last.nClipHeight = m_nHeight;
+	Last.nClipWidth = rTarget.nWidth;
+	Last.nClipHeight = rTarget.nHeight;
 	Last.nDepthOffset = 0;			// reset value
 	Last.fLineWidth = 1.0f;
 	boolean bViewportOffset = FALSE;	// a GL draw set a viewport offset
@@ -335,7 +346,7 @@ boolean CRenderer::EndFrame (boolean bClearColor, u32 nClearColor, boolean bClea
 
 			Bin.Add8 (V3D_CLIPPER_XY_SCALING);	// in 1/16 pixel
 			Bin.AddFloat (G.fHalfWidth * 16.0f);
-			Bin.AddFloat (-G.fHalfHeight * 16.0f);	// y down
+			Bin.AddFloat (G.fScaleY * 16.0f);
 
 			Bin.Add8 (V3D_CLIPPER_Z_SCALE_OFFSET);
 			Bin.AddFloat (G.fZScale);
@@ -389,29 +400,26 @@ boolean CRenderer::EndFrame (boolean bClearColor, u32 nClearColor, boolean bClea
 	assert (!Bin.Overflow ());
 	Bin.Flush ();
 
-	// rendering control list into the buffer that is not being sent
-	u16 *pTarget = m_pFrameBuffer[m_nBuffer];
-	u16 *pPrevious = m_pFrameBuffer[m_nBuffer ^ 1];
-
-	// the clear colour is in the tile buffer's 32-bit format (R in byte 0,
-	// like the shaders), also with the RGB565 store (verified on the panel)
-	float fDepth = fClearDepth < 0.0f ? 0.0f : fClearDepth > 1.0f ? 1.0f : fClearDepth;
+	// rendering control list: the clear colour is in the tile buffer's 32-bit
+	// format (R in byte 0, like the shaders), also with the RGB565 store
+	// (verified on the panel)
+	float fDepth = rClear.fDepth < 0.0f ? 0.0f : rClear.fDepth > 1.0f ? 1.0f : rClear.fDepth;
 	u32 nClearZ = (u32) (fDepth * 0xFFFFFF);
 
 	CControlList Render (m_pRenderCL, RENDER_CL_SIZE);
 	Render.Add8 (V3D_CLEAR_COLORS);
-	Render.Add32 (nClearColor);
-	Render.Add32 (nClearColor);
+	Render.Add32 (rClear.nColor);
+	Render.Add32 (rClear.nColor);
 	Render.Add16 (nClearZ & 0xFFFF);	// clear Z (24 bits) ...
 	Render.Add8 (nClearZ >> 16);
 	Render.Add8 (0);			// ... clear VG mask
-	Render.Add8 (0);			// clear stencil
+	Render.Add8 (rClear.nStencil);		// clear stencil
 
 	Render.Add8 (V3D_TILE_RENDERING_MODE_CONFIG);
-	Render.Add32 (CV3D::BusAddress (pTarget));
-	Render.Add16 (m_nWidth);
-	Render.Add16 (m_nHeight);
-	Render.Add16 (0 << 2);			// BGR565 dithered, linear
+	Render.Add32 (rTarget.nColorBus);
+	Render.Add16 (rTarget.nWidth);
+	Render.Add16 (rTarget.nHeight);
+	Render.Add16 (rTarget.nModeFlags);
 
 	Render.Add8 (V3D_TILE_COORDINATES);	// dummy store to clear the tile buffer
 	Render.Add8 (0);
@@ -420,18 +428,17 @@ boolean CRenderer::EndFrame (boolean bClearColor, u32 nClearColor, boolean bClea
 	Render.Add16 (0);
 	Render.Add32 (0);
 
-	for (unsigned y = 0; y < m_nTilesY; y++)
+	for (unsigned y = 0; y < nTilesY; y++)
 	{
-		for (unsigned x = 0; x < m_nTilesX; x++)
+		for (unsigned x = 0; x < nTilesX; x++)
 		{
-			boolean bLoadDepth = !bClearDepth && m_bDepthValid;
-			if (!bClearColor)
+			boolean bLoadDepth = bLoadZS && rTarget.nZSBus;
+			if (nLoadColorBus)
 			{
 				// the load happens when the tile coordinates are processed
 				Render.Add8 (V3D_LOAD_TILE_BUFFER_GENERAL);
-				Render.Add16 (LOADSTORE_BUFFER_COLOR | LOADSTORE_TILING_RASTER
-					      | LOADSTORE_FORMAT_BGR565);
-				Render.Add32 (CV3D::BusAddress (pPrevious));
+				Render.Add16 (rTarget.nLoadStore);
+				Render.Add32 (nLoadColorBus);
 
 				if (bLoadDepth)
 				{
@@ -450,7 +457,7 @@ boolean CRenderer::EndFrame (boolean bClearColor, u32 nClearColor, boolean bClea
 			{
 				Render.Add8 (V3D_LOAD_TILE_BUFFER_GENERAL);
 				Render.Add16 (LOADSTORE_BUFFER_ZS | LOADSTORE_TILING_T);
-				Render.Add32 (CV3D::BusAddress (m_pDepthBuffer));
+				Render.Add32 (rTarget.nZSBus);
 			}
 
 			Render.Add8 (V3D_TILE_COORDINATES);
@@ -459,26 +466,27 @@ boolean CRenderer::EndFrame (boolean bClearColor, u32 nClearColor, boolean bClea
 
 			Render.Add8 (V3D_BRANCH_TO_SUBLIST);
 			Render.Add32 (CV3D::BusAddress (m_pTileAlloc)
-				      + (y * m_nTilesX + x) * V3D_TILE_ALLOC_BLOCK);
+				      + (y * nTilesX + x) * V3D_TILE_ALLOC_BLOCK);
 
-			// depth and stencil for a following frame without depth CLEAR
-			// (keeping the colour for the colour store)
-			Render.Add8 (V3D_STORE_TILE_BUFFER_GENERAL);
-			Render.Add16 (LOADSTORE_BUFFER_ZS | LOADSTORE_TILING_T | STORE_DISABLE_COLOR_CLEAR);
-			Render.Add32 (CV3D::BusAddress (m_pDepthBuffer));
+			if (rTarget.nZSBus)
+			{
+				// depth and stencil for a following job without depth CLEAR
+				// (keeping the colour for the colour store)
+				Render.Add8 (V3D_STORE_TILE_BUFFER_GENERAL);
+				Render.Add16 (LOADSTORE_BUFFER_ZS | LOADSTORE_TILING_T | STORE_DISABLE_COLOR_CLEAR);
+				Render.Add32 (rTarget.nZSBus);
 
-			Render.Add8 (V3D_TILE_COORDINATES);
-			Render.Add8 (x);
-			Render.Add8 (y);
+				Render.Add8 (V3D_TILE_COORDINATES);
+				Render.Add8 (x);
+				Render.Add8 (y);
+			}
 
-			boolean bLast = x == m_nTilesX-1 && y == m_nTilesY-1;
+			boolean bLast = x == nTilesX-1 && y == nTilesY-1;
 			Render.Add8 (bLast ? V3D_STORE_MS_TILE_BUFFER_EOF : V3D_STORE_MS_TILE_BUFFER);
 		}
 	}
 	assert (!Render.Overflow ());
 	Render.Flush ();
-
-	m_bDepthValid = TRUE;
 
 	unsigned nBinUs = 0, nRenderUs = 0;
 	boolean bOK = m_pV3D->RunJob (Bin.GetStartBus (), Bin.GetEndBus (),
@@ -486,26 +494,12 @@ boolean CRenderer::EndFrame (boolean bClearColor, u32 nClearColor, boolean bClea
 				      CV3D::BusAddress (m_pOverflow), OVERFLOW_SIZE,
 				      &nBinUs, &nRenderUs);
 
-	// present: wait for the previous frame's DMA, then send this one
-	unsigned nStart = CTimer::GetClockTicks ();
-	m_pDisplay->WaitIdle ();
-	unsigned nWaitUs = CTimer::GetClockTicks () - nStart;
-
-	const CDisplay::TArea Full = {0, m_nWidth-1, 0, m_nHeight-1};
-	m_pDisplay->SetArea (Full, pTarget, PanelDone, this);
-	m_nBuffer ^= 1;
-
-	m_PinFrame.Write (HIGH);		// FRAME pulse (>= 10 us)
-	CTimer::SimpleusDelay (10);
-	m_PinFrame.Write (LOW);
-
 	if (pStats)
 	{
-		pStats->nDraws = m_nDraws;
-		pStats->nTriangles = nTriangles;
-		pStats->nDroppedTriangles = m_nDropped;
-		pStats->nRenderUs = nBinUs + nRenderUs;
-		pStats->nPresentWaitUs = nWaitUs;
+		pStats->nDraws += m_nDraws;
+		pStats->nTriangles += nTriangles;
+		pStats->nDroppedTriangles += m_nDropped;
+		pStats->nRenderUs += nBinUs + nRenderUs;
 	}
 
 	m_nDraws = 0;
@@ -515,6 +509,27 @@ boolean CRenderer::EndFrame (boolean bClearColor, u32 nClearColor, boolean bClea
 	m_nDropped = 0;
 
 	return bOK;
+}
+
+// hand the back buffer to the panel (after the previous frame's DMA) and swap
+void CRenderer::Present (TRenderStats *pStats)
+{
+	unsigned nStart = CTimer::GetClockTicks ();
+	m_pDisplay->WaitIdle ();
+	unsigned nWaitUs = CTimer::GetClockTicks () - nStart;
+
+	const CDisplay::TArea Full = {0, m_nWidth-1, 0, m_nHeight-1};
+	m_pDisplay->SetArea (Full, m_pFrameBuffer[m_nBuffer], PanelDone, this);
+	m_nBuffer ^= 1;
+
+	m_PinFrame.Write (HIGH);		// FRAME pulse (>= 10 us)
+	CTimer::SimpleusDelay (10);
+	m_PinFrame.Write (LOW);
+
+	if (pStats)
+	{
+		pStats->nPresentWaitUs += nWaitUs;
+	}
 }
 
 void CRenderer::DiscardFrame (void)

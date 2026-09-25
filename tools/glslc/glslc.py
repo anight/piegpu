@@ -24,6 +24,8 @@ import argparse, json, os, re, struct, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
+sys.path.insert(0, os.path.join(ROOT, 'devtools'))
+import qpuasm
 MESA_SRC = os.path.join(ROOT, 'third_party', 'mesa')
 MESA_PREFIX = os.path.join(ROOT, 'third_party', 'mesa-install')
 MESA_LIB = os.path.join(MESA_PREFIX, 'lib', 'x86_64-linux-gnu')
@@ -45,7 +47,8 @@ TYPES = {
     'ushort_norm': (8, 'ushort', 1),
 }
 PRIMS = {'triangles': 0, 'lines': 1, 'points': 2}
-BLENDS = {'none': 0, 'alpha': 1, 'add': 2, 'premul': 3, 'multiply': 4}
+BLEND_PLAIN, BLEND_GENERIC = 0, 1	# fragment shader endings (protocol/pgpu_program.h)
+U_BLEND = 35				# uniform kind: blend coefficient (data 0-47)
 STAGES = {'fs': 0, 'vs': 1, 'cs': 2}
 
 # Mesa built-in state variables the Zero provides -> pgpu uniform kind
@@ -62,7 +65,7 @@ SUPPORTED_KINDS = {
     'QUNIFORM_VIEWPORT_Z_OFFSET', 'QUNIFORM_VIEWPORT_Z_SCALE',
     'QUNIFORM_TEXTURE_CONFIG_P0', 'QUNIFORM_TEXTURE_CONFIG_P1',
     'QUNIFORM_TEXTURE_CONFIG_P2', 'QUNIFORM_TEXTURE_FIRST_LEVEL',
-    'QUNIFORM_UNIFORMS_ADDRESS',
+    'QUNIFORM_UNIFORMS_ADDRESS', 'QUNIFORM_STENCIL',
 }
 EXPECTED_KINDS = {
     'QUNIFORM_CONSTANT': 0, 'QUNIFORM_UNIFORM': 1,
@@ -70,7 +73,7 @@ EXPECTED_KINDS = {
     'QUNIFORM_VIEWPORT_Z_OFFSET': 4, 'QUNIFORM_VIEWPORT_Z_SCALE': 5,
     'QUNIFORM_TEXTURE_CONFIG_P0': 6, 'QUNIFORM_TEXTURE_CONFIG_P1': 7,
     'QUNIFORM_TEXTURE_CONFIG_P2': 8, 'QUNIFORM_TEXTURE_FIRST_LEVEL': 9,
-    'QUNIFORM_UNIFORMS_ADDRESS': 24,
+    'QUNIFORM_UNIFORMS_ADDRESS': 24, 'QUNIFORM_STENCIL': 22,
 }
 
 
@@ -115,13 +118,103 @@ def vpm_writes(code):
     return n
 
 
+# ---- fragment shader endings -------------------------------------------------
+#
+# The fragment shaders are compiled for an RGBA8888 window framebuffer with
+# blending disabled: they end by writing the colour, packed BGRA, to
+# tlb_color_all (conditionally, for discard), followed by the program end.
+# That write is redirected into an accumulator, and one of two endings is
+# appended that writes the tile buffer in the Zero's order (R in byte 0):
+#   plain:   reorder the bytes (blending off, colour mask all on)
+#   generic: blending and colour mask from 48 uniforms: per channel c
+#            F = k0 + k1 As + k2 Ad + k3 Sc + k4 Dc + k5 min (As, 1 - Ad)
+#            for the source (k0-k5) and the destination (k6-k11) factor,
+#            result = Sc Fs + Dc Fd (the equation's sign is in the k),
+#            channels R, G, B, A; D is the tile buffer's colour (colour load)
+
+W_TLB_COLOR_ALL, W_NOP = 46, 39
+
+
+def fs_ending(code, stream, generic):
+    ends = [i for i, w in enumerate(code)
+            if w >> 60 != 15 and W_TLB_COLOR_ALL in ((w >> 38) & 63, (w >> 32) & 63)]
+    if len(ends) != 1:
+        fail(f'fragment shader: {len(ends)} colour writes, expected one')
+    i = ends[0]
+    w = code[i]
+    for t in code[i + 1:]:
+        if t >> 60 in (14, 15) or ((t >> 38) & 63, (t >> 32) & 63) != (W_NOP, W_NOP):
+            fail('fragment shader: unexpected code after the colour write')
+    sig = w >> 60
+    if sig not in (1, 13, 14):		# none, small immediate, load immediate
+        fail(f'fragment shader: signal {sig} on the colour write')
+
+    # redirect the write into r0 (r1 if the other unit writes r0)
+    add_w, mul_w = (w >> 38) & 63, (w >> 32) & 63
+    on_add = add_w == W_TLB_COLOR_ALL
+    other = mul_w if on_add else add_w
+    acc = 33 if other == 32 else 32
+    shift = 38 if on_add else 32
+    cond = (w >> 49) & 7 if on_add else (w >> 46) & 7
+    if sig == 14:			# load immediate: both conditions apply
+        cond = (w >> 49) & 7
+    w = (w & ~(63 << shift)) | (acc << shift)
+    cond_name = {v: k for k, v in qpuasm.CONDS.items()}[cond]
+    src = 'r%d' % (acc - 32)
+
+    p = qpuasm.Program('ending')
+    uniforms = []
+    if not generic:
+        # BGRA -> RGBA: bytes 2, 1, 0, 3 as floats, packed again
+        p.mov('ra0', src)
+        for byte, pack in (('8c', '8a'), ('8b', '8b'), ('8a', '8c'), ('8d', '8d')):
+            p.fmax('r1', 'ra0.' + byte, 'ra0.' + byte)
+            p.mov('r3.' + pack, 'r1')
+    else:
+        p.mov('ra0', src)			# source, BGRA
+        p.sig('colorload')			# r4: tile buffer colour, R in byte 0
+        S = {'r': 'ra1', 'g': 'ra2', 'b': 'ra3', 'a': 'ra4'}
+        D = {'r': 'rb1', 'g': 'rb2', 'b': 'rb3', 'a': 'rb4'}
+        for ch, byte in (('r', '8c'), ('g', '8b'), ('b', '8a'), ('a', '8d')):
+            p.fmax(S[ch], 'ra0.' + byte, 'ra0.' + byte)
+        for ch, byte in (('r', '8a'), ('g', '8b'), ('b', '8c'), ('a', '8d')):
+            p.fmax(D[ch], 'r4.' + byte, 'r4.' + byte)
+        p.fsub('r0', 1.0, D['a'])
+        p.fmin('ra5', S['a'], 'r0')		# SRC_ALPHA_SATURATE
+        k = 0
+        for ch, pack in (('r', '8a'), ('g', '8b'), ('b', '8c'), ('a', '8d')):
+            terms = [S['a'], D['a'], S[ch], D[ch], 'ra5']
+            for side in (0, 1):
+                p.mov('r0', p.unif('k%d' % k))
+                uniforms.append(k)
+                k += 1
+                tmp = ('r1', 'r2')
+                for n, x in enumerate(terms):
+                    p.fmul(tmp[n % 2], p.unif('k%d' % k), x)
+                    uniforms.append(k)
+                    k += 1
+                    p.fadd('r0', 'r0', tmp[n % 2])
+                if side == 0:
+                    p.fmul('ra6', 'r0', S[ch])	# Sc Fs
+                else:
+                    p.fmul('r1', 'r0', D[ch])	# Dc Fd
+                    p.fadd('r0', 'ra6', 'r1')
+            p.mov('r3.' + pack, 'r0')
+    p.alu('mov', 'tlbc', 'r3', cond=cond_name)
+    ending = p.encode()
+
+    new_code = code[:i] + [w] + ending + code[i + 1:]
+    new_stream = [list(u) for u in stream] + [[U_BLEND, n, 0] for n in uniforms]
+    return new_code, new_stream
+
+
 def main():
     ap = argparse.ArgumentParser(description='Precompile a GLSL ES program for the Pico GPU')
     ap.add_argument('-n', '--name', required=True, help='C identifier prefix')
     ap.add_argument('--vs', required=True)
     ap.add_argument('--fs', required=True)
     ap.add_argument('-a', '--attrib', action='append', default=[], help='NAME:TYPE:SIZE')
-    ap.add_argument('-v', '--variant', action='append', default=[], help='PRIM:BLEND')
+    ap.add_argument('-v', '--variant', action='append', default=[], help='PRIM')
     ap.add_argument('-o', '--output', required=True)
     ap.add_argument('--keep', action='store_true', help='keep the dump (for debugging)')
     args = ap.parse_args()
@@ -144,14 +237,10 @@ def main():
         fail('a program needs 1 to 8 attributes')
 
     variants = []
-    for v in args.variant or ['triangles:none', 'triangles:alpha']:
-        try:
-            prim, blend = v.split(':')
-        except ValueError:
-            fail(f'bad variant {v!r}, expected PRIM:BLEND')
-        if prim not in PRIMS or blend not in BLENDS:
-            fail(f'bad variant {v!r}')
-        variants.append((prim, blend))
+    for v in args.variant or ['triangles']:
+        if v not in PRIMS:
+            fail(f'bad variant {v!r}, expected triangles, lines or points')
+        variants.append(v)
 
     harness = build_harness()
     with tempfile.TemporaryDirectory() as tmp:
@@ -161,8 +250,8 @@ def main():
             f.write(f'vs {os.path.abspath(args.vs)}\nfs {os.path.abspath(args.fs)}\n')
             for name, t, size in attribs:
                 f.write(f'attrib {name} {TYPES[t][1]} {size} {TYPES[t][2]}\n')
-            for prim, blend in variants:
-                f.write(f'variant {prim} {blend}\n')
+            for prim in variants:
+                f.write(f'variant {prim}\n')
         env = dict(os.environ,
                    LD_LIBRARY_PATH=MESA_LIB,
                    LD_PRELOAD=os.path.join(MESA_LIB, 'libvc4_noop_drm_shim.so'),
@@ -228,7 +317,8 @@ def main():
                 o['threaded'], o['num_inputs'], o['vattrs_live'], tuple(o['vattr_offsets']))
 
     variant_words = []
-    for (prim, blend), used in zip(variants, per_variant):
+    n_variants = 0
+    for prim, used in zip(variants, per_variant):
         idx = []
         for stage in ('fs', 'vs', 'cs'):
             o = used[stage]
@@ -265,6 +355,8 @@ def main():
                     if unit is None:
                         fail(f'cannot identify sampler {data} (width {width})')
                     sampler_units[data] = unit
+            if stage == 'fs':
+                continue
             k = shader_key(o)
             if k not in shader_index:
                 shader_index[k] = len(shaders)
@@ -274,8 +366,20 @@ def main():
         cs = used['cs']
         # CS output: Xc, Yc, Zc, Wc, Xs|Ys, Zs, 1/Wc [, point size]
         point_size = prim == 'points' and vpm_writes([int(w, 16) for w in cs['code']]) == 8
-        key = PRIMS[prim] | BLENDS[blend] << 8 | (1 << 16 if point_size else 0)
-        variant_words += [key, idx[0] | idx[1] << 8 | idx[2] << 16]
+
+        # the fragment shader with its two endings
+        fs = used['fs']
+        for blend in (BLEND_PLAIN, BLEND_GENERIC):
+            code, stream = fs_ending([int(w, 16) for w in fs['code']], fs['stream'],
+                                     blend == BLEND_GENERIC)
+            o = dict(fs, code=['%016x' % w for w in code], stream=stream)
+            k = shader_key(o)
+            if k not in shader_index:
+                shader_index[k] = len(shaders)
+                shaders.append(o)
+            key = PRIMS[prim] | blend << 8 | (1 << 16 if point_size else 0)
+            variant_words += [key, shader_index[k] | idx[0] << 8 | idx[1] << 16]
+            n_variants += 1
 
     for s, unit in sampler_units.items():
         if s >= 8:
@@ -290,7 +394,7 @@ def main():
         fail('the uniform storage is too large')
 
     # blob
-    blob = [MAGIC, 0, len(attribs) | len(sampler_names) << 8 | len(variants) << 16 | len(shaders) << 24,
+    blob = [MAGIC, 0, len(attribs) | len(sampler_names) << 8 | n_variants << 16 | len(shaders) << 24,
             uniform_words, 0, 0, 0, 0]
     for name, t, size in attribs:
         blob.append(TYPES[t][0] | size << 8)
@@ -321,7 +425,7 @@ def main():
              f'{os.path.basename(args.fs)} - do not edit */',
              f'#ifndef {ident.upper()}_PROGRAM_H', f'#define {ident.upper()}_PROGRAM_H', '',
              '#include <stdint.h>', '',
-             f'/* variants: {", ".join(p + ":" + b for p, b in variants)}; '
+             f'/* variants: {", ".join(variants)} (plain and blending endings); '
              f'{len(shaders)} shaders, {sum(len(o["code"]) for o in shaders)} instructions */',
              f'#define {ident.upper()}_WORDS {len(blob)}',
              f'static const uint32_t {ident}_program[{len(blob)}] =', '{']
@@ -352,7 +456,7 @@ def main():
     lines += ['', '#endif', '']
     open(args.output, 'w').write('\n'.join(lines))
 
-    print(f'glslc: {args.output}: {len(blob)} words, {len(variants)} variants, '
+    print(f'glslc: {args.output}: {len(blob)} words, {n_variants} variants, '
           f'{len(shaders)} shaders, uniform storage {uniform_words} words, '
           f'{len(sampler_names)} samplers')
 

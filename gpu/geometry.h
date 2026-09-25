@@ -25,13 +25,23 @@ struct TGLState
 {
 	float Modelview[16], Projection[16], Texture[16];
 
+	// the render target (the panel or a texture, set by CCommands)
+	unsigned nTargetWidth, nTargetHeight;
+	boolean bFlipY;			// rows top down (the panel), else GL order (textures)
+	boolean bTargetAlpha;		// has an alpha channel (textures)
+
 	float ViewportX, ViewportY, ViewportW, ViewportH;
 	float DepthNear, DepthFar;
 
 	u32 nEnables;
 	u32 nDepthFunc;
 	boolean bDepthMask;
-	u32 nBlendSrc, nBlendDst;
+	u32 nBlendSrc, nBlendDst;	// RGB
+	u32 nBlendSrcA, nBlendDstA;	// alpha
+	u32 nBlendEqRGB, nBlendEqA;
+	float BlendColor[4];
+	u32 StencilFunc[2], StencilRef[2], StencilValueMask[2];	// [0] front, [1] back
+	u32 StencilFail[2], StencilZFail[2], StencilZPass[2], StencilWriteMask[2];
 	u32 nCullFace, nFrontFace;
 	u32 nAlphaFunc;
 	float fAlphaRef;
@@ -92,10 +102,22 @@ public:
 
 	TGeometryStats GetStats (void);
 
+	/// \brief Blend coefficients (docs/protocol.md, PGPU_U_BLEND): K[channel][side * 6 + term],
+	/// terms (1, As, Ad, Sc, Dc, min (As, 1 - Ad)), side 0 source, 1 destination;
+	/// blending off: Fs = 1, Fd = 0; masked channels: Fs = 0, Fd = 1
+	/// \param bDstAlpha FALSE: the target has no alpha channel (reads as 1)
+	static void BlendCoefficients (const TGLState &rState, boolean bDstAlpha, float K[4][12]);
+
+	/// \brief The three TLB stencil setup words (front, back, write masks) the
+	/// fragment shaders write; stencil test off: always pass, keep
+	static void StencilWords (const TGLState &rState, u32 W[3]);
+
 	/// \brief Clip window (scissor), polygon offset and line width of a draw
 	/// \param pState nConfigBits must be set, gets the depth offset enable bit
-	static void GetDrawState (const TGLState &rState, unsigned nWidth, unsigned nHeight,
-				  boolean bFaces, TDrawState *pState);
+	static void GetDrawState (const TGLState &rState, boolean bFaces, TDrawState *pState);
+
+	/// \return CLOCKWISE configuration bit for the front face and target orientation
+	static u32 ClockwiseBit (const TGLState &rState);
 
 private:
 	// a transformed vertex

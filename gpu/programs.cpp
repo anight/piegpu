@@ -191,9 +191,17 @@ u32 CPrograms::Load (TProgram *p, u32 *pDetail)
 
 			case PGPU_U_TEXTURE_CONFIG_P0:
 			case PGPU_U_TEXTURE_CONFIG_P1:
-			case PGPU_U_TEXTURE_CONFIG_P2:
+			case PGPU_U_TEXTURE_CONFIG_P2:		// sampler | flag << 16
 			case PGPU_U_TEXTURE_FIRST_LEVEL:
-				CHECK (nData < p->nSamplers, nWord);
+				CHECK ((nData & 0xFFFF) < p->nSamplers, nWord);
+				break;
+
+			case PGPU_U_BLEND:
+				CHECK (nData < 48, nWord);
+				break;
+
+			case PGPU_U_STENCIL:
+				CHECK (nData < 3, nWord);
 				break;
 
 			case PGPU_U_FB_Y_TRANSFORM:
@@ -220,7 +228,7 @@ u32 CPrograms::Load (TProgram *p, u32 *pDetail)
 		u32 nIndices = b[nVariantWords + 2 * v + 1];
 		unsigned nFS = nIndices & 0xFF, nVS = (nIndices >> 8) & 0xFF, nCS = (nIndices >> 16) & 0xFF;
 		CHECK (   PGPU_VK_PRIM (nKey) <= PGPU_PRIM_POINTS
-		       && PGPU_VK_BLEND (nKey) <= PGPU_BLEND_MULTIPLY
+		       && PGPU_VK_BLEND (nKey) <= PGPU_BLEND_GENERIC
 		       && nFS < p->nShaders && nVS < p->nShaders && nCS < p->nShaders
 		       && PGPU_SHADER_STAGE (p->pShaders[nFS].nInfo) == PGPU_STAGE_FS
 		       && PGPU_SHADER_STAGE (p->pShaders[nVS].nInfo) == PGPU_STAGE_VS
