@@ -16,9 +16,22 @@
 #define MAX_TILES		(32 * 32)
 
 // Load/Store Tile Buffer General (as in Mesa's vc4_packet.h)
-#define LOADSTORE_BUFFER_COLOR		1		// bits 0-2
+#define LOADSTORE_BUFFER_NONE		0		// bits 0-2
+#define LOADSTORE_BUFFER_COLOR		1
+#define LOADSTORE_BUFFER_ZS		2
 #define LOADSTORE_TILING_RASTER		(0 << 4)
+#define LOADSTORE_TILING_T		(1 << 4)
 #define LOADSTORE_FORMAT_BGR565		(2 << 8)	// no dither
+#define STORE_DISABLE_COLOR_CLEAR	(1 << 13)
+#define STORE_DISABLE_ZS_CLEAR		(1 << 14)
+#define STORE_DISABLE_VG_MASK_CLEAR	(1 << 15)
+
+// depth and stencil (32 bits per pixel) in T-format: 4 KB tiles of 32x32
+// pixels, generously padded
+#define DEPTH_BUFFER_SIZE(w, h)		((((w) + 127) & ~127) * (((h) + 127) & ~127) * 4)
+
+#define V3D_DEPTH_OFFSET		101
+#define V3D_LINE_WIDTH			99
 
 static unsigned NVStride (unsigned nShader)
 {
@@ -74,6 +87,9 @@ boolean CRenderer::Initialize (void)
 	}
 	m_pDraws = new TDraw[MaxDraws];
 
+	m_pDepthBuffer = (u32 *) CV3D::Alloc (DEPTH_BUFFER_SIZE (m_nWidth, m_nHeight));
+	m_bDepthValid = FALSE;
+
 	// all fragment shader variants in one block (8-byte instructions)
 	unsigned nWords = 0;
 	for (unsigned i = 0; i < FRAGMENT_SHADERS; i++)
@@ -108,7 +124,7 @@ void CRenderer::AddTriangles (const TDrawSetup &rSetup, const float *pVertices, 
 	boolean bMerge =    m_nDraws > 0
 			 && !m_pDraws[m_nDraws-1].bGL
 			 && m_pDraws[m_nDraws-1].nShader == rSetup.nShader
-			 && m_pDraws[m_nDraws-1].nConfigBits == rSetup.nConfigBits
+			 && memcmp (&m_pDraws[m_nDraws-1].State, &rSetup.State, sizeof rSetup.State) == 0
 			 && m_pDraws[m_nDraws-1].nVertexOffset + m_pDraws[m_nDraws-1].nVertices * nStride
 				== m_nVertexBytes
 			 && memcmp (m_pUniformPool + m_pDraws[m_nDraws-1].nUniformOffset,
@@ -131,7 +147,7 @@ void CRenderer::AddTriangles (const TDrawSetup &rSetup, const float *pVertices, 
 		TDraw &Draw = m_pDraws[m_nDraws++];
 		Draw.bGL = FALSE;
 		Draw.nShader = rSetup.nShader;
-		Draw.nConfigBits = rSetup.nConfigBits;
+		Draw.State = rSetup.State;
 		Draw.nUniformOffset = m_nUniformWords;
 		Draw.nUniforms = rSetup.nUniforms;
 		Draw.nVertexOffset = m_nVertexBytes;
@@ -170,7 +186,7 @@ boolean CRenderer::AddGLDraw (const TGLDraw &rDraw)
 	TDraw &Draw = m_pDraws[m_nDraws++];
 	Draw.bGL = TRUE;
 	Draw.GL = rDraw;
-	Draw.nConfigBits = rDraw.nConfigBits;
+	Draw.State = rDraw.State;
 
 	return TRUE;
 }
@@ -214,7 +230,8 @@ u8 *CRenderer::AllocData (unsigned nBytes, u32 *pBus)
 	return m_pVertexPool + nOffset;
 }
 
-boolean CRenderer::EndFrame (boolean bClear, u32 nClearColor, float fClearDepth, TRenderStats *pStats)
+boolean CRenderer::EndFrame (boolean bClearColor, u32 nClearColor, boolean bClearDepth, float fClearDepth,
+			     TRenderStats *pStats)
 {
 	CV3D::Flush (m_pVertexPool, m_nVertexBytes);
 	CV3D::Flush (m_pUniformPool, m_nUniformWords * 4);
@@ -262,30 +279,55 @@ boolean CRenderer::EndFrame (boolean bClear, u32 nClearColor, float fClearDepth,
 	Bin.Add16 (0);
 
 	unsigned nTriangles = 0;
-	u32 nLastConfig = 0xFFFFFFFF;
-	boolean bNVViewport = TRUE;		// clip window and viewport offset for NV draws
+	TDrawState Last;
+	memset (&Last, 0xFF, sizeof Last);	// nothing emitted yet
+	Last.nClipX = Last.nClipY = 0;		// the clip window emitted above
+	Last.nClipWidth = m_nWidth;
+	Last.nClipHeight = m_nHeight;
+	Last.nDepthOffset = 0;			// reset value
+	Last.fLineWidth = 1.0f;
+	boolean bViewportOffset = FALSE;	// a GL draw set a viewport offset
 	for (unsigned i = 0; i < m_nDraws; i++)
 	{
 		const TDraw &Draw = m_pDraws[i];
+		const TDrawState &S = Draw.State;
 
-		if (Draw.nConfigBits != nLastConfig)
+		if (S.nConfigBits != Last.nConfigBits)
 		{
 			Bin.Add8 (V3D_CONFIGURATION_BITS);
-			Bin.Add8 (Draw.nConfigBits & 0xFF);
-			Bin.Add8 ((Draw.nConfigBits >> 8) & 0xFF);
-			Bin.Add8 ((Draw.nConfigBits >> 16) & 0xFF);
-			nLastConfig = Draw.nConfigBits;
+			Bin.Add8 (S.nConfigBits & 0xFF);
+			Bin.Add8 ((S.nConfigBits >> 8) & 0xFF);
+			Bin.Add8 ((S.nConfigBits >> 16) & 0xFF);
+		}
+		if (   S.nClipX != Last.nClipX || S.nClipY != Last.nClipY
+		    || S.nClipWidth != Last.nClipWidth || S.nClipHeight != Last.nClipHeight)
+		{
+			Bin.Add8 (V3D_CLIP_WINDOW);
+			Bin.Add16 (S.nClipX);
+			Bin.Add16 (S.nClipY);
+			Bin.Add16 (S.nClipWidth);
+			Bin.Add16 (S.nClipHeight);
+		}
+		if (S.nDepthOffset != Last.nDepthOffset)
+		{
+			Bin.Add8 (V3D_DEPTH_OFFSET);
+			Bin.Add32 (S.nDepthOffset);
+		}
+		if (Draw.bGL && S.fLineWidth != Last.fLineWidth)
+		{
+			Bin.Add8 (V3D_LINE_WIDTH);
+			Bin.AddFloat (S.fLineWidth);
+		}
+		float fLineWidth = Last.fLineWidth;
+		Last = S;
+		if (!Draw.bGL)
+		{
+			Last.fLineWidth = fLineWidth;	// NV draws don't emit it
 		}
 
 		if (Draw.bGL)
 		{
 			const TGLDraw &G = Draw.GL;
-
-			Bin.Add8 (V3D_CLIP_WINDOW);
-			Bin.Add16 (G.nClipX);
-			Bin.Add16 (G.nClipY);
-			Bin.Add16 (G.nClipWidth);
-			Bin.Add16 (G.nClipHeight);
 
 			Bin.Add8 (V3D_VIEWPORT_OFFSET);		// 12.4 fixed point
 			Bin.Add16 ((u16) (s16) (G.fCentreX * 16.0f));
@@ -319,23 +361,16 @@ boolean CRenderer::EndFrame (boolean bClear, u32 nClearColor, float fClearDepth,
 			}
 
 			nTriangles += G.nMode >= 4 ? (G.nMode == 4 ? G.nCount / 3 : G.nCount - 2) : 0;
-			bNVViewport = FALSE;
+			bViewportOffset = TRUE;
 			continue;
 		}
 
-		if (!bNVViewport)
+		if (bViewportOffset)			// NV vertices are absolute
 		{
-			Bin.Add8 (V3D_CLIP_WINDOW);
-			Bin.Add16 (0);
-			Bin.Add16 (0);
-			Bin.Add16 (m_nWidth);
-			Bin.Add16 (m_nHeight);
-
 			Bin.Add8 (V3D_VIEWPORT_OFFSET);
 			Bin.Add16 (0);
 			Bin.Add16 (0);
-
-			bNVViewport = TRUE;
+			bViewportOffset = FALSE;
 		}
 
 		Bin.Add8 (V3D_NV_SHADER_STATE);
@@ -389,13 +424,33 @@ boolean CRenderer::EndFrame (boolean bClear, u32 nClearColor, float fClearDepth,
 	{
 		for (unsigned x = 0; x < m_nTilesX; x++)
 		{
-			if (!bClear)
+			boolean bLoadDepth = !bClearDepth && m_bDepthValid;
+			if (!bClearColor)
 			{
 				// the load happens when the tile coordinates are processed
 				Render.Add8 (V3D_LOAD_TILE_BUFFER_GENERAL);
 				Render.Add16 (LOADSTORE_BUFFER_COLOR | LOADSTORE_TILING_RASTER
 					      | LOADSTORE_FORMAT_BGR565);
 				Render.Add32 (CV3D::BusAddress (pPrevious));
+
+				if (bLoadDepth)
+				{
+					// only one load may be pending: run it, with a
+					// store that stores and clears nothing
+					Render.Add8 (V3D_TILE_COORDINATES);
+					Render.Add8 (x);
+					Render.Add8 (y);
+					Render.Add8 (V3D_STORE_TILE_BUFFER_GENERAL);
+					Render.Add16 (  LOADSTORE_BUFFER_NONE | STORE_DISABLE_COLOR_CLEAR
+						      | STORE_DISABLE_ZS_CLEAR | STORE_DISABLE_VG_MASK_CLEAR);
+					Render.Add32 (0);
+				}
+			}
+			if (bLoadDepth)
+			{
+				Render.Add8 (V3D_LOAD_TILE_BUFFER_GENERAL);
+				Render.Add16 (LOADSTORE_BUFFER_ZS | LOADSTORE_TILING_T);
+				Render.Add32 (CV3D::BusAddress (m_pDepthBuffer));
 			}
 
 			Render.Add8 (V3D_TILE_COORDINATES);
@@ -406,12 +461,24 @@ boolean CRenderer::EndFrame (boolean bClear, u32 nClearColor, float fClearDepth,
 			Render.Add32 (CV3D::BusAddress (m_pTileAlloc)
 				      + (y * m_nTilesX + x) * V3D_TILE_ALLOC_BLOCK);
 
+			// depth and stencil for a following frame without depth CLEAR
+			// (keeping the colour for the colour store)
+			Render.Add8 (V3D_STORE_TILE_BUFFER_GENERAL);
+			Render.Add16 (LOADSTORE_BUFFER_ZS | LOADSTORE_TILING_T | STORE_DISABLE_COLOR_CLEAR);
+			Render.Add32 (CV3D::BusAddress (m_pDepthBuffer));
+
+			Render.Add8 (V3D_TILE_COORDINATES);
+			Render.Add8 (x);
+			Render.Add8 (y);
+
 			boolean bLast = x == m_nTilesX-1 && y == m_nTilesY-1;
 			Render.Add8 (bLast ? V3D_STORE_MS_TILE_BUFFER_EOF : V3D_STORE_MS_TILE_BUFFER);
 		}
 	}
 	assert (!Render.Overflow ());
 	Render.Flush ();
+
+	m_bDepthValid = TRUE;
 
 	unsigned nBinUs = 0, nRenderUs = 0;
 	boolean bOK = m_pV3D->RunJob (Bin.GetStartBus (), Bin.GetEndBus (),

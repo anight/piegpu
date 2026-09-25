@@ -1,5 +1,6 @@
-# pico-gpu: dump compiled vc4 shaders (code, uniform stream layout, values) when
-# PGPU_VC4_DUMP is set. For Mesa mesa-26.2.3; applied by tools/glslc/build-mesa.sh.
+# pico-gpu: dump compiled vc4 shaders (code, uniform stream layout, values) and
+# the built-in state variables of the constant buffers when PGPU_VC4_DUMP is
+# set. For Mesa mesa-26.2.3; applied by tools/glslc/build-mesa.sh.
 
 diff --git a/src/gallium/drivers/vc4/vc4_context.h b/src/gallium/drivers/vc4/vc4_context.h
 index c5559b4..e07d3dc 100644
@@ -110,3 +111,41 @@ index f63bbcd..8ab0104 100644
          cl_end(&job->uniforms, uniforms);
  }
  
+diff --git a/src/mesa/state_tracker/st_atom_constbuf.c b/src/mesa/state_tracker/st_atom_constbuf.c
+index 4759c34..f3b5ee0 100644
+--- a/src/mesa/state_tracker/st_atom_constbuf.c
++++ b/src/mesa/state_tracker/st_atom_constbuf.c
+@@ -1,3 +1,5 @@
++#include <stdio.h>
++#include <stdlib.h>
+ /**************************************************************************
+  *
+  * Copyright 2007 VMware, Inc.
+@@ -108,6 +110,27 @@ st_upload_constants(struct st_context *st, struct gl_program *prog, mesa_shader_
+    st_make_bound_samplers_resident(st, prog);
+    st_make_bound_images_resident(st, prog);
+ 
++   /* pico-gpu: dump where the built-in state variables are in the constant
++    * buffer, when PGPU_VC4_DUMP names a file (tools/glslc)
++    */
++   if (params && getenv("PGPU_VC4_DUMP") &&
++       (stage == MESA_SHADER_VERTEX || stage == MESA_SHADER_FRAGMENT)) {
++      FILE *f = fopen(getenv("PGPU_VC4_DUMP"), "a");
++      if (f) {
++         for (unsigned i = 0; i < params->NumParameters; i++) {
++            const struct gl_program_parameter *p = &params->Parameters[i];
++            if (p->Type != PROGRAM_STATE_VAR)
++               continue;
++            fprintf(f, "{\"param\": \"%s\", \"stage\": \"%s\", \"offset\": %u, "
++                    "\"size\": %u, \"state\": [%d, %d, %d, %d, %d]}\n",
++                    p->Name ? p->Name : "", stage == MESA_SHADER_VERTEX ? "v" : "f",
++                    p->ValueOffset, p->Size, p->StateIndexes[0], p->StateIndexes[1],
++                    p->StateIndexes[2], p->StateIndexes[3], p->StateIndexes[4]);
++         }
++         fclose(f);
++      }
++   }
++
+    /* update constants */
+    if (params && params->NumParameters) {
+       struct pipe_constant_buffer cb;

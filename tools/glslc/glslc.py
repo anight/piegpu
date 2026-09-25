@@ -48,6 +48,13 @@ PRIMS = {'triangles': 0, 'lines': 1, 'points': 2}
 BLENDS = {'none': 0, 'alpha': 1, 'add': 2, 'premul': 3, 'multiply': 4}
 STAGES = {'fs': 0, 'vs': 1, 'cs': 2}
 
+# Mesa built-in state variables the Zero provides -> pgpu uniform kind
+STATE_KINDS = {
+    'state.FbWposYTransform': 32,	# gl_FragCoord
+    'state.depth.range': 33,		# gl_DepthRange
+    'state.FbPntcYTransform': 34,	# gl_PointCoord
+}
+
 # uniform kinds the Zero implements (protocol/pgpu_program.h)
 SUPPORTED_KINDS = {
     'QUNIFORM_CONSTANT', 'QUNIFORM_UNIFORM',
@@ -184,12 +191,21 @@ def main():
         elif p[0] == 'sampler':
             samplers[int(p[2])] = p[1]
 
+    # built-in state variables: constant buffer word -> (name, component)
+    state_words = {'v': {}, 'f': {}}
+    for o in records:
+        if 'param' in o:
+            for k in range(o['size']):
+                state_words[o['stage']][o['offset'] + k] = (o['param'], k)
+
     # the shaders used by each variant draw (fs, vs, cs); a draw that didn't
     # re-emit its shader state uses the previous one
     per_variant = []
     current = {}
     pending = None
     for o in records:
+        if 'param' in o:
+            continue
         if 'variant' in o:
             if pending is not None:
                 per_variant.append(dict(current))
@@ -208,7 +224,7 @@ def main():
     kinds_used = set()
 
     def shader_key(o):
-        return (o['stage'], tuple(o['code']), tuple((k, d) for k, d, _ in o['uniforms']),
+        return (o['stage'], tuple(o['code']), tuple((k, d) for k, d, _ in o['stream']),
                 o['threaded'], o['num_inputs'], o['vattrs_live'], tuple(o['vattr_offsets']))
 
     variant_words = []
@@ -216,7 +232,9 @@ def main():
         idx = []
         for stage in ('fs', 'vs', 'cs'):
             o = used[stage]
+            o['stream'] = []		# (kind, data) as the Zero gets them
             for kind, data, value in o['uniforms']:
+                o['stream'].append([kind, data, value])
                 kname = kind_names.get(kind, f'#{kind}')
                 kinds_used.add(kname)
                 if kname not in SUPPORTED_KINDS:
@@ -230,9 +248,14 @@ def main():
                         m = value - MARKER_BASE
                         print(f'glslc: warning: uniform word {data} holds an integer', file=sys.stderr)
                     if m is None:
-                        fail(f'the {stage.upper()} reads built-in GL state that the Zero does not '
-                             f'provide (constant buffer word {data}): gl_FragCoord and '
-                             f'gl_DepthRange are not supported')
+                        param = state_words['f' if stage == 'fs' else 'v'].get(data)
+                        if param is None:
+                            fail(f'{stage} uniform word {data} (value {value:#x}) matches no uniform')
+                        if param[0] not in STATE_KINDS:
+                            fail(f'the {stage.upper()} reads built-in GL state {param[0]}, '
+                                 f'which the Zero does not provide')
+                        o['stream'][-1][:2] = [STATE_KINDS[param[0]], param[1]]
+                        continue
                     slots = uniform_slots['f' if stage == 'fs' else 'v']
                     if slots.setdefault(data, markers[m]) != markers[m]:
                         fail(f'{stage} uniform word {data} is used for two uniforms')
@@ -283,11 +306,11 @@ def main():
             info = o['vattrs_live'] | vo[8] << 8
             offsets = [vo[0] | vo[1] << 8 | vo[2] << 16 | vo[3] << 24,
                        vo[4] | vo[5] << 8 | vo[6] << 16 | vo[7] << 24]
-        blob += [len(code) | len(o['uniforms']) << 16, info | stage << 28] + offsets
+        blob += [len(code) | len(o['stream']) << 16, info | stage << 28] + offsets
         for w in code:
             blob += [w & 0xFFFFFFFF, w >> 32]
-        for kind, data, _ in o['uniforms']:
-            if stage == 0 and kind_names[kind] == 'QUNIFORM_UNIFORM':
+        for kind, data, _ in o['stream']:
+            if stage == 0 and kind == 1:	# QUNIFORM_UNIFORM
                 data += fs_base
             blob += [kind, data]
     blob[1] = len(blob)

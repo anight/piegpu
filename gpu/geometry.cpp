@@ -13,6 +13,7 @@
 #define CFG_REVERSE		(1 << 1)
 #define CFG_CLOCKWISE		(1 << 2)	// clockwise primitives are forward facing
 #define CFG_DEPTH_FUNC__SHIFT	12
+#define CFG_DEPTH_OFFSET	(1 << 3)
 #define CFG_Z_UPDATE		(1 << 15)
 
 // Guard band: clipped vertices stay this far outside the viewport at most.
@@ -456,7 +457,7 @@ void CGeometry::SetupDraw (const TGLState &rState, boolean bFaces)
 		nDepth = PGPU_ALWAYS << CFG_DEPTH_FUNC__SHIFT;	// no test, no depth writes
 	}
 
-	m_nLineConfig = CFG_FORWARD | CFG_REVERSE | nDepth;	// lines and points: no culling
+	m_LineState.nConfigBits = CFG_FORWARD | CFG_REVERSE | nDepth;	// lines and points: no culling
 
 	u32 nBits = CFG_FORWARD | CFG_REVERSE;
 	// the panel's y axis points down, so GL's CCW appears clockwise on screen
@@ -471,7 +472,9 @@ void CGeometry::SetupDraw (const TGLState &rState, boolean bFaces)
 		if (rState.nCullFace == PGPU_FRONT || rState.nCullFace == PGPU_FRONT_AND_BACK)
 			nBits &= ~CFG_FORWARD;
 	}
-	m_nTriangleConfig = nBits | nDepth;
+	GetDrawState (rState, m_pRenderer->GetWidth (), m_pRenderer->GetHeight (), FALSE, &m_LineState);
+	m_TriangleState.nConfigBits = nBits | nDepth;
+	GetDrawState (rState, m_pRenderer->GetWidth (), m_pRenderer->GetHeight (), TRUE, &m_TriangleState);
 
 	m_bTwoSide = (rState.nEnables & PGPU_CAP_LIGHTING) && rState.bTwoSide && bFaces;
 }
@@ -657,11 +660,11 @@ void CGeometry::Triangle (const TVertex *a, const TVertex *b, const TVertex *c, 
 	unsigned nFloats = SCREEN_VERTEX_FIXED + m_nVaryings;
 	for (unsigned i = 1; i + 1 < nPoly; i++)
 	{
-		if (m_nBatch + 3 > BATCH_VERTICES || (m_nBatch && m_nBatchConfig != m_nTriangleConfig))
+		if (m_nBatch + 3 > BATCH_VERTICES || (m_nBatch && m_pBatchState != &m_TriangleState))
 		{
 			Flush ();
 		}
-		m_nBatchConfig = m_nTriangleConfig;
+		m_pBatchState = &m_TriangleState;
 
 		Emit (pPoly[0],     nSide, pFlat, m_pBatch + (m_nBatch++) * nFloats);
 		Emit (pPoly[i],     nSide, pFlat, m_pBatch + (m_nBatch++) * nFloats);
@@ -672,11 +675,11 @@ void CGeometry::Triangle (const TVertex *a, const TVertex *b, const TVertex *c, 
 // screen-space quad (two triangles) with the attributes of a and b
 void CGeometry::EmitQuad (const float Corner[4][2], const TVertex &a, const TVertex &b, unsigned nFlatColor)
 {
-	if (m_nBatch + 6 > BATCH_VERTICES || (m_nBatch && m_nBatchConfig != m_nLineConfig))
+	if (m_nBatch + 6 > BATCH_VERTICES || (m_nBatch && m_pBatchState != &m_LineState))
 	{
 		Flush ();
 	}
-	m_nBatchConfig = m_nLineConfig;
+	m_pBatchState = &m_LineState;
 
 	const float *pFlat = nFlatColor < 2 ? (nFlatColor == 0 ? a.Color[0] : b.Color[0]) : nullptr;
 
@@ -719,7 +722,8 @@ void CGeometry::Line (const TVertex *a, const TVertex *b, unsigned nFlatColor)
 	{
 		dx = 1.0f; dy = 0.0f; l = 1.0f;
 	}
-	float nx = -dy / l * 0.5f, ny = dx / l * 0.5f;		// half pixel wide
+	float fHalf = m_pState->fLineWidth * 0.5f;
+	float nx = -dy / l * fHalf, ny = dx / l * fHalf;
 
 	const float Corner[4][2] =
 	{
@@ -752,11 +756,46 @@ void CGeometry::Point (const TVertex *a)
 	EmitQuad (Corner, *a, *a, 2);
 }
 
+void CGeometry::GetDrawState (const TGLState &S, unsigned nWidth, unsigned nHeight,
+			      boolean bFaces, TDrawState *pState)
+{
+	s32 x0 = 0, y0 = 0, x1 = nWidth, y1 = nHeight;
+	if (S.nEnables & PGPU_CAP_SCISSOR_TEST)
+	{
+		// GL window coordinates to panel rows (top down)
+		s32 sx0 = S.ScissorX, sx1 = S.ScissorX + (s32) S.ScissorW;
+		s32 sy0 = (s32) nHeight - (S.ScissorY + (s32) S.ScissorH), sy1 = (s32) nHeight - S.ScissorY;
+		if (sx0 > x0) x0 = sx0;
+		if (sy0 > y0) y0 = sy0;
+		if (sx1 < x1) x1 = sx1;
+		if (sy1 < y1) y1 = sy1;
+		if (x1 < x0) x1 = x0;
+		if (y1 < y0) y1 = y0;
+	}
+	pState->nClipX = x0;
+	pState->nClipY = y0;
+	pState->nClipWidth = x1 - x0;
+	pState->nClipHeight = y1 - y0;
+
+	pState->nDepthOffset = 0;
+	if (bFaces && (S.nEnables & PGPU_CAP_POLYGON_OFFSET_FILL))
+	{
+		// factor and units as float 1-8-7 (the top 16 bits of a float, as Mesa's vc4)
+		u32 nFactor, nUnits;
+		memcpy (&nFactor, &S.fOffsetFactor, 4);
+		memcpy (&nUnits, &S.fOffsetUnits, 4);
+		pState->nDepthOffset = (nFactor >> 16) | (nUnits >> 16) << 16;
+		pState->nConfigBits |= CFG_DEPTH_OFFSET;
+	}
+
+	pState->fLineWidth = S.fLineWidth;
+}
+
 void CGeometry::Flush (void)
 {
 	if (m_nBatch)
 	{
-		m_Setup.nConfigBits = m_nBatchConfig;
+		m_Setup.State = *m_pBatchState;
 		m_pRenderer->AddTriangles (m_Setup, m_pBatch, m_nBatch);
 		m_nBatch = 0;
 	}

@@ -86,7 +86,13 @@ enum pgpu_uniform_kind
 	PGPU_U_TEXTURE_CONFIG_P1 = 7,
 	PGPU_U_TEXTURE_CONFIG_P2 = 8,
 	PGPU_U_TEXTURE_FIRST_LEVEL = 9,
-	PGPU_U_UNIFORMS_ADDRESS = 24	/* bus address of this uniform stream */
+	PGPU_U_UNIFORMS_ADDRESS = 24,	/* bus address of this uniform stream */
+
+	/* GL built-in state (Mesa state variables; data is the component 0-3),
+	   values as Mesa defines them for a window framebuffer (rows top down) */
+	PGPU_U_FB_Y_TRANSFORM = 32,	/* gl_FragCoord.y: -1, height, 1, 0 */
+	PGPU_U_DEPTH_RANGE = 33,	/* gl_DepthRange: near, far, far - near, 1 */
+	PGPU_U_POINT_Y_TRANSFORM = 34	/* gl_PointCoord.y: -1, 1, 0, 0 */
 };
 
 #endif

@@ -844,3 +844,163 @@ void pgpu_attrib_array (uint32_t index, uint32_t buffer, uint32_t offset_bytes, 
 }
 
 void pgpu_attribs_enable (uint32_t mask)			{ cmd1 (PGPU_OP_ATTRIBS_ENABLE, mask); }
+
+void pgpu_scissor (int32_t x, int32_t y, uint32_t width, uint32_t height)
+{
+	uint32_t *p = pgpu_begin (PGPU_OP_SCISSOR, 4);
+	p[0] = (uint32_t) x;
+	p[1] = (uint32_t) y;
+	p[2] = width;
+	p[3] = height;
+	pgpu_end ();
+}
+
+void pgpu_polygon_offset (float factor, float units)	{ cmd2 (PGPU_OP_POLYGON_OFFSET, f2u (factor), f2u (units)); }
+void pgpu_line_width (float width)			{ cmd1 (PGPU_OP_LINE_WIDTH, f2u (width)); }
+
+/* ---- client-side arrays ------------------------------------------------------ */
+
+static const uint8_t type_bytes[] = {4, 2, 2, 1, 1, 1, 1, 2, 2};
+
+static struct
+{
+	const uint8_t *pointer;
+	uint32_t size, type, stride;
+} client[8];
+
+void pgpu_client_attrib_pointer (uint32_t index, uint32_t size, uint32_t type, uint32_t stride,
+				 const void *pointer)
+{
+	if (index >= 8 || type > PGPU_USHORT_NORM)
+	{
+		return;
+	}
+	client[index].pointer = pointer;
+	client[index].size = size;
+	client[index].type = type;
+	client[index].stride = stride ? stride : size * type_bytes[type];
+}
+
+/* words of one packet for n vertices (and indices) */
+static uint32_t inline_words (uint32_t vertices, uint32_t index_bytes)
+{
+	uint32_t words = 5 + (index_bytes + 3) / 4;
+	for (int i = 0; i < 8; i++)
+	{
+		if (client[i].pointer)
+		{
+			uint32_t bytes = client[i].size * type_bytes[client[i].type] * vertices;
+			words += 1 + (bytes + 3) / 4;
+		}
+	}
+	return words;
+}
+
+/* one packet: vertices first .. first+count-1 [and 16-bit indices] */
+static bool draw_inline_packet (uint32_t mode, uint32_t first, uint32_t count,
+				const uint16_t *indices, uint32_t index_count)
+{
+	uint32_t index_bytes = index_count * 2;
+	uint32_t words = inline_words (count, index_bytes);
+	uint32_t *p = pgpu_begin (PGPU_OP_PROGRAM_DRAW_INLINE, words);
+	if (!p)
+	{
+		return false;			/* larger than a packet */
+	}
+
+	uint32_t mask = 0;
+	for (int i = 0; i < 8; i++)
+	{
+		mask |= client[i].pointer ? 1u << i : 0;
+	}
+	p[0] = mode;
+	p[1] = count;
+	p[2] = mask;
+	p[3] = index_count;
+	p[4] = PGPU_INDEX_U16;
+	uint32_t w = 5;
+	for (int i = 0; i < 8; i++)
+	{
+		if (!client[i].pointer)
+		{
+			continue;
+		}
+		uint32_t element = client[i].size * type_bytes[client[i].type];
+		p[w++] = client[i].type | client[i].size << 8;
+		uint8_t *dst = (uint8_t *) &p[w];
+		const uint8_t *src = client[i].pointer + first * client[i].stride;
+		for (uint32_t v = 0; v < count; v++, src += client[i].stride, dst += element)
+		{
+			memcpy (dst, src, element);
+		}
+		uint32_t bytes = element * count;
+		memset ((uint8_t *) &p[w] + bytes, 0, (4 - bytes % 4) % 4);
+		w += (bytes + 3) / 4;
+	}
+	if (index_count)
+	{
+		memcpy (&p[w], indices, index_bytes);
+		memset ((uint8_t *) &p[w] + index_bytes, 0, (4 - index_bytes % 4) % 4);
+	}
+	pgpu_end ();
+	return true;
+}
+
+bool pgpu_draw_arrays_client (uint32_t mode, uint32_t first, uint32_t count)
+{
+	/* the largest vertex count that fits a packet */
+	uint32_t per_vertex = inline_words (1, 0) - inline_words (0, 0) + 1;
+	uint32_t max = (PGPU_STAGING_WORDS - 16 - inline_words (0, 0)) / per_vertex;
+
+	if (count <= max)
+	{
+		return draw_inline_packet (mode, first, count, NULL, 0);
+	}
+
+	/* split lists at primitive boundaries */
+	uint32_t step =   mode == PGPU_TRIANGLES ? 3
+			: mode == PGPU_LINES ? 2
+			: mode == PGPU_POINTS ? 1 : 0;
+	if (!step)
+	{
+		return false;
+	}
+	max -= max % step;
+	while (count)
+	{
+		uint32_t n = count < max ? count : max;
+		if (!draw_inline_packet (mode, first, n, NULL, 0))
+		{
+			return false;
+		}
+		first += n;
+		count -= n;
+	}
+	return true;
+}
+
+/* sends the vertices min .. max index, indices rebased to 16 bits */
+bool pgpu_draw_elements_client (uint32_t mode, uint32_t count, uint32_t index_type, const void *indices)
+{
+	static uint16_t rebased[PGPU_STAGING_WORDS * 2];
+	if (count == 0 || count > sizeof rebased / sizeof rebased[0])
+	{
+		return count == 0;
+	}
+
+	uint32_t lo = 0xFFFFFFFF, hi = 0;
+	for (uint32_t i = 0; i < count; i++)
+	{
+		uint32_t index = index_type == PGPU_INDEX_U16 ? ((const uint16_t *) indices)[i]
+							      : ((const uint8_t *) indices)[i];
+		rebased[i] = (uint16_t) index;
+		lo = index < lo ? index : lo;
+		hi = index > hi ? index : hi;
+	}
+	for (uint32_t i = 0; i < count; i++)
+	{
+		rebased[i] -= lo;
+	}
+
+	return draw_inline_packet (mode, lo, hi - lo + 1, rebased, count);
+}

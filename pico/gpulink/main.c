@@ -25,6 +25,7 @@
 #include "cube_program.h"
 #include "sparks_program.h"
 #include "solid_program.h"
+#include "builtin_program.h"
 
 #define WIDTH	320
 #define HEIGHT	240
@@ -32,7 +33,7 @@
 
 /* object ids */
 enum { BUF_CUBE = 1, BUF_CUBE_INDEX, BUF_SPHERE, BUF_SPHERE_INDEX, BUF_STARS, BUF_QUAD, BUF_SPARKS };
-enum { PROG_PLASMA = 1, PROG_CUBE, PROG_SPARKS, PROG_SOLID };
+enum { PROG_PLASMA = 1, PROG_CUBE, PROG_SPARKS, PROG_SOLID, PROG_BUILTIN };
 enum { BUF_TEST = 20, BUF_ROW };
 enum { TEX_CHECKER = 1, TEX_QUADRANTS, TEX_SPRITE };
 
@@ -721,6 +722,7 @@ static void upload_programs (void)
 	pgpu_program_create (PROG_CUBE, cube_program, CUBE_WORDS);
 	pgpu_program_create (PROG_SPARKS, sparks_program, SPARKS_WORDS);
 	pgpu_program_create (PROG_SOLID, solid_program, SOLID_WORDS);
+	pgpu_program_create (PROG_BUILTIN, builtin_program, BUILTIN_WORDS);
 
 	static const float quad[8] = {-1, -1, 1, -1, 1, 1, -1, 1};
 	pgpu_buffer_create (BUF_QUAD, sizeof quad);
@@ -942,6 +944,158 @@ static void program_self_test (void)
 	sleep_ms (3000);
 }
 
+/* ---- self test 3: built-in variables, scissor, polygon offset, line width,
+ * depth across frames, client-side arrays --------------------------------------
+ *
+ * Two frames (identity matrices: coordinates are clip space), the second
+ * without depth CLEAR, then a screenshot request. Expected:
+ *   top band, left:   gl_FragCoord: red = x / 320, green = y / 240 (GL: y up)
+ *   top band, middle: gl_DepthRange with depth range 0.25 .. 0.75: (0.25, 0.75, 0.5)
+ *   top band, right:  one 48-pixel point, gl_PointCoord: black top left, red top
+ *                     right, green bottom left (ES: origin upper left)
+ *   2nd row, left:    two triangles, culling off: front facing green, back red
+ *   2nd row, middle:  polygon offset: red | green (the green quad at the same
+ *                     depth wins only with the offset)
+ *   2nd row, right:   scissor: small blue (fixed function) and magenta (program)
+ *                     rectangles of full-screen quads
+ *   3rd row:          yellow 6-pixel line (fixed function), cyan 4-pixel line
+ *                     loop (program)
+ *   bottom left:      client arrays: orange triangle (arrays), white square
+ *                     (elements)
+ *   bottom middle:    red frame around a black hole: the red quad is behind
+ *                     depth drawn in the previous frame
+ */
+static void builtin_rect (float x, float y, float w, float h, float mode)
+{
+	float rc[4] = {x, y, w, h};
+	PGPU_UNIFORM (PROG_BUILTIN, builtin_u_rect, rc);
+	pgpu_program_uniform1f (PROG_BUILTIN, builtin_u_mode, mode);
+}
+
+static void ff_quad (float x0, float y0, float x1, float y1, float z, uint32_t color)
+{
+	uint32_t words[4 * 4], *p = words;
+	put_pc (&p, x0, y0, z, color);
+	put_pc (&p, x1, y0, z, color);
+	put_pc (&p, x1, y1, z, color);
+	put_pc (&p, x0, y1, z, color);
+	pgpu_draw_inline (PGPU_TRIANGLE_FAN, 4, A (POSITION) | A (COLOR), words, 4);
+}
+
+static void self_test_3 (void)
+{
+	float identity[16];
+	mat_identity (identity);
+
+	pgpu_viewport (0, 0, WIDTH, HEIGHT, 0.0f, 1.0f);
+	pgpu_use_program (0);
+	pgpu_disable (PGPU_CAP_ALL);
+	pgpu_arrays_enable (0);
+	pgpu_attribs_enable (0);
+	pgpu_color_mask (true, true, true, true);
+	pgpu_depth_mask (true);
+	pgpu_depth_func (PGPU_LESS);
+	pgpu_load_matrix (PGPU_PROJECTION, identity);
+	pgpu_load_matrix (PGPU_MODELVIEW, identity);
+	pgpu_load_matrix (PGPU_TEXTURE, identity);
+
+	/* frame 1: depth only where the hole will be (colour cleared again below) */
+	pgpu_clear (PGPU_CLEAR_COLOR | PGPU_CLEAR_DEPTH, PGPU_RGBA (0, 0, 0, 255), 1.0f);
+	pgpu_enable (PGPU_CAP_DEPTH_TEST);
+	ff_quad (-0.2f, -0.9f, 0.2f, -0.55f, -0.5f, PGPU_RGBA (0, 255, 0, 255));
+	pgpu_frame_end (0);
+
+	/* frame 2: colour clear only */
+	pgpu_clear (PGPU_CLEAR_COLOR, PGPU_RGBA (0, 0, 0, 255), 1.0f);
+	ff_quad (-0.35f, -0.97f, 0.35f, -0.48f, 0.5f, PGPU_RGBA (255, 0, 0, 255));	/* behind */
+	pgpu_disable (PGPU_CAP_DEPTH_TEST);
+
+	/* built-in variables */
+	pgpu_use_program (PROG_BUILTIN);
+	pgpu_attrib_array (BUILTIN_A_POS, BUF_TEST, 0, 0, 2, PGPU_FLOAT);	/* unit square */
+	pgpu_attribs_enable (1u << BUILTIN_A_POS);
+	pgpu_program_uniform1f (PROG_BUILTIN, builtin_u_point_size, 48.0f);
+	builtin_rect (-0.98f, 0.6f, 0.9f, 0.38f, 0);
+	pgpu_draw_arrays (PGPU_TRIANGLE_FAN, 0, 4);
+
+	pgpu_viewport (0, 0, WIDTH, HEIGHT, 0.25f, 0.75f);
+	builtin_rect (0.0f, 0.6f, 0.3f, 0.38f, 3);
+	pgpu_draw_arrays (PGPU_TRIANGLE_FAN, 0, 4);
+	pgpu_viewport (0, 0, WIDTH, HEIGHT, 0.0f, 1.0f);
+
+	builtin_rect (0.65f, 0.78f, 0.0f, 0.0f, 1);		/* point at the rect origin */
+	pgpu_draw_arrays (PGPU_POINTS, 0, 1);
+
+	builtin_rect (-0.98f, 0.1f, 0.3f, 0.4f, 2);		/* CCW: front */
+	pgpu_draw_arrays (PGPU_TRIANGLES, 0, 3);
+	builtin_rect (-0.6f, 0.1f, 0.3f, 0.4f, 2);		/* 0, 2, 1: CW, back */
+	{
+		static const uint8_t cw[4] = {0, 2, 1, 0};	/* BUFFER_DATA: multiples of 4 bytes */
+		pgpu_buffer_create (BUF_ROW + 1, sizeof cw);
+		pgpu_buffer_data (BUF_ROW + 1, 0, cw, sizeof cw);
+		pgpu_draw_elements (PGPU_TRIANGLES, 3, PGPU_INDEX_U8, BUF_ROW + 1, 0);
+	}
+
+	/* polygon offset (fixed function) */
+	pgpu_use_program (0);
+	pgpu_enable (PGPU_CAP_DEPTH_TEST);
+	ff_quad (-0.25f, 0.1f, -0.05f, 0.5f, 0.0f, PGPU_RGBA (255, 0, 0, 255));
+	ff_quad (-0.25f, 0.1f, -0.05f, 0.5f, 0.0f, PGPU_RGBA (0, 255, 0, 255));
+	ff_quad (0.0f, 0.1f, 0.2f, 0.5f, 0.0f, PGPU_RGBA (255, 0, 0, 255));
+	pgpu_enable (PGPU_CAP_POLYGON_OFFSET_FILL);
+	pgpu_polygon_offset (0.0f, -4.0f);
+	ff_quad (0.0f, 0.1f, 0.2f, 0.5f, 0.0f, PGPU_RGBA (0, 255, 0, 255));
+	pgpu_disable (PGPU_CAP_POLYGON_OFFSET_FILL | PGPU_CAP_DEPTH_TEST);
+
+	/* scissor: full-screen quads (GL window coordinates, y up) */
+	pgpu_enable (PGPU_CAP_SCISSOR_TEST);
+	pgpu_scissor (240, 150, 30, 30);
+	ff_quad (-1, -1, 1, 1, 0, PGPU_RGBA (0, 0, 255, 255));
+	pgpu_scissor (280, 150, 30, 30);
+	pgpu_use_program (PROG_SOLID);
+	pgpu_attrib_array (SOLID_A_POS, BUF_TEST, 0, 0, 2, PGPU_FLOAT);
+	pgpu_attribs_enable (1u << SOLID_A_POS);
+	rect (-1, -1, 2, 2, 1, 0, 1, 1);
+	pgpu_draw_arrays (PGPU_TRIANGLE_FAN, 0, 4);
+	pgpu_disable (PGPU_CAP_SCISSOR_TEST);
+
+	/* line width */
+	pgpu_line_width (4.0f);
+	rect (0.3f, -0.3f, 0.3f, 0.3f, 0, 1, 1, 1);
+	pgpu_draw_arrays (PGPU_LINE_LOOP, 0, 4);
+	pgpu_use_program (0);
+	pgpu_line_width (6.0f);
+	{
+		uint32_t words[2 * 4], *p = words;
+		put_pc (&p, -0.9f, -0.3f, 0, PGPU_RGBA (255, 255, 0, 255));
+		put_pc (&p, -0.4f, -0.05f, 0, PGPU_RGBA (255, 255, 0, 255));
+		pgpu_draw_inline (PGPU_LINES, 2, A (POSITION) | A (COLOR), words, 4);
+	}
+	pgpu_line_width (1.0f);
+
+	/* client-side arrays (program) */
+	static const float tri[6] = {-0.95f, -0.95f, -0.6f, -0.95f, -0.775f, -0.5f};
+	static const float square[8] = {-0.55f, -0.95f, -0.3f, -0.95f, -0.3f, -0.7f, -0.55f, -0.7f};
+	static const uint8_t quad_indices[6] = {0, 1, 2, 0, 2, 3};
+	pgpu_use_program (PROG_SOLID);
+	pgpu_attribs_enable (0);
+	pgpu_client_attrib_pointer (SOLID_A_POS, 2, PGPU_FLOAT, 0, tri);
+	rect (0, 0, 1, 1, 1, 0.5f, 0, 1);
+	pgpu_draw_arrays_client (PGPU_TRIANGLES, 0, 3);
+	pgpu_client_attrib_pointer (SOLID_A_POS, 2, PGPU_FLOAT, 0, square);
+	rect (0, 0, 1, 1, 1, 1, 1, 1);
+	pgpu_draw_elements_client (PGPU_TRIANGLES, 6, PGPU_INDEX_U8, quad_indices);
+	pgpu_client_attrib_pointer (SOLID_A_POS, 2, PGPU_FLOAT, 0, NULL);
+	pgpu_use_program (0);
+
+	pgpu_frame_end (0);
+	pgpu_begin (PGPU_OP_DEBUG_SCREENSHOT, 0);
+	pgpu_end ();
+	pgpu_flush ();
+	printf ("gpulink: self test 3 frames sent, screenshot requested\n");
+	sleep_ms (3000);
+}
+
 /* ---- replies ----------------------------------------------------------------- */
 
 static unsigned choose_reply_phase (void)
@@ -997,6 +1151,7 @@ int main (void)
 	setup ();
 	self_test ();
 	program_self_test ();
+	self_test_3 ();
 
 	uint32_t frames = 0, timeouts = 0, frame_done = 0, last_frame_number = 0, render_us = 0;
 	absolute_time_t next_report = make_timeout_time_ms (1000);

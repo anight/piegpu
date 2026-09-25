@@ -59,6 +59,9 @@ enum pgpu_opcode
 	PGPU_OP_FRONT_FACE	= 0x36,
 	PGPU_OP_ALPHA_FUNC	= 0x37,
 	PGPU_OP_COLOR_MASK	= 0x38,
+	PGPU_OP_SCISSOR		= 0x39,
+	PGPU_OP_POLYGON_OFFSET	= 0x3A,
+	PGPU_OP_LINE_WIDTH	= 0x3B,
 
 	/* transform, lighting, fog, current values */
 	PGPU_OP_LOAD_MATRIX	= 0x40,
@@ -89,6 +92,7 @@ enum pgpu_opcode
 	PGPU_OP_VERTEX_ATTRIB	= 0x87,
 	PGPU_OP_ATTRIB_ARRAY	= 0x88,
 	PGPU_OP_ATTRIBS_ENABLE	= 0x89,
+	PGPU_OP_PROGRAM_DRAW_INLINE = 0x8A,
 
 	/* debug */
 	PGPU_OP_DEBUG_SCREENSHOT = 0xF0		/* dump the last presented frame to the Zero's USB log */
@@ -142,7 +146,9 @@ enum pgpu_error
 #define PGPU_CAP_ALPHA_TEST		(1u << 10)
 #define PGPU_CAP_COLOR_MATERIAL		(1u << 11)
 #define PGPU_CAP_NORMALIZE		(1u << 12)
-#define PGPU_CAP_ALL			0x1FFFu
+#define PGPU_CAP_SCISSOR_TEST		(1u << 13)
+#define PGPU_CAP_POLYGON_OFFSET_FILL	(1u << 14)
+#define PGPU_CAP_ALL			0x7FFFu
 
 /* compare functions (same order as the V3D depth-test field) */
 enum pgpu_func

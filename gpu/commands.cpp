@@ -157,6 +157,7 @@ CCommands::CCommands (CRenderer *pRenderer, CReceiver *pReceiver)
 	DefaultState ();
 	m_bFrameHasDraw = FALSE;
 	m_bClearColor = FALSE;
+	m_bClearDepth = FALSE;
 }
 
 CCommands::~CCommands (void)
@@ -183,6 +184,7 @@ void CCommands::Reset (void)
 	DefaultState ();
 	m_bFrameHasDraw = FALSE;
 	m_bClearColor = FALSE;
+	m_bClearDepth = FALSE;
 	m_nClearColor = PGPU_RGBA (0, 0, 0, 255);
 	m_fClearDepth = 1.0f;
 }
@@ -209,6 +211,9 @@ void CCommands::DefaultState (void)
 	S.nFrontFace = PGPU_CCW;
 	S.nAlphaFunc = PGPU_ALWAYS;
 	S.nColorMask = 0xF;
+	S.ScissorW = m_pRenderer->GetWidth ();
+	S.ScissorH = m_pRenderer->GetHeight ();
+	S.fLineWidth = 1.0f;
 
 	Set4 (S.Color, 1, 1, 1, 1);
 	S.Normal[2] = 1.0f;
@@ -279,6 +284,7 @@ void CCommands::Execute (u32 nHeader, const u32 *pPayload)
 		{PGPU_OP_ENABLE, 1}, {PGPU_OP_DISABLE, 1}, {PGPU_OP_DEPTH_FUNC, 1},
 		{PGPU_OP_DEPTH_MASK, 1}, {PGPU_OP_BLEND_FUNC, 2}, {PGPU_OP_CULL_FACE, 1},
 		{PGPU_OP_FRONT_FACE, 1}, {PGPU_OP_ALPHA_FUNC, 2}, {PGPU_OP_COLOR_MASK, 1},
+		{PGPU_OP_SCISSOR, 4}, {PGPU_OP_POLYGON_OFFSET, 2}, {PGPU_OP_LINE_WIDTH, 1},
 		{PGPU_OP_LOAD_MATRIX, 17}, {PGPU_OP_LIGHT, 11}, {PGPU_OP_MATERIAL, 5},
 		{PGPU_OP_LIGHT_MODEL, 2}, {PGPU_OP_FOG, 5}, {PGPU_OP_SHADE_MODEL, 1},
 		{PGPU_OP_COLOR, 1}, {PGPU_OP_NORMAL, 3}, {PGPU_OP_TEXCOORD, 2},
@@ -289,6 +295,7 @@ void CCommands::Execute (u32 nHeader, const u32 *pPayload)
 		{PGPU_OP_PROGRAM_UNIFORM, VARIABLE}, {PGPU_OP_PROGRAM_SAMPLER, 3},
 		{PGPU_OP_TEXTURE_BIND_UNIT, 2}, {PGPU_OP_VERTEX_ATTRIB, 5},
 		{PGPU_OP_ATTRIB_ARRAY, 6}, {PGPU_OP_ATTRIBS_ENABLE, 1},
+		{PGPU_OP_PROGRAM_DRAW_INLINE, VARIABLE},
 	};
 
 	boolean bKnown = FALSE;
@@ -374,6 +381,7 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 		if (p[0] & PGPU_CLEAR_DEPTH)
 		{
 			m_fClearDepth = AsFloat (p[2]);
+			m_bClearDepth = TRUE;
 		}
 		break;
 
@@ -542,6 +550,27 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 		}
 		S.nColorMask = p[0];
 		break;
+
+	case PGPU_OP_SCISSOR:
+		S.ScissorX = (s32) p[0];
+		S.ScissorY = (s32) p[1];
+		S.ScissorW = p[2];
+		S.ScissorH = p[3];
+		break;
+
+	case PGPU_OP_POLYGON_OFFSET:
+		S.fOffsetFactor = AsFloat (p[0]);
+		S.fOffsetUnits = AsFloat (p[1]);
+		break;
+
+	case PGPU_OP_LINE_WIDTH: {
+		float f = AsFloat (p[0]);
+		if (!(f > 0.0f))
+		{
+			return PGPU_ERR_ENUM;
+		}
+		S.fLineWidth = f < 1.0f ? 1.0f : f > 32.0f ? 32.0f : f;	// vc4: 1 .. 32
+		} break;
 
 	// transform, lighting, fog, current values
 
@@ -735,6 +764,9 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 		A.nSize = p[4];
 		A.nType = p[5];
 		} break;
+
+	case PGPU_OP_PROGRAM_DRAW_INLINE:
+		return ProgramDrawInline (p, nLength, pDetail);
 
 	case PGPU_OP_ATTRIBS_ENABLE:
 		if (p[0] >> PGPU_MAX_ATTRIBUTES)
@@ -1089,10 +1121,10 @@ u32 CCommands::DrawInline (const u32 *p, unsigned nLength)
 
 void CCommands::EndFrame (u32 nFlags)
 {
-	// a frame without a colour CLEAR starts from the previous image (depth is
-	// always cleared, to the last CLEAR depth value)
+	// a frame without a colour or depth CLEAR starts from the previous frame's
+	// image or depth and stencil
 	TRenderStats R;
-	if (!m_pRenderer->EndFrame (m_bClearColor, m_nClearColor, m_fClearDepth, &R))
+	if (!m_pRenderer->EndFrame (m_bClearColor, m_nClearColor, m_bClearDepth, m_fClearDepth, &R))
 	{
 		LOGERR ("V3D job failed");
 	}
@@ -1127,6 +1159,8 @@ void CCommands::EndFrame (u32 nFlags)
 
 	m_bFrameHasDraw = FALSE;
 	m_bClearColor = FALSE;
+	m_bClearDepth = FALSE;
+	m_bClearDepth = FALSE;
 }
 
 void CCommands::Reply (u8 uchOpcode, const u32 *pPayload, unsigned nLength)
@@ -1296,6 +1330,22 @@ u32 *CCommands::BuildUniforms (const TProgram *pProgram, const TProgramShader *p
 			nValue = nKind == PGPU_U_TEXTURE_CONFIG_P0 ? P0 : P1;
 			} break;
 
+		case PGPU_U_FB_Y_TRANSFORM: {	// the panel is a window framebuffer: rows top down
+			const float Values[4] = {-1.0f, (float) m_pRenderer->GetHeight (), 1.0f, 0.0f};
+			memcpy (&nValue, &Values[nData], 4);
+			} break;
+
+		case PGPU_U_DEPTH_RANGE: {
+			const float Values[4] = {m_State.DepthNear, m_State.DepthFar,
+						 m_State.DepthFar - m_State.DepthNear, 1.0f};
+			memcpy (&nValue, &Values[nData], 4);
+			} break;
+
+		case PGPU_U_POINT_Y_TRANSFORM: {	// upper-left origin on a window framebuffer
+			const float Values[4] = {-1.0f, 1.0f, 0.0f, 0.0f};
+			memcpy (&nValue, &Values[nData], 4);
+			} break;
+
 		default:			// P2 (cube maps only), first level
 			nValue = 0;
 			break;
@@ -1307,9 +1357,87 @@ u32 *CCommands::BuildUniforms (const TProgram *pProgram, const TProgramShader *p
 	return pStream;
 }
 
+// payload: mode, vertices, attribute mask, index count (0: not indexed),
+// index type, then per attribute in the mask (ascending): format (type |
+// size << 8) and the vertices' values tightly packed (padded to a word),
+// then the indices (padded to a word)
+u32 CCommands::ProgramDrawInline (const u32 *p, unsigned nLength, u32 *pDetail)
+{
+	if (nLength < 5)
+	{
+		return PGPU_ERR_LENGTH;
+	}
+	if (!m_nProgram)
+	{
+		return PGPU_ERR_ENUM;			// programs only
+	}
+	TProgram *pProgram = m_Programs.Get (m_nProgram);
+	if (!pProgram)
+	{
+		*pDetail = m_nProgram;
+		return PGPU_ERR_OBJECT;
+	}
+
+	u32 nMode = p[0];
+	unsigned nVertices = p[1];
+	u32 nMask = p[2];
+	unsigned nIndices = p[3];
+	u32 nIndexType = p[4];
+	if (   nVertices > MAX_PROGRAM_VERTICES || nIndices > MAX_PROGRAM_VERTICES
+	    || (nMask >> pProgram->nAttributes) || nIndexType > 1)
+	{
+		return nVertices > MAX_PROGRAM_VERTICES || nIndices > MAX_PROGRAM_VERTICES
+		       ? PGPU_ERR_LIMIT : PGPU_ERR_ENUM;
+	}
+
+	TInlineData Inline;
+	memset (&Inline, 0, sizeof Inline);
+	Inline.nMask = nMask;
+	unsigned w = 5;
+	for (unsigned i = 0; i < pProgram->nAttributes; i++)
+	{
+		if (!(nMask & (1 << i)))
+		{
+			continue;
+		}
+		if (w >= nLength)
+		{
+			return PGPU_ERR_LENGTH;
+		}
+		u32 nFormat = p[w++];
+		if (nFormat != pProgram->Attributes[i])
+		{
+			*pDetail = i;
+			return PGPU_ERR_ENUM;		// not the program's attribute format
+		}
+		unsigned nBytes = PGPU_ATTR_SIZE (nFormat) * TypeBytes[PGPU_ATTR_TYPE (nFormat)] * nVertices;
+		unsigned nWords = (nBytes + 3) / 4;
+		if (w + nWords > nLength)
+		{
+			return PGPU_ERR_LENGTH;
+		}
+		Inline.pAttribute[i] = (const u8 *) (p + w);
+		w += nWords;
+	}
+
+	if (nIndices)
+	{
+		Inline.nIndexBytes = nIndices * (nIndexType ? 2 : 1);
+		Inline.pIndices = (const u8 *) (p + w);
+		w += (Inline.nIndexBytes + 3) / 4;
+	}
+	if (w != nLength)
+	{
+		return PGPU_ERR_LENGTH;
+	}
+
+	return nIndices ? ProgramDraw (nMode, 0, nIndices, TRUE, nIndexType, 0, 0, pDetail, &Inline, nVertices)
+			: ProgramDraw (nMode, 0, nVertices, FALSE, 0, 0, 0, pDetail, &Inline, nVertices);
+}
+
 u32 CCommands::ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
 			   boolean bIndexed, u32 nIndexType, u32 nIndexBuffer, unsigned nIndexOffset,
-			   u32 *pDetail)
+			   u32 *pDetail, const TInlineData *pInline, unsigned nVertices)
 {
 	TProgram *pProgram = m_Programs.Get (m_nProgram);
 	if (!pProgram)
@@ -1373,7 +1501,26 @@ u32 CCommands::ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
 		u32 nAddress;
 		unsigned nStride;
 
-		if (m_nGenericEnabled & (1 << i))
+		if (pInline && (pInline->nMask & (1 << i)))
+		{
+			// vertex data from the packet into the frame's vertex pool
+			u8 *pData = m_pRenderer->AllocData (nVertices * nBytes, &nAddress);
+			if (!pData)
+			{
+				return PGPU_ERR_MEMORY;
+			}
+			memcpy (pData, pInline->pAttribute[i], nVertices * nBytes);
+			nStride = nBytes;
+			if (nStride > 255)
+			{
+				return PGPU_ERR_LIMIT;
+			}
+			if (bIndexed && nVertices - 1 < nMaxIndex)
+			{
+				nMaxIndex = nVertices - 1;
+			}
+		}
+		else if (m_nGenericEnabled & (1 << i))
 		{
 			const TGenericArray &A = m_Generic[i];
 			TBuffer &B = m_Buffers[A.nBuffer];
@@ -1436,7 +1583,16 @@ u32 CCommands::ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
 	}
 
 	u32 nIndexBus = 0;
-	if (bIndexed)
+	if (bIndexed && pInline)
+	{
+		u8 *pData = m_pRenderer->AllocData (pInline->nIndexBytes, &nIndexBus);
+		if (!pData)
+		{
+			return PGPU_ERR_MEMORY;
+		}
+		memcpy (pData, pInline->pIndices, pInline->nIndexBytes);
+	}
+	else if (bIndexed)
 	{
 		if (nIndexBuffer < 1 || nIndexBuffer > MaxBuffers)
 		{
@@ -1491,7 +1647,23 @@ u32 CCommands::ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
 	Rec.Add32 (nCSUniforms);
 
 	TGLDraw G;
-	G.nConfigBits = ConfigBits (nPrim == PGPU_PRIM_TRIANGLES);
+	G.State.nConfigBits = ConfigBits (nPrim == PGPU_PRIM_TRIANGLES);
+	CGeometry::GetDrawState (m_State, m_pRenderer->GetWidth (), m_pRenderer->GetHeight (),
+				 nPrim == PGPU_PRIM_TRIANGLES, &G.State);
+	// the hardware clips against a guard band: clip the rendering to the viewport too
+	unsigned x0 = VP.nClipX > G.State.nClipX ? VP.nClipX : G.State.nClipX;
+	unsigned y0 = VP.nClipY > G.State.nClipY ? VP.nClipY : G.State.nClipY;
+	unsigned x1 = VP.nClipX + VP.nClipWidth, y1 = VP.nClipY + VP.nClipHeight;
+	if (G.State.nClipX + G.State.nClipWidth < x1) x1 = G.State.nClipX + G.State.nClipWidth;
+	if (G.State.nClipY + G.State.nClipHeight < y1) y1 = G.State.nClipY + G.State.nClipHeight;
+	if (x1 <= x0 || y1 <= y0)
+	{
+		return 0;			// scissored away
+	}
+	G.State.nClipX = x0;
+	G.State.nClipY = y0;
+	G.State.nClipWidth = x1 - x0;
+	G.State.nClipHeight = y1 - y0;
 	G.nRecordBus = nRecordBus;
 	G.nAttributes = nAttributes;
 	G.fCentreX = VP.fCentreX;
@@ -1500,10 +1672,6 @@ u32 CCommands::ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
 	G.fHalfHeight = VP.fHalfHeight;
 	G.fZScale = VP.fZScale;
 	G.fZOffset = VP.fZOffset;
-	G.nClipX = VP.nClipX;
-	G.nClipY = VP.nClipY;
-	G.nClipWidth = VP.nClipWidth;
-	G.nClipHeight = VP.nClipHeight;
 	G.nMode = nMode;
 	G.bIndexed = bIndexed;
 	G.nCount = nCount;

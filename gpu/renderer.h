@@ -23,10 +23,20 @@
 #define SCREEN_VERTEX_FIXED	4
 #define MAX_VARYINGS		7
 
+// Per-draw state shared by both kinds of draws
+struct TDrawState
+{
+	u32 nConfigBits;		// V3D configuration bits
+	u16 nClipX, nClipY;		// clip window (scissor), panel pixels, y down
+	u16 nClipWidth, nClipHeight;
+	u32 nDepthOffset;		// DEPTH_OFFSET packet: factor | units << 16 (float 1-8-7)
+	float fLineWidth;		// GL shader mode lines
+};
+
 struct TDrawSetup
 {
 	unsigned nShader;		// index into FragmentShaders[]
-	u32 nConfigBits;		// V3D configuration bits
+	TDrawState State;
 	const u32 *pUniforms;		// resolved uniform values
 	unsigned nUniforms;
 };
@@ -36,7 +46,7 @@ struct TDrawSetup
 // the frame's pools with AllocRecord (), AllocUniforms () and AllocData ().
 struct TGLDraw
 {
-	u32 nConfigBits;
+	TDrawState State;		// the clip window includes the viewport
 	u32 nRecordBus;			// shader record, 16-byte aligned
 	unsigned nAttributes;		// attribute records after it (1-8)
 
@@ -44,7 +54,6 @@ struct TGLDraw
 	float fCentreX, fCentreY;
 	float fHalfWidth, fHalfHeight;	// the y scale is -fHalfHeight
 	float fZScale, fZOffset;
-	unsigned nClipX, nClipY, nClipWidth, nClipHeight;
 
 	u8 nMode;			// primitive mode (same values as GL)
 	boolean bIndexed;
@@ -97,10 +106,12 @@ public:
 	u8 *AllocData (unsigned nBytes, u32 *pBus);	// 16-byte aligned, in the vertex pool
 
 	/// \brief Render the collected frame and hand it to the panel
-	/// \param bClear FALSE: start from the previous frame's image (colour only)
+	/// \param bClearColor FALSE: start from the previous frame's image
 	/// \param nClearColor RGBA8888 (0xAABBGGRR)
+	/// \param bClearDepth FALSE: start from the previous frame's depth and stencil
 	/// \param fClearDepth 0 .. 1
-	boolean EndFrame (boolean bClear, u32 nClearColor, float fClearDepth, TRenderStats *pStats);
+	boolean EndFrame (boolean bClearColor, u32 nClearColor, boolean bClearDepth, float fClearDepth,
+			  TRenderStats *pStats);
 
 	/// \brief Drop the draws collected for the current frame
 	void DiscardFrame (void);
@@ -134,16 +145,18 @@ private:
 	u8 *m_pTileState;
 	u8 *m_pOverflow;
 	u16 *m_pFrameBuffer[2];
+	u32 *m_pDepthBuffer;		// depth and stencil between frames (T-format)
+	boolean m_bDepthValid;
 	unsigned m_nBuffer;
 
 	struct TDraw
 	{
 		boolean bGL;
 		TGLDraw GL;
+		TDrawState State;
 
 		// NV (fixed function)
 		unsigned nShader;
-		u32 nConfigBits;
 		unsigned nUniformOffset;	// words into the uniform pool
 		unsigned nUniforms;
 		unsigned nVertexOffset;		// bytes into the vertex pool

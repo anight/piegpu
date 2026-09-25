@@ -196,6 +196,12 @@ u32 CPrograms::Load (TProgram *p, u32 *pDetail)
 				CHECK (nData < p->nSamplers, nWord);
 				break;
 
+			case PGPU_U_FB_Y_TRANSFORM:
+			case PGPU_U_DEPTH_RANGE:
+			case PGPU_U_POINT_Y_TRANSFORM:
+				CHECK (nData < 4, nWord);
+				break;
+
 			default:
 				CHECK (FALSE, nWord);
 			}

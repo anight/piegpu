@@ -167,11 +167,44 @@ int main (int argc, char **argv)
 		return 1;
 	}
 	eglBindAPI (EGL_OPENGL_ES_API);
-	EGLint ctx_attribs[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
-	EGLContext ctx = eglCreateContext (dpy, EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT, ctx_attribs);
-	if (!eglMakeCurrent (dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, ctx))
+
+	/* render target: an RGB565 pbuffer with depth and stencil, like the
+	   Zero's panel: a window-system framebuffer (rows top down, so Mesa
+	   flips gl_FragCoord, gl_PointCoord and facing as for a window) */
+	EGLint config_attribs[] =
 	{
-		printf ("error eglMakeCurrent failed\n");
+		EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
+		EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+		EGL_RED_SIZE, 5, EGL_GREEN_SIZE, 6, EGL_BLUE_SIZE, 5, EGL_ALPHA_SIZE, 0,
+		EGL_DEPTH_SIZE, 24, EGL_STENCIL_SIZE, 8,
+		EGL_NONE
+	};
+	EGLConfig configs[64];
+	EGLint nconfigs = 0;
+	eglChooseConfig (dpy, config_attribs, configs, 64, &nconfigs);
+	EGLConfig config = NULL;
+	for (int i = 0; i < nconfigs && !config; i++)
+	{
+		EGLint r, g, b, a;
+		eglGetConfigAttrib (dpy, configs[i], EGL_RED_SIZE, &r);
+		eglGetConfigAttrib (dpy, configs[i], EGL_GREEN_SIZE, &g);
+		eglGetConfigAttrib (dpy, configs[i], EGL_BLUE_SIZE, &b);
+		eglGetConfigAttrib (dpy, configs[i], EGL_ALPHA_SIZE, &a);
+		if (r == 5 && g == 6 && b == 5 && a == 0)
+			config = configs[i];
+	}
+	if (!config)
+	{
+		printf ("error no RGB565 pbuffer config\n");
+		return 1;
+	}
+	EGLint pbuffer_attribs[] = {EGL_WIDTH, 320, EGL_HEIGHT, 240, EGL_NONE};
+	EGLSurface surface = eglCreatePbufferSurface (dpy, config, pbuffer_attribs);
+	EGLint ctx_attribs[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
+	EGLContext ctx = eglCreateContext (dpy, config, EGL_NO_CONTEXT, ctx_attribs);
+	if (surface == EGL_NO_SURFACE || !eglMakeCurrent (dpy, surface, surface, ctx))
+	{
+		printf ("error cannot make the pbuffer current\n");
 		return 1;
 	}
 	const char *renderer = (const char *) glGetString (GL_RENDERER);
@@ -181,25 +214,7 @@ int main (int argc, char **argv)
 		return 1;
 	}
 
-	/* render target: RGBA8888 (R in byte 0, as the Zero's tile buffer),
-	   with a depth buffer: the fragment shaders then write Z */
-	GLuint color, depth, fbo;
-	glGenTextures (1, &color);
-	glBindTexture (GL_TEXTURE_2D, color);
-	glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-	glGenRenderbuffers (1, &depth);
-	glBindRenderbuffer (GL_RENDERBUFFER, depth);
-	glRenderbufferStorage (GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, 64, 64);
-	glGenFramebuffers (1, &fbo);
-	glBindFramebuffer (GL_FRAMEBUFFER, fbo);
-	glFramebufferTexture2D (GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color, 0);
-	glFramebufferRenderbuffer (GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth);
-	if (glCheckFramebufferStatus (GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-	{
-		printf ("error framebuffer incomplete\n");
-		return 1;
-	}
-	glViewport (0, 0, 64, 64);
+	glViewport (0, 0, 320, 240);
 	glEnable (GL_DEPTH_TEST);
 
 	GLuint prog = glCreateProgram ();

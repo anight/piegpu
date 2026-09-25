@@ -197,9 +197,9 @@ separate drawing operation.
 - `CLEAR` must come **before the first draw of a frame**. A `CLEAR` after a draw
   in the same frame is an error: it's ignored and reported with `ERROR`.
 - If a frame has no colour `CLEAR`, the previous frame's colour contents are
+  kept, and without a depth `CLEAR` the previous depth and stencil contents are
   kept. This is slower: the tiles are loaded from memory first.
-- Depth is **not** kept between frames in v1: every frame starts with depth
-  cleared to the most recent `CLEAR` depth value (1.0 by default).
+- `CLEAR` always clears the whole panel; the scissor rectangle doesn't apply.
 
 ### 6.3 Object updates within a frame
 
@@ -272,6 +272,9 @@ Payload fields are listed word by word. `[n]` means n words.
 | `0x36` | FRONT_FACE | `u32 winding` | 0 = CCW, 1 = CW |
 | `0x37` | ALPHA_FUNC | `u32 func`, `f32 ref` | alpha test; func as in §10.2 |
 | `0x38` | COLOR_MASK | `u32 mask` | bits 0–3 = R, G, B, A writes enabled |
+| `0x39` | SCISSOR | `s32 x`, `s32 y`, `u32 width`, `u32 height` | Like `glScissor` (window coordinates, origin bottom left); applies with `SCISSOR_TEST` enabled. |
+| `0x3A` | POLYGON_OFFSET | `f32 factor`, `f32 units` | Like `glPolygonOffset`; applies to triangles with `POLYGON_OFFSET_FILL` enabled. |
+| `0x3B` | LINE_WIDTH | `f32 width` | Like `glLineWidth`: 1 … 32 pixels (clamped). |
 
 ### 7.6 Transform, lighting, fog
 
@@ -334,10 +337,12 @@ offsets and the sampler indices.
 | `0x87` | VERTEX_ATTRIB | `u32 index`, `f32 v[4]` | Current value of a generic attribute (0–7), used when its array is disabled. Default (0, 0, 0, 1). |
 | `0x88` | ATTRIB_ARRAY | `u32 index`, `id buffer`, `u32 offset_bytes`, `u32 stride_bytes`, `u32 size`, `u32 type` | Point generic attribute 0–7 at a buffer. stride 0 = tightly packed; at most 255. |
 | `0x89` | ATTRIBS_ENABLE | `u32 mask` | Which generic attributes come from arrays (bit n = attribute n). |
+| `0x8A` | PROGRAM_DRAW_INLINE | `u32 mode`, `u32 vertices`, `u32 attribute_mask`, `u32 index_count`, `u32 index_type`, then per attribute in the mask (ascending): `u32 format`, `bytes data[…]`; then `bytes indices[…]` | Draw with vertex data carried in the packet (client-side arrays). format = type \| size << 8, and must be the program's. The data is `vertices` values, tightly packed and padded to a word. index_count 0 = draw the vertices in order; otherwise index_count indices follow, u8 or u16. Attributes not in the mask come from `ATTRIB_ARRAY` (first vertex 0) or `VERTEX_ATTRIB`. |
 
 **Drawing:** while a program is in use, `DRAW_ARRAYS` and `DRAW_ELEMENTS` use
-it and the generic attributes. `DRAW_INLINE` isn't available with programs
-(error 5). The Zero picks the variant that matches the primitive mode and the
+it and the generic attributes, and `PROGRAM_DRAW_INLINE` draws vertex data from
+the packet. `DRAW_INLINE` (the fixed-function layout) isn't available with
+programs (error 5). The Zero picks the variant that matches the primitive mode and the
 blend state (`ENABLE BLEND` and `BLEND_FUNC`); if the program has none, the draw
 is reported as `ERROR` 10.
 
@@ -345,14 +350,17 @@ is reported as `ERROR` 10.
   compiled for (error 5 otherwise). A disabled array uses the current value from
   `VERTEX_ATTRIB`, converted to that format.
 - **State that applies:** viewport and depth range, depth test and mask, culling
-  and front face, blending (through the variant), textures and their parameters.
+  and front face, blending (through the variant), textures and their parameters,
+  scissor, polygon offset and line width.
   **Ignored:** lighting, fog, alpha test, texture environment, shade model and the
   fixed-function matrices. The colour mask must be all on (error 10 otherwise).
 - **Textures:** all formats are sampled as RGBA; `A8` returns (1, 1, 1, A), unlike
   GL ES 2.0's (0, 0, 0, A). A sampler whose unit has no texture reads (0, 0, 0, 1).
-- **GLSL:** GLSL ES 1.00 as compiled by Mesa's `vc4` driver. Not supported:
-  `gl_FragCoord` and `gl_DepthRange` (they need built-in state uniforms), cube-map
-  samplers, and integer arithmetic beyond what fits in floats.
+- **GLSL:** GLSL ES 1.00 as compiled by Mesa's `vc4` driver, for the panel as a
+  window framebuffer (RGB565, rows top down): `gl_FragCoord`, `gl_FrontFacing`,
+  `gl_PointCoord` and `gl_DepthRange` follow GL. The framebuffer has no alpha
+  channel, so the fragment alpha written is 1 and `DST_ALPHA` reads 1. Not
+  supported: cube-map samplers, and integer arithmetic beyond what fits in floats.
 - **Limits:** 64 programs, blob at most 65536 words, uniform storage at most 4096
   words, 8 attributes, 8 samplers, `count` at most 65535 per draw.
 - `DRAW_ARRAYS` with a program reads the arrays starting at `first`: `first` can
@@ -380,6 +388,9 @@ is reported as `ERROR` 10.
 | arrays | none enabled, none bound |
 | bound texture | none (all units) |
 | program | 0 (fixed function); no programs |
+| scissor | disabled, (0, 0, width, height) |
+| polygon offset | disabled, factor 0, units 0 |
+| line width | 1 |
 | generic attributes | arrays disabled, current values (0, 0, 0, 1) |
 
 ---
@@ -457,7 +468,9 @@ that 1 bit. The next packet may follow directly after the CRC word.
 | 3 | TEXTURE_2D | 10 | ALPHA_TEST |
 | 4 | LIGHTING | 11 | COLOR_MATERIAL (vertex colour drives ambient and diffuse) |
 | 5 | LIGHT0 | 12 | NORMALIZE |
-| 6 | LIGHT1 | 13–31 | reserved, must be 0 |
+| 6 | LIGHT1 | 13 | SCISSOR_TEST |
+| | | 14 | POLYGON_OFFSET_FILL |
+| | | 15–31 | reserved, must be 0 |
 
 ### 10.2 Compare functions (depth, alpha)
 
@@ -603,7 +616,11 @@ existing code; uploading to buffers once is the fast path.
 - **Guard band:** vertices stay within 800 px outside the viewport. Measured on
   the hardware at 320×240: up to x −960 … 1280 px renders, x −1120 … 1440 px
   loses triangles, although the 12.4 fixed-point format reaches ±2048.
-- **Points and lines** are 1 pixel wide screen-space quads.
+- **Points and lines** are screen-space quads, 1 pixel and `LINE_WIDTH` wide.
+- **Depth and stencil** are stored after every frame (T-format, about 80 µs per
+  frame at 320×240) and loaded at the start of a frame without depth `CLEAR`.
+- **Scissor** and the viewport become the V3D's clip window; polygon offset is
+  its depth offset (factor and units as in Mesa's `vc4`).
 - **Programs** run in the V3D's GL shader mode: the binner runs the coordinate
   shader, the renderer the vertex and fragment shaders, and the hardware clips.
   Each draw gets a shader record, attribute records pointing straight into the

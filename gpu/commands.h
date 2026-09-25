@@ -98,9 +98,19 @@ private:
 	u32 FetchVertices (unsigned nFirst, unsigned nCount);
 	u32 Draw (u32 nMode, unsigned nVertices, const u32 *pIndices, unsigned nCount);
 
+	// vertex (and index) data carried in a PROGRAM_DRAW_INLINE packet
+	struct TInlineData
+	{
+		u32 nMask;			// attributes in the packet
+		const u8 *pAttribute[PGPU_MAX_ATTRIBUTES];
+		const u8 *pIndices;		// nullptr: not indexed
+		unsigned nIndexBytes;
+	};
+
 	u32 ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
 			 boolean bIndexed, u32 nIndexType, u32 nIndexBuffer, unsigned nIndexOffset,
-			 u32 *pDetail);
+			 u32 *pDetail, const TInlineData *pInline = nullptr, unsigned nVertices = 0);
+	u32 ProgramDrawInline (const u32 *p, unsigned nLength, u32 *pDetail);
 	boolean GetViewport (TViewport *pViewport) const;
 	u32 *BuildUniforms (const TProgram *pProgram, const TProgramShader *pShader,
 			    const TViewport &rViewport, u32 *pBus);
@@ -145,6 +155,7 @@ private:
 	// frame
 	boolean m_bFrameHasDraw;
 	boolean m_bClearColor;
+	boolean m_bClearDepth;
 	u32 m_nClearColor;
 	float m_fClearDepth;
 	unsigned m_nFrameNumber;

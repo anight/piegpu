@@ -36,6 +36,10 @@ struct TGLState
 	u32 nAlphaFunc;
 	float fAlphaRef;
 	u32 nColorMask;			// bits 0-3: R, G, B, A
+	s32 ScissorX, ScissorY;		// GL window coordinates (bottom left)
+	u32 ScissorW, ScissorH;
+	float fOffsetFactor, fOffsetUnits;
+	float fLineWidth;
 	u32 nShadeModel;		// 0 smooth, 1 flat
 
 	float Color[4], Normal[3], TexCoord[2];
@@ -88,6 +92,11 @@ public:
 
 	TGeometryStats GetStats (void);
 
+	/// \brief Clip window (scissor), polygon offset and line width of a draw
+	/// \param pState nConfigBits must be set, gets the depth offset enable bit
+	static void GetDrawState (const TGLState &rState, unsigned nWidth, unsigned nHeight,
+				  boolean bFaces, TDrawState *pState);
+
 private:
 	// a transformed vertex
 	struct TVertex
@@ -129,12 +138,12 @@ private:
 	TDrawSetup m_Setup;
 	u32 m_Uniforms[64];
 	unsigned m_nVaryings;
-	u32 m_nTriangleConfig, m_nLineConfig;
+	TDrawState m_TriangleState, m_LineState;
 	boolean m_bTwoSide;
 
 	float *m_pBatch;		// screen vertices waiting for AddTriangles
 	unsigned m_nBatch;
-	u32 m_nBatchConfig;
+	const TDrawState *m_pBatchState;
 
 	TGeometryStats m_Stats;
 };

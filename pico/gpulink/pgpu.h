@@ -116,6 +116,9 @@ void pgpu_cull_face (uint32_t face);
 void pgpu_front_face (uint32_t winding);
 void pgpu_alpha_func (uint32_t func, float ref);
 void pgpu_color_mask (bool r, bool g, bool b, bool a);
+void pgpu_scissor (int32_t x, int32_t y, uint32_t width, uint32_t height);	/* ENABLE SCISSOR_TEST */
+void pgpu_polygon_offset (float factor, float units);	/* ENABLE POLYGON_OFFSET_FILL */
+void pgpu_line_width (float width);
 
 /* transform, lighting, fog, current values */
 void pgpu_load_matrix (uint32_t which, const float m[16]);
@@ -155,6 +158,18 @@ void pgpu_vertex_attrib (uint32_t index, float x, float y, float z, float w);
 void pgpu_attrib_array (uint32_t index, uint32_t buffer, uint32_t offset_bytes, uint32_t stride_bytes,
 			uint32_t size, uint32_t type);
 void pgpu_attribs_enable (uint32_t mask);
+
+/* client-side arrays for programs (like glVertexAttribPointer without a
+   buffer): the data stays in Pico memory and the draw calls below copy the
+   vertices used into PROGRAM_DRAW_INLINE packets. type and size must be the
+   program's attribute format; stride 0 = tightly packed; pointer NULL =
+   the attribute doesn't come from Pico memory. Large TRIANGLES, LINES and
+   POINTS draws are split into several packets; other modes and indexed
+   draws must fit one packet (false otherwise). */
+void pgpu_client_attrib_pointer (uint32_t index, uint32_t size, uint32_t type, uint32_t stride,
+				 const void *pointer);
+bool pgpu_draw_arrays_client (uint32_t mode, uint32_t first, uint32_t count);
+bool pgpu_draw_elements_client (uint32_t mode, uint32_t count, uint32_t index_type, const void *indices);
 
 /* DRAW_INLINE: vertices laid out as in docs/protocol.md 7.8 */
 void pgpu_draw_inline (uint32_t mode, uint32_t count, uint32_t attrib_mask,
