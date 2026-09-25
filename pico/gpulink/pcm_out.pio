@@ -1,0 +1,76 @@
+;
+; pcm_out.pio - I2S master transmitter, 32-bit channels (64-bit frames)
+;
+; Data on the OUT pin (GP16); side-set bit 0 = bit clock (GP17), bit 1 = frame
+; sync (GP18). Data changes while the bit clock is low, the receiver samples on
+; the rising edge. Frame sync changes one bit before each channel's MSB (I2S).
+; Two PIO cycles per bit: bit clock = PIO clock / 2.
+;
+.program pcm_out
+.side_set 2
+
+bitloop1:                   ;          FS BCLK
+    out pins, 1       side 0b10
+    jmp x-- bitloop1  side 0b11
+    out pins, 1       side 0b00
+    set x, 30         side 0b01
+bitloop0:
+    out pins, 1       side 0b00
+    jmp x-- bitloop0  side 0b01
+    out pins, 1       side 0b10
+public entry_point:
+    set x, 30         side 0b11
+
+% c-sdk {
+static inline void pcm_out_program_init (PIO pio, uint sm, uint offset,
+					 uint data_pin, uint clock_pin_base)
+{
+	pio_sm_config c = pcm_out_program_get_default_config (offset);
+
+	sm_config_set_out_pins (&c, data_pin, 1);
+	sm_config_set_sideset_pins (&c, clock_pin_base);
+	sm_config_set_out_shift (&c, false, true, 32);	// MSB first, autopull 32
+	sm_config_set_fifo_join (&c, PIO_FIFO_JOIN_TX);
+
+	pio_sm_init (pio, sm, offset, &c);
+
+	uint pin_mask = (1u << data_pin) | (3u << clock_pin_base);
+	pio_sm_set_pindirs_with_mask (pio, sm, pin_mask, pin_mask);
+	pio_sm_set_pins_with_mask (pio, sm, 0, pin_mask);
+	pio_gpio_init (pio, data_pin);
+	pio_gpio_init (pio, clock_pin_base);
+	pio_gpio_init (pio, clock_pin_base + 1);
+
+	pio_sm_exec (pio, sm, pio_encode_jmp (offset + pcm_out_offset_entry_point));
+}
+%}
+
+;
+; pcm_in - samples the Zero's reply line (GP19) once per bit clock period.
+; Runs with the same clock divider as pcm_out and is started in the same
+; cycle, so it stays in lockstep with the bit clock: pcm_out drives BCLK high
+; on even cycles (counted from the start) and low on odd ones. Starting at
+; `in` samples on even cycles, at `nop` on odd ones (the sampling phase).
+; Word alignment is not known here: the reply parser searches for it.
+;
+.program pcm_in
+public sample:
+    in pins, 1
+public skip:
+    nop
+
+% c-sdk {
+static inline void pcm_in_program_init (PIO pio, uint sm, uint offset, uint pin, uint phase)
+{
+	pio_sm_config c = pcm_in_program_get_default_config (offset);
+
+	sm_config_set_in_pins (&c, pin);
+	sm_config_set_in_shift (&c, false, true, 32);	// MSB first, autopush 32
+	sm_config_set_fifo_join (&c, PIO_FIFO_JOIN_RX);
+
+	pio_sm_init (pio, sm, offset, &c);
+	pio_sm_set_consecutive_pindirs (pio, sm, pin, 1, false);
+
+	pio_sm_exec (pio, sm, pio_encode_jmp (offset + (phase ? pcm_in_offset_skip : pcm_in_offset_sample)));
+}
+%}
