@@ -21,13 +21,19 @@
 #include <string.h>
 #include "pico/stdlib.h"
 #include "pgpu.h"
+#include "plasma_program.h"
+#include "cube_program.h"
+#include "sparks_program.h"
+#include "solid_program.h"
 
 #define WIDTH	320
 #define HEIGHT	240
 #define PI	3.14159265f
 
 /* object ids */
-enum { BUF_CUBE = 1, BUF_CUBE_INDEX, BUF_SPHERE, BUF_SPHERE_INDEX, BUF_STARS };
+enum { BUF_CUBE = 1, BUF_CUBE_INDEX, BUF_SPHERE, BUF_SPHERE_INDEX, BUF_STARS, BUF_QUAD, BUF_SPARKS };
+enum { PROG_PLASMA = 1, PROG_CUBE, PROG_SPARKS, PROG_SOLID };
+enum { BUF_TEST = 20, BUF_ROW };
 enum { TEX_CHECKER = 1, TEX_QUADRANTS, TEX_SPRITE };
 
 #define ALL_ARRAYS	0xFu
@@ -674,6 +680,8 @@ static void self_test (void)
 	sleep_ms (3000);
 }
 
+static void upload_programs (void);
+
 /* RESET, read INFO, upload the objects (also after the Zero rebooted) */
 static void setup (void)
 {
@@ -699,7 +707,239 @@ static void setup (void)
 	upload_sphere ();
 	upload_stars ();
 	upload_textures ();
+	upload_programs ();
 	pgpu_flush ();
+}
+
+/* ---- programs (GL ES 2.0 subset) --------------------------------------------- */
+
+#define SPARKS		240
+
+static void upload_programs (void)
+{
+	pgpu_program_create (PROG_PLASMA, plasma_program, PLASMA_WORDS);
+	pgpu_program_create (PROG_CUBE, cube_program, CUBE_WORDS);
+	pgpu_program_create (PROG_SPARKS, sparks_program, SPARKS_WORDS);
+	pgpu_program_create (PROG_SOLID, solid_program, SOLID_WORDS);
+
+	static const float quad[8] = {-1, -1, 1, -1, 1, 1, -1, 1};
+	pgpu_buffer_create (BUF_QUAD, sizeof quad);
+	pgpu_buffer_data (BUF_QUAD, 0, quad, sizeof quad);
+
+	static struct star s[SPARKS];		/* position, colour */
+	for (int i = 0; i < SPARKS; i++)
+	{
+		float a = 2.0f * PI * frand (), r = 0.9f + 0.8f * frand ();
+		s[i].pos[0] = r * cosf (a);
+		s[i].pos[1] = 3.0f * frand ();
+		s[i].pos[2] = r * sinf (a);
+		s[i].color[0] = 255;
+		s[i].color[1] = (uint8_t) (120 + 120 * frand ());
+		s[i].color[2] = (uint8_t) (40 * frand ());
+		s[i].color[3] = 255;
+	}
+	pgpu_buffer_create (BUF_SPARKS, sizeof s);
+	pgpu_buffer_data (BUF_SPARKS, 0, s, sizeof s);
+}
+
+static void draw_program_scene (float t)
+{
+	float projection[16], view[16], model[16], vp[16], mvp[16], a[16], b[16];
+	mat_perspective (projection, 1.0f, (float) WIDTH / HEIGHT, 0.5f, 40.0f);
+	mat_translate (view, 0.0f, -0.1f, -4.2f);
+	mat_multiply (vp, projection, view);
+
+	pgpu_viewport (0, 0, WIDTH, HEIGHT, 0.0f, 1.0f);
+	pgpu_disable (PGPU_CAP_ALL);
+	pgpu_depth_mask (true);
+	pgpu_color_mask (true, true, true, true);
+	pgpu_cull_face (PGPU_BACK);
+	pgpu_front_face (PGPU_CCW);
+	pgpu_arrays_enable (0);
+	pgpu_clear (PGPU_CLEAR_COLOR | PGPU_CLEAR_DEPTH, PGPU_RGBA (0, 0, 0, 255), 1.0f);
+
+	/* plasma background (no depth test, no depth writes) */
+	pgpu_use_program (PROG_PLASMA);
+	pgpu_program_uniform1f (PROG_PLASMA, plasma_u_time, t);
+	pgpu_program_uniform1f (PROG_PLASMA, plasma_u_brightness, 0.45f);
+	pgpu_attrib_array (PLASMA_A_POS, BUF_QUAD, 0, 0, 2, PGPU_FLOAT);
+	pgpu_attribs_enable (1u << PLASMA_A_POS);
+	pgpu_depth_mask (false);
+	pgpu_draw_arrays (PGPU_TRIANGLE_FAN, 0, 4);
+	pgpu_depth_mask (true);
+
+	/* textured cube lit by an orbiting point light */
+	pgpu_enable (PGPU_CAP_DEPTH_TEST | PGPU_CAP_CULL_FACE);
+	pgpu_depth_func (PGPU_LESS);
+	mat_rotate_y (a, t * 0.8f);
+	mat_rotate_x (b, t * 0.5f);
+	mat_multiply (model, a, b);
+	mat_scale (a, 1.4f);
+	mat_multiply (model, model, a);
+	mat_multiply (mvp, vp, model);
+	float light[3] = {2.5f * cosf (t * 1.3f), 1.2f, 2.5f * sinf (t * 1.3f)};
+	float light_color[3] = {1.0f, 0.9f, 0.75f};
+	float eye[3] = {0.0f, 0.1f, 4.2f};
+	pgpu_use_program (PROG_CUBE);
+	PGPU_UNIFORM (PROG_CUBE, cube_u_mvp, mvp);
+	PGPU_UNIFORM (PROG_CUBE, cube_u_model, model);
+	PGPU_UNIFORM (PROG_CUBE, cube_u_light_pos, light);
+	PGPU_UNIFORM (PROG_CUBE, cube_u_light_color, light_color);
+	PGPU_UNIFORM (PROG_CUBE, cube_u_eye, eye);
+	pgpu_texture_bind_unit (0, TEX_CHECKER);
+	pgpu_attrib_array (CUBE_A_POS, BUF_CUBE, 0, sizeof (struct cube_vertex), 3, PGPU_FLOAT);
+	pgpu_attrib_array (CUBE_A_NORMAL, BUF_CUBE, 12, sizeof (struct cube_vertex), 3, PGPU_BYTE_NORM);
+	pgpu_attrib_array (CUBE_A_UV, BUF_CUBE, 16, sizeof (struct cube_vertex), 2, PGPU_FLOAT);
+	pgpu_attribs_enable (1u << CUBE_A_POS | 1u << CUBE_A_NORMAL | 1u << CUBE_A_UV);
+	pgpu_draw_elements (PGPU_TRIANGLES, 36, PGPU_INDEX_U8, BUF_CUBE_INDEX, 0);
+
+	/* sparks: point sprites, additive, depth tested but not written */
+	pgpu_use_program (PROG_SPARKS);
+	PGPU_UNIFORM (PROG_SPARKS, sparks_u_mvp, vp);
+	pgpu_program_uniform1f (PROG_SPARKS, sparks_u_time, t);
+	pgpu_program_uniform1f (PROG_SPARKS, sparks_u_size, 40.0f);
+	pgpu_attrib_array (SPARKS_A_POS, BUF_SPARKS, 0, sizeof (struct star), 3, PGPU_FLOAT);
+	pgpu_attrib_array (SPARKS_A_COLOR, BUF_SPARKS, 12, sizeof (struct star), 4, PGPU_UBYTE_NORM);
+	pgpu_attribs_enable (1u << SPARKS_A_POS | 1u << SPARKS_A_COLOR);
+	pgpu_enable (PGPU_CAP_BLEND);
+	pgpu_blend_func (PGPU_ONE, PGPU_ONE);
+	pgpu_depth_mask (false);
+	pgpu_draw_arrays (PGPU_POINTS, 0, SPARKS);
+	pgpu_disable (PGPU_CAP_BLEND);
+	pgpu_depth_mask (true);
+
+	/* fixed-function overlay in the same frame: the texture test quad */
+	float ortho[16], identity[16];
+	mat_ortho (ortho, 0, WIDTH, 0, HEIGHT, -1, 1);
+	mat_identity (identity);
+	pgpu_use_program (0);
+	pgpu_disable (PGPU_CAP_ALL);
+	pgpu_load_matrix (PGPU_PROJECTION, ortho);
+	pgpu_load_matrix (PGPU_MODELVIEW, identity);
+	pgpu_load_matrix (PGPU_TEXTURE, identity);
+	pgpu_enable (PGPU_CAP_TEXTURE_2D);
+	pgpu_texture_bind (TEX_QUADRANTS);
+	pgpu_tex_env (PGPU_REPLACE, 0);
+	quad_2d (WIDTH - 62, HEIGHT - 62, 56, 56);
+	pgpu_disable (PGPU_CAP_TEXTURE_2D);
+}
+
+/* ---- program self test ---------------------------------------------------------
+ *
+ * One frame, then a screenshot request. Expected, on black:
+ *   top left:     red square (drawn, then its buffer is changed: copy-on-write
+ *                 keeps the square) | green triangle (the changed buffer)
+ *   top right:    white square, half-covered by a blue square at alpha 0.5
+ *   middle left:  yellow LINE_LOOP square outline (lines variant)
+ *   middle right: row of 8 green points (colour array disabled: VERTEX_ATTRIB)
+ *   bottom right: cube with the quadrant texture through sampler 0 -> unit 3
+ *   One ERROR 10 (points with the solid program: no points variant).
+ */
+static void rect (float x, float y, float w, float h, float r, float g, float b, float a)
+{
+	float rc[4] = {x, y, w, h}, c[4] = {r, g, b, a};
+	PGPU_UNIFORM (PROG_SOLID, solid_u_rect, rc);
+	PGPU_UNIFORM (PROG_SOLID, solid_u_color, c);
+}
+
+static void program_self_test (void)
+{
+	static const float square[8] = {0, 0, 1, 0, 1, 1, 0, 1};
+	static const float triangle[8] = {0, 0, 1, 0, 0.5f, 1, 0.5f, 1};
+	pgpu_buffer_create (BUF_TEST, sizeof square);
+	pgpu_buffer_data (BUF_TEST, 0, square, sizeof square);
+
+	static float row[8][3];
+	for (int i = 0; i < 8; i++)
+	{
+		row[i][0] = 0.1f + 0.1f * i;	/* x */
+		row[i][1] = 1.5f;		/* y: mod (1.5, 3) - 1.5 = 0 */
+		row[i][2] = 0.0f;
+	}
+	pgpu_buffer_create (BUF_ROW, sizeof row);
+	pgpu_buffer_data (BUF_ROW, 0, row, sizeof row);
+
+	pgpu_viewport (0, 0, WIDTH, HEIGHT, 0.0f, 1.0f);
+	pgpu_disable (PGPU_CAP_ALL);
+	pgpu_depth_mask (true);
+	pgpu_color_mask (true, true, true, true);
+	pgpu_clear (PGPU_CLEAR_COLOR | PGPU_CLEAR_DEPTH, PGPU_RGBA (0, 0, 0, 255), 1.0f);
+
+	pgpu_use_program (PROG_SOLID);
+	pgpu_attrib_array (SOLID_A_POS, BUF_TEST, 0, 0, 2, PGPU_FLOAT);
+	pgpu_attribs_enable (1u << SOLID_A_POS);
+
+	/* copy-on-write */
+	rect (-0.95f, 0.45f, 0.4f, 0.45f, 1, 0, 0, 1);
+	pgpu_draw_arrays (PGPU_TRIANGLE_FAN, 0, 4);
+	pgpu_buffer_data (BUF_TEST, 0, triangle, sizeof triangle);
+	rect (-0.45f, 0.45f, 0.4f, 0.45f, 0, 1, 0, 1);
+	pgpu_draw_arrays (PGPU_TRIANGLE_FAN, 0, 4);
+	pgpu_buffer_data (BUF_TEST, 0, square, sizeof square);
+
+	/* alpha blending variant */
+	rect (0.1f, 0.45f, 0.4f, 0.45f, 1, 1, 1, 1);
+	pgpu_draw_arrays (PGPU_TRIANGLE_FAN, 0, 4);
+	pgpu_enable (PGPU_CAP_BLEND);
+	pgpu_blend_func (PGPU_SRC_ALPHA, PGPU_ONE_MINUS_SRC_ALPHA);
+	rect (0.3f, 0.3f, 0.4f, 0.45f, 0, 0, 1, 0.5f);
+	pgpu_draw_arrays (PGPU_TRIANGLE_FAN, 0, 4);
+	pgpu_disable (PGPU_CAP_BLEND);
+
+	/* lines variant; points: no variant (one ERROR 10) */
+	rect (-0.9f, -0.2f, 0.4f, 0.4f, 1, 1, 0, 1);
+	pgpu_draw_arrays (PGPU_LINE_LOOP, 0, 4);
+	pgpu_draw_arrays (PGPU_POINTS, 0, 4);
+
+	/* constant attribute: colour array disabled */
+	float identity[16];
+	mat_identity (identity);
+	pgpu_use_program (PROG_SPARKS);
+	PGPU_UNIFORM (PROG_SPARKS, sparks_u_mvp, identity);
+	pgpu_program_uniform1f (PROG_SPARKS, sparks_u_time, 0.0f);
+	pgpu_program_uniform1f (PROG_SPARKS, sparks_u_size, 6.0f);
+	pgpu_attrib_array (SPARKS_A_POS, BUF_ROW, 0, 0, 3, PGPU_FLOAT);
+	pgpu_attribs_enable (1u << SPARKS_A_POS);
+	pgpu_vertex_attrib (SPARKS_A_COLOR, 0, 1, 0, 1);
+	pgpu_enable (PGPU_CAP_BLEND);
+	pgpu_blend_func (PGPU_ONE, PGPU_ONE);
+	pgpu_draw_arrays (PGPU_POINTS, 0, 8);
+	pgpu_disable (PGPU_CAP_BLEND);
+
+	/* sampler 0 -> texture unit 3 */
+	float model[16], a[16], mvp[16], proj[16], view[16], vp[16];
+	mat_perspective (proj, 1.0f, (float) WIDTH / HEIGHT, 0.5f, 20.0f);
+	mat_translate (view, 1.6f, -0.9f, -4.0f);
+	mat_multiply (vp, proj, view);
+	mat_rotate_y (model, 0.6f);
+	mat_rotate_x (a, 0.4f);
+	mat_multiply (model, model, a);
+	mat_multiply (mvp, vp, model);
+	float light[3] = {0, 0, 5}, white[3] = {1, 1, 1}, eye[3] = {0, 0, 5};
+	pgpu_enable (PGPU_CAP_DEPTH_TEST | PGPU_CAP_CULL_FACE);
+	pgpu_use_program (PROG_CUBE);
+	PGPU_UNIFORM (PROG_CUBE, cube_u_mvp, mvp);
+	PGPU_UNIFORM (PROG_CUBE, cube_u_model, model);
+	PGPU_UNIFORM (PROG_CUBE, cube_u_light_pos, light);
+	PGPU_UNIFORM (PROG_CUBE, cube_u_light_color, white);
+	PGPU_UNIFORM (PROG_CUBE, cube_u_eye, eye);
+	pgpu_program_sampler (PROG_CUBE, CUBE_U_TEXTURE, 3);
+	pgpu_texture_bind_unit (0, TEX_CHECKER);
+	pgpu_texture_bind_unit (3, TEX_QUADRANTS);
+	pgpu_attrib_array (CUBE_A_POS, BUF_CUBE, 0, sizeof (struct cube_vertex), 3, PGPU_FLOAT);
+	pgpu_attrib_array (CUBE_A_NORMAL, BUF_CUBE, 12, sizeof (struct cube_vertex), 3, PGPU_BYTE_NORM);
+	pgpu_attrib_array (CUBE_A_UV, BUF_CUBE, 16, sizeof (struct cube_vertex), 2, PGPU_FLOAT);
+	pgpu_attribs_enable (1u << CUBE_A_POS | 1u << CUBE_A_NORMAL | 1u << CUBE_A_UV);
+	pgpu_draw_elements (PGPU_TRIANGLES, 36, PGPU_INDEX_U8, BUF_CUBE_INDEX, 0);
+	pgpu_program_sampler (PROG_CUBE, CUBE_U_TEXTURE, 0);
+	pgpu_use_program (0);
+
+	pgpu_frame_end (0);
+	pgpu_begin (PGPU_OP_DEBUG_SCREENSHOT, 0);
+	pgpu_end ();
+	pgpu_flush ();
+	printf ("gpulink: program self test frame sent, screenshot requested\n");
+	sleep_ms (3000);
 }
 
 /* ---- replies ----------------------------------------------------------------- */
@@ -756,6 +996,7 @@ int main (void)
 	choose_reply_phase ();
 	setup ();
 	self_test ();
+	program_self_test ();
 
 	uint32_t frames = 0, timeouts = 0, frame_done = 0, last_frame_number = 0, render_us = 0;
 	absolute_time_t next_report = make_timeout_time_ms (1000);
@@ -765,7 +1006,15 @@ int main (void)
 	{
 		float t = absolute_time_diff_us (start, get_absolute_time ()) / 1e6f;
 
-		draw_scene (t);
+		/* 10 s fixed-function scene, 10 s program scene */
+		if ((int) (t / 10.0f) & 1)
+		{
+			draw_program_scene (t);
+		}
+		else
+		{
+			draw_scene (t);
+		}
 		pgpu_frame_end (PGPU_FRAME_REPLY);
 		frames++;
 

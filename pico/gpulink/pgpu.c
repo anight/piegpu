@@ -752,3 +752,95 @@ void pgpu_draw_elements (uint32_t mode, uint32_t count, uint32_t index_type, uin
 	p[4] = offset_bytes;
 	pgpu_end ();
 }
+
+/* ---- programs ------------------------------------------------------------ */
+
+void pgpu_program_create (uint32_t id, const uint32_t *blob, uint32_t words)
+{
+	cmd2 (PGPU_OP_PROGRAM_CREATE, id, words);
+
+	const uint32_t max = PGPU_STAGING_WORDS - 16;
+	for (uint32_t offset = 0; offset < words; offset += max)
+	{
+		uint32_t n = words - offset < max ? words - offset : max;
+		uint32_t *p = pgpu_begin (PGPU_OP_PROGRAM_DATA, 2 + n);
+		p[0] = id;
+		p[1] = offset;
+		memcpy (&p[2], blob + offset, n * 4);
+		pgpu_end ();
+	}
+}
+
+void pgpu_program_delete (uint32_t id)		{ cmd1 (PGPU_OP_PROGRAM_DELETE, id); }
+void pgpu_use_program (uint32_t id)		{ cmd1 (PGPU_OP_USE_PROGRAM, id); }
+
+/* one PROGRAM_UNIFORM per run of consecutive storage words */
+void pgpu_program_uniform (uint32_t id, const uint16_t *offsets, uint32_t scalars, const float *values)
+{
+	for (uint32_t stage = 0; stage < 2; stage++)
+	{
+		const uint16_t *o = offsets + stage * scalars;
+		uint32_t i = 0;
+		while (i < scalars)
+		{
+			if (o[i] == 0xFFFF)
+			{
+				i++;
+				continue;
+			}
+			uint32_t n = 1;
+			while (i + n < scalars && o[i + n] == o[i] + n)
+			{
+				n++;
+			}
+			uint32_t *p = pgpu_begin (PGPU_OP_PROGRAM_UNIFORM, 2 + n);
+			p[0] = id;
+			p[1] = o[i];
+			memcpy (&p[2], values + i, n * 4);
+			pgpu_end ();
+			i += n;
+		}
+	}
+}
+
+void pgpu_program_uniform1f (uint32_t id, const uint16_t *offsets, float value)
+{
+	pgpu_program_uniform (id, offsets, 1, &value);
+}
+
+void pgpu_program_sampler (uint32_t id, uint32_t sampler, uint32_t unit)
+{
+	uint32_t *p = pgpu_begin (PGPU_OP_PROGRAM_SAMPLER, 3);
+	p[0] = id;
+	p[1] = sampler;
+	p[2] = unit;
+	pgpu_end ();
+}
+
+void pgpu_texture_bind_unit (uint32_t unit, uint32_t texture)	{ cmd2 (PGPU_OP_TEXTURE_BIND_UNIT, unit, texture); }
+
+void pgpu_vertex_attrib (uint32_t index, float x, float y, float z, float w)
+{
+	uint32_t *p = pgpu_begin (PGPU_OP_VERTEX_ATTRIB, 5);
+	p[0] = index;
+	p[1] = f2u (x);
+	p[2] = f2u (y);
+	p[3] = f2u (z);
+	p[4] = f2u (w);
+	pgpu_end ();
+}
+
+void pgpu_attrib_array (uint32_t index, uint32_t buffer, uint32_t offset_bytes, uint32_t stride_bytes,
+			uint32_t size, uint32_t type)
+{
+	uint32_t *p = pgpu_begin (PGPU_OP_ATTRIB_ARRAY, 6);
+	p[0] = index;
+	p[1] = buffer;
+	p[2] = offset_bytes;
+	p[3] = stride_bytes;
+	p[4] = size;
+	p[5] = type;
+	pgpu_end ();
+}
+
+void pgpu_attribs_enable (uint32_t mask)			{ cmd1 (PGPU_OP_ATTRIBS_ENABLE, mask); }

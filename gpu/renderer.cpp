@@ -9,7 +9,7 @@
 
 #define PIN_FRAME		26
 
-#define BIN_CL_SIZE		(256 * 1024)
+#define BIN_CL_SIZE		(512 * 1024)
 #define RENDER_CL_SIZE		(16 * 1024)
 #define TILE_ALLOC_SIZE		(4 * 1024 * 1024)
 #define OVERFLOW_SIZE		(1 * 1024 * 1024)
@@ -35,6 +35,7 @@ CRenderer::CRenderer (CV3D *pV3D, CST7789DMADisplay *pDisplay)
 	m_nUniformWords (0),
 	m_nDropped (0)
 {
+	m_nRecordBytes = 0;
 	m_PinFrame.Write (LOW);
 }
 
@@ -59,6 +60,7 @@ boolean CRenderer::Initialize (void)
 	m_pBinCL = (u8 *) CV3D::Alloc (BIN_CL_SIZE);
 	m_pRenderCL = (u8 *) CV3D::Alloc (RENDER_CL_SIZE);
 	m_pRecords = (u8 *) CV3D::Alloc (MaxDraws * 16);
+	m_pRecordPool = (u8 *) CV3D::Alloc (RecordPoolBytes);
 	m_pVertexPool = (u8 *) CV3D::Alloc (VertexPoolBytes);
 	m_pUniformPool = (u32 *) CV3D::Alloc (UniformPoolWords * 4);
 	m_pTileAlloc = (u8 *) CV3D::Alloc (TILE_ALLOC_SIZE);
@@ -104,6 +106,7 @@ void CRenderer::AddTriangles (const TDrawSetup &rSetup, const float *pVertices, 
 
 	// merge with the previous draw if everything matches and the data is contiguous
 	boolean bMerge =    m_nDraws > 0
+			 && !m_pDraws[m_nDraws-1].bGL
 			 && m_pDraws[m_nDraws-1].nShader == rSetup.nShader
 			 && m_pDraws[m_nDraws-1].nConfigBits == rSetup.nConfigBits
 			 && m_pDraws[m_nDraws-1].nVertexOffset + m_pDraws[m_nDraws-1].nVertices * nStride
@@ -126,6 +129,7 @@ void CRenderer::AddTriangles (const TDrawSetup &rSetup, const float *pVertices, 
 	else
 	{
 		TDraw &Draw = m_pDraws[m_nDraws++];
+		Draw.bGL = FALSE;
 		Draw.nShader = rSetup.nShader;
 		Draw.nConfigBits = rSetup.nConfigBits;
 		Draw.nUniformOffset = m_nUniformWords;
@@ -155,15 +159,75 @@ void CRenderer::AddTriangles (const TDrawSetup &rSetup, const float *pVertices, 
 	m_nVertexBytes += nVertices * nStride;
 }
 
+boolean CRenderer::AddGLDraw (const TGLDraw &rDraw)
+{
+	if (m_nDraws >= MaxDraws)
+	{
+		m_nDropped += rDraw.nCount / 3;
+		return FALSE;
+	}
+
+	TDraw &Draw = m_pDraws[m_nDraws++];
+	Draw.bGL = TRUE;
+	Draw.GL = rDraw;
+	Draw.nConfigBits = rDraw.nConfigBits;
+
+	return TRUE;
+}
+
+u8 *CRenderer::AllocRecord (unsigned nBytes, u32 *pBus)
+{
+	unsigned nOffset = (m_nRecordBytes + 15) & ~15;
+	if (nOffset + nBytes > RecordPoolBytes)
+	{
+		return nullptr;
+	}
+	m_nRecordBytes = nOffset + nBytes;
+
+	*pBus = CV3D::BusAddress (m_pRecordPool + nOffset);
+	return m_pRecordPool + nOffset;
+}
+
+u32 *CRenderer::AllocUniforms (unsigned nWords, u32 *pBus)
+{
+	if (m_nUniformWords + nWords > UniformPoolWords)
+	{
+		return nullptr;
+	}
+	u32 *p = m_pUniformPool + m_nUniformWords;
+	m_nUniformWords += nWords;
+
+	*pBus = CV3D::BusAddress (p);
+	return p;
+}
+
+u8 *CRenderer::AllocData (unsigned nBytes, u32 *pBus)
+{
+	unsigned nOffset = (m_nVertexBytes + 15) & ~15;
+	if (nOffset + nBytes > VertexPoolBytes)
+	{
+		return nullptr;
+	}
+	m_nVertexBytes = nOffset + nBytes;
+
+	*pBus = CV3D::BusAddress (m_pVertexPool + nOffset);
+	return m_pVertexPool + nOffset;
+}
+
 boolean CRenderer::EndFrame (boolean bClear, u32 nClearColor, float fClearDepth, TRenderStats *pStats)
 {
 	CV3D::Flush (m_pVertexPool, m_nVertexBytes);
 	CV3D::Flush (m_pUniformPool, m_nUniformWords * 4);
+	CV3D::Flush (m_pRecordPool, m_nRecordBytes);
 
-	// shader state records, one per draw
+	// NV shader state records, one per draw
 	for (unsigned i = 0; i < m_nDraws; i++)
 	{
 		const TDraw &Draw = m_pDraws[i];
+		if (Draw.bGL)
+		{
+			continue;
+		}
 		CControlList Rec (m_pRecords + i * 16, 16);
 		Rec.Add8 (0x01);				// fragment shader single threaded
 		Rec.Add8 (NVStride (Draw.nShader));
@@ -199,6 +263,7 @@ boolean CRenderer::EndFrame (boolean bClear, u32 nClearColor, float fClearDepth,
 
 	unsigned nTriangles = 0;
 	u32 nLastConfig = 0xFFFFFFFF;
+	boolean bNVViewport = TRUE;		// clip window and viewport offset for NV draws
 	for (unsigned i = 0; i < m_nDraws; i++)
 	{
 		const TDraw &Draw = m_pDraws[i];
@@ -210,6 +275,67 @@ boolean CRenderer::EndFrame (boolean bClear, u32 nClearColor, float fClearDepth,
 			Bin.Add8 ((Draw.nConfigBits >> 8) & 0xFF);
 			Bin.Add8 ((Draw.nConfigBits >> 16) & 0xFF);
 			nLastConfig = Draw.nConfigBits;
+		}
+
+		if (Draw.bGL)
+		{
+			const TGLDraw &G = Draw.GL;
+
+			Bin.Add8 (V3D_CLIP_WINDOW);
+			Bin.Add16 (G.nClipX);
+			Bin.Add16 (G.nClipY);
+			Bin.Add16 (G.nClipWidth);
+			Bin.Add16 (G.nClipHeight);
+
+			Bin.Add8 (V3D_VIEWPORT_OFFSET);		// 12.4 fixed point
+			Bin.Add16 ((u16) (s16) (G.fCentreX * 16.0f));
+			Bin.Add16 ((u16) (s16) (G.fCentreY * 16.0f));
+
+			Bin.Add8 (V3D_CLIPPER_XY_SCALING);	// in 1/16 pixel
+			Bin.AddFloat (G.fHalfWidth * 16.0f);
+			Bin.AddFloat (-G.fHalfHeight * 16.0f);	// y down
+
+			Bin.Add8 (V3D_CLIPPER_Z_SCALE_OFFSET);
+			Bin.AddFloat (G.fZScale);
+			Bin.AddFloat (G.fZOffset);
+
+			Bin.Add8 (V3D_GL_SHADER_STATE);		// record address | attribute arrays (8 = 0)
+			Bin.Add32 (G.nRecordBus | (G.nAttributes & 7));
+
+			if (G.bIndexed)
+			{
+				Bin.Add8 (V3D_INDEXED_PRIMITIVE_LIST);
+				Bin.Add8 (G.nMode | G.nIndexType << 4);
+				Bin.Add32 (G.nCount);
+				Bin.Add32 (G.nIndexBus);
+				Bin.Add32 (G.nMaxIndex);
+			}
+			else
+			{
+				Bin.Add8 (V3D_VERTEX_ARRAY_PRIMITIVES);
+				Bin.Add8 (G.nMode);
+				Bin.Add32 (G.nCount);
+				Bin.Add32 (0);			// first vertex: in the attribute addresses
+			}
+
+			nTriangles += G.nMode >= 4 ? (G.nMode == 4 ? G.nCount / 3 : G.nCount - 2) : 0;
+			bNVViewport = FALSE;
+			continue;
+		}
+
+		if (!bNVViewport)
+		{
+			Bin.Add8 (V3D_CLIP_WINDOW);
+			Bin.Add16 (0);
+			Bin.Add16 (0);
+			Bin.Add16 (m_nWidth);
+			Bin.Add16 (m_nHeight);
+
+			Bin.Add8 (V3D_VIEWPORT_OFFSET);
+			Bin.Add16 (0);
+			Bin.Add16 (0);
+
+			bNVViewport = TRUE;
 		}
 
 		Bin.Add8 (V3D_NV_SHADER_STATE);
@@ -318,6 +444,7 @@ boolean CRenderer::EndFrame (boolean bClear, u32 nClearColor, float fClearDepth,
 	m_nDraws = 0;
 	m_nVertexBytes = 0;
 	m_nUniformWords = 0;
+	m_nRecordBytes = 0;
 	m_nDropped = 0;
 
 	return bOK;
@@ -328,6 +455,7 @@ void CRenderer::DiscardFrame (void)
 	m_nDraws = 0;
 	m_nVertexBytes = 0;
 	m_nUniformWords = 0;
+	m_nRecordBytes = 0;
 	m_nDropped = 0;
 }
 

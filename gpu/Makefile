@@ -1,6 +1,6 @@
 CIRCLEHOME = ../circle
 
-OBJS = main.o kernel.o receiver.o commands.o geometry.o textures.o renderer.o \
+OBJS = main.o kernel.o receiver.o commands.o geometry.o textures.o programs.o renderer.o \
        ../drivers/v3d.o ../drivers/st7789dma.o ../devtools/devlink.o
 
 LIBS = $(CIRCLEHOME)/lib/usb/libusb.a \

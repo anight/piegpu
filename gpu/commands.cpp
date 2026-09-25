@@ -4,6 +4,7 @@
 #include "commands.h"
 #include <pgpu_protocol.h>
 #include <circle/logger.h>
+#include <v3d.h>
 #include <circle/util.h>
 #include <assert.h>
 
@@ -11,9 +12,29 @@ LOGMODULE ("commands");
 
 #define VARIABLE		0xFFFF
 
+// V3D configuration bits (first three bytes of the CONFIGURATION_BITS record)
+#define CFG_FORWARD		(1 << 0)
+#define CFG_REVERSE		(1 << 1)
+#define CFG_CLOCKWISE		(1 << 2)	// clockwise primitives are forward facing
+#define CFG_DEPTH_FUNC__SHIFT	12
+#define CFG_Z_UPDATE		(1 << 15)
+
+// GL shader record (VideoCore IV 3D reference guide; Mesa vc4 SHADER_RECORD)
+#define SHADER_RECORD_BYTES	36
+#define ATTRIBUTE_RECORD_BYTES	8
+#define SR_FS_SINGLE_THREADED	(1 << 0)
+#define SR_POINT_SIZE		(1 << 1)
+#define SR_ENABLE_CLIPPING	(1 << 2)
+
+#define MAX_PROGRAM_VERTICES	65535
+
 // array component types (docs/protocol.md 10.5)
-enum { TYPE_FLOAT, TYPE_SHORT, TYPE_SHORT_NORM, TYPE_UBYTE_NORM, TYPE_BYTE_NORM, TYPES };
-static const unsigned TypeBytes[TYPES] = {4, 2, 2, 1, 1};
+enum
+{
+	TYPE_FLOAT, TYPE_SHORT, TYPE_SHORT_NORM, TYPE_UBYTE_NORM, TYPE_BYTE_NORM,
+	TYPE_UBYTE, TYPE_BYTE, TYPE_USHORT, TYPE_USHORT_NORM, TYPES
+};
+static const unsigned TypeBytes[TYPES] = {4, 2, 2, 1, 1, 1, 1, 2, 2};
 
 static float AsFloat (u32 nWord)
 {
@@ -65,9 +86,51 @@ static float Component (const u8 *p, u32 nType)
 	case TYPE_UBYTE_NORM:
 		return p[0] / 255.0f;
 
-	default: {
+	case TYPE_BYTE_NORM: {
 		float f = (s8) p[0] / 127.0f;
 		return f < -1.0f ? -1.0f : f;
+		}
+
+	case TYPE_UBYTE:
+		return p[0];
+
+	case TYPE_BYTE:
+		return (s8) p[0];
+
+	case TYPE_USHORT:
+		return (u16) (p[0] | p[1] << 8);
+
+	default:
+		return (u16) (p[0] | p[1] << 8) / 65535.0f;
+	}
+}
+
+// a generic attribute's current value in an array format (little endian)
+static void ConvertValue (const float *pValue, u32 nType, unsigned nSize, u8 *pOut)
+{
+	for (unsigned c = 0; c < nSize; c++)
+	{
+		float f = pValue[c];
+		float n = f < -1.0f ? -1.0f : f > 1.0f ? 1.0f : f;
+		float u = f < 0.0f ? 0.0f : f > 1.0f ? 1.0f : f;
+		s32 v;
+		switch (nType)
+		{
+		case TYPE_FLOAT:	memcpy (pOut + 4 * c, &f, 4);	continue;
+		case TYPE_SHORT:	v = (s32) f;			break;
+		case TYPE_SHORT_NORM:	v = (s32) (n * 32767.0f);	break;
+		case TYPE_UBYTE_NORM:	v = (s32) (u * 255.0f + 0.5f);	break;
+		case TYPE_BYTE_NORM:	v = (s32) (n * 127.0f);		break;
+		case TYPE_UBYTE:
+		case TYPE_BYTE:
+		case TYPE_USHORT:	v = (s32) f;			break;
+		default:		v = (s32) (u * 65535.0f + 0.5f); break;
+		}
+
+		unsigned nBytes = TypeBytes[nType];
+		for (unsigned b = 0; b < nBytes; b++)
+		{
+			pOut[nBytes * c + b] = (u8) (v >> (8 * b));
 		}
 	}
 }
@@ -77,6 +140,8 @@ CCommands::CCommands (CRenderer *pRenderer, CReceiver *pReceiver)
 	m_pReceiver (pReceiver),
 	m_Geometry (pRenderer, &m_Textures),
 	m_nBufferBytes (0),
+	m_nRetiredBuffers (0),
+	m_nProgram (0),
 	m_nClearColor (PGPU_RGBA (0, 0, 0, 255)),
 	m_fClearDepth (1.0f),
 	m_nFrameNumber (0),
@@ -105,8 +170,15 @@ void CCommands::Reset (void)
 		BufferDelete (i);
 	}
 	m_Textures.Reset ();
+	m_Programs.Reset ();
 	m_pRenderer->DiscardFrame ();
 	m_Textures.EndFrame ();
+	m_Programs.EndFrame ();
+	for (unsigned i = 0; i < m_nRetiredBuffers; i++)
+	{
+		delete [] m_RetiredBuffers[i];
+	}
+	m_nRetiredBuffers = 0;
 
 	DefaultState ();
 	m_bFrameHasDraw = FALSE;
@@ -163,6 +235,15 @@ void CCommands::DefaultState (void)
 
 	memset (m_Arrays, 0, sizeof m_Arrays);
 	m_nArraysEnabled = 0;
+
+	m_nProgram = 0;
+	memset (m_Generic, 0, sizeof m_Generic);
+	m_nGenericEnabled = 0;
+	for (unsigned i = 0; i < PGPU_MAX_ATTRIBUTES; i++)
+	{
+		Set4 (m_GenericValue[i], 0, 0, 0, 1);
+	}
+	memset (m_TextureUnit, 0, sizeof m_TextureUnit);
 }
 
 void CCommands::SendInfo (void)
@@ -203,6 +284,11 @@ void CCommands::Execute (u32 nHeader, const u32 *pPayload)
 		{PGPU_OP_COLOR, 1}, {PGPU_OP_NORMAL, 3}, {PGPU_OP_TEXCOORD, 2},
 		{PGPU_OP_ARRAY, 6}, {PGPU_OP_ARRAYS_ENABLE, 1}, {PGPU_OP_DRAW_ARRAYS, 3},
 		{PGPU_OP_DRAW_ELEMENTS, 5}, {PGPU_OP_DRAW_INLINE, VARIABLE},
+		{PGPU_OP_PROGRAM_CREATE, 2}, {PGPU_OP_PROGRAM_DATA, VARIABLE},
+		{PGPU_OP_PROGRAM_DELETE, 1}, {PGPU_OP_USE_PROGRAM, 1},
+		{PGPU_OP_PROGRAM_UNIFORM, VARIABLE}, {PGPU_OP_PROGRAM_SAMPLER, 3},
+		{PGPU_OP_TEXTURE_BIND_UNIT, 2}, {PGPU_OP_VERTEX_ATTRIB, 5},
+		{PGPU_OP_ATTRIB_ARRAY, 6}, {PGPU_OP_ATTRIBS_ENABLE, 1},
 	};
 
 	boolean bKnown = FALSE;
@@ -356,6 +442,24 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 			return PGPU_ERR_ID;
 		}
 		S.nBoundTexture = p[0];
+		m_TextureUnit[0] = p[0];
+		break;
+
+	case PGPU_OP_TEXTURE_BIND_UNIT:
+		if (p[0] >= PGPU_MAX_TEXTURE_UNITS)
+		{
+			return PGPU_ERR_LIMIT;
+		}
+		if (p[1] > CTextures::MaxTextures)
+		{
+			*pDetail = p[1];
+			return PGPU_ERR_ID;
+		}
+		m_TextureUnit[p[0]] = p[1];
+		if (p[0] == 0)
+		{
+			S.nBoundTexture = p[1];
+		}
 		break;
 
 	case PGPU_OP_TEX_ENV:
@@ -539,13 +643,106 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 		break;
 
 	case PGPU_OP_DRAW_ARRAYS:
+		if (m_nProgram)
+		{
+			return ProgramDraw (p[0], p[1], p[2], FALSE, 0, 0, 0, pDetail);
+		}
 		return DrawArrays (p[0], p[1], p[2]);
 
 	case PGPU_OP_DRAW_ELEMENTS:
+		if (m_nProgram)
+		{
+			return ProgramDraw (p[0], 0, p[1], TRUE, p[2], p[3], p[4], pDetail);
+		}
 		return DrawElements (p[0], p[1], p[2], p[3], p[4]);
 
 	case PGPU_OP_DRAW_INLINE:
+		if (m_nProgram)
+		{
+			return PGPU_ERR_ENUM;		// not with programs
+		}
 		return DrawInline (p, nLength);
+
+	// programs
+
+	case PGPU_OP_PROGRAM_CREATE:
+		*pDetail = p[0];
+		return m_Programs.Create (p[0], p[1]);
+
+	case PGPU_OP_PROGRAM_DATA:
+		if (nLength < 2)
+		{
+			return PGPU_ERR_LENGTH;
+		}
+		*pDetail = p[0];
+		return m_Programs.Data (p[0], p[1], p + 2, nLength - 2, pDetail);
+
+	case PGPU_OP_PROGRAM_DELETE:
+		*pDetail = p[0];
+		if (p[0] == m_nProgram)
+		{
+			m_nProgram = 0;
+		}
+		return m_Programs.Delete (p[0]);
+
+	case PGPU_OP_USE_PROGRAM:
+		if (p[0] != 0 && !m_Programs.Get (p[0]))
+		{
+			*pDetail = p[0];
+			return p[0] > CPrograms::MaxPrograms ? PGPU_ERR_ID : PGPU_ERR_OBJECT;
+		}
+		m_nProgram = p[0];
+		break;
+
+	case PGPU_OP_PROGRAM_UNIFORM:
+		if (nLength < 2)
+		{
+			return PGPU_ERR_LENGTH;
+		}
+		*pDetail = p[0];
+		return m_Programs.Uniform (p[0], p[1], p + 2, nLength - 2);
+
+	case PGPU_OP_PROGRAM_SAMPLER:
+		*pDetail = p[0];
+		return m_Programs.Sampler (p[0], p[1], p[2]);
+
+	case PGPU_OP_VERTEX_ATTRIB:
+		if (p[0] >= PGPU_MAX_ATTRIBUTES)
+		{
+			return PGPU_ERR_LIMIT;
+		}
+		memcpy (m_GenericValue[p[0]], p + 1, 4 * sizeof (float));
+		break;
+
+	case PGPU_OP_ATTRIB_ARRAY: {
+		if (p[0] >= PGPU_MAX_ATTRIBUTES)
+		{
+			return PGPU_ERR_LIMIT;
+		}
+		if (p[4] < 1 || p[4] > 4 || p[5] >= TYPES)
+		{
+			return PGPU_ERR_ENUM;
+		}
+		if (p[1] > MaxBuffers)
+		{
+			*pDetail = p[1];
+			return PGPU_ERR_ID;
+		}
+		TGenericArray &A = m_Generic[p[0]];
+		A.nBuffer = p[1];
+		A.nOffset = p[2];
+		A.nStride = p[3];
+		A.nSize = p[4];
+		A.nType = p[5];
+		} break;
+
+	case PGPU_OP_ATTRIBS_ENABLE:
+		if (p[0] >> PGPU_MAX_ATTRIBUTES)
+		{
+			return PGPU_ERR_ENUM;
+		}
+		m_nGenericEnabled = p[0];
+		break;
 	}
 
 	return 0;
@@ -572,12 +769,15 @@ u32 CCommands::BufferCreate (u32 nId, unsigned nSize)
 		return PGPU_ERR_MEMORY;
 	}
 	B.nSize = nSize;
+	B.bUsed = FALSE;
 	m_nBufferBytes += nSize;
 
 	return 0;
 }
 
-// vertex data is consumed at draw time, so no copy-on-write is needed
+// The fixed-function pipeline reads vertex data at draw time, but the V3D reads
+// the buffers of program draws when the frame renders: a buffer used by a
+// program draw of the current frame gets new storage (copy-on-write).
 u32 CCommands::BufferData (const u32 *p, unsigned nLength)
 {
 	if (nLength < 3)
@@ -606,9 +806,35 @@ u32 CCommands::BufferData (const u32 *p, unsigned nLength)
 		return PGPU_ERR_LIMIT;
 	}
 
+	if (B.bUsed)
+	{
+		u8 *pNew = new u8[B.nSize ? B.nSize : 4];
+		if (!pNew)
+		{
+			return PGPU_ERR_MEMORY;
+		}
+		memcpy (pNew, B.pData, B.nSize);
+		RetireBuffer (&B);
+		B.pData = pNew;
+		CV3D::Flush (B.pData, B.nSize);
+	}
+
 	memcpy (B.pData + nOffset, p + 3, nBytes);
+	CV3D::Flush (B.pData + nOffset, nBytes);	// the V3D reads it
 
 	return 0;
+}
+
+void CCommands::RetireBuffer (TBuffer *pBuffer)
+{
+	if (m_nRetiredBuffers < MaxRetiredBuffers)
+	{
+		m_RetiredBuffers[m_nRetiredBuffers++] = pBuffer->pData;
+	}
+	// else: too many in one frame, leak rather than corrupt
+
+	pBuffer->pData = nullptr;
+	pBuffer->bUsed = FALSE;
 }
 
 u32 CCommands::BufferDelete (u32 nId)
@@ -619,8 +845,15 @@ u32 CCommands::BufferDelete (u32 nId)
 		return PGPU_ERR_OBJECT;
 	}
 
-	delete [] B.pData;
-	B.pData = nullptr;
+	if (B.bUsed)
+	{
+		RetireBuffer (&B);
+	}
+	else
+	{
+		delete [] B.pData;
+		B.pData = nullptr;
+	}
 	m_nBufferBytes -= B.nSize;
 	B.nSize = 0;
 
@@ -864,6 +1097,16 @@ void CCommands::EndFrame (u32 nFlags)
 		LOGERR ("V3D job failed");
 	}
 	m_Textures.EndFrame ();
+	m_Programs.EndFrame ();
+	for (unsigned i = 0; i < m_nRetiredBuffers; i++)
+	{
+		delete [] m_RetiredBuffers[i];
+	}
+	m_nRetiredBuffers = 0;
+	for (unsigned i = 1; i <= MaxBuffers; i++)
+	{
+		m_Buffers[i].bUsed = FALSE;
+	}
 
 	m_nFrameNumber++;
 	m_nTotalFrames++;
@@ -912,4 +1155,370 @@ TCommandStats CCommands::GetStats (void)
 	memset (&m_Stats, 0, sizeof m_Stats);
 
 	return Stats;
+}
+
+// ---- programs (docs/protocol.md 7.10) ---------------------------------------
+
+u32 CCommands::ConfigBits (boolean bFaces) const
+{
+	const TGLState &S = m_State;
+	u32 nBits = CFG_FORWARD | CFG_REVERSE;
+
+	if (bFaces)
+	{
+		// the panel's y axis points down, so GL's CCW appears clockwise on screen
+		if (S.nFrontFace == PGPU_CCW)
+		{
+			nBits |= CFG_CLOCKWISE;
+		}
+		if (S.nEnables & PGPU_CAP_CULL_FACE)
+		{
+			if (S.nCullFace == PGPU_BACK || S.nCullFace == PGPU_FRONT_AND_BACK)
+				nBits &= ~CFG_REVERSE;
+			if (S.nCullFace == PGPU_FRONT || S.nCullFace == PGPU_FRONT_AND_BACK)
+				nBits &= ~CFG_FORWARD;
+		}
+	}
+
+	if (S.nEnables & PGPU_CAP_DEPTH_TEST)
+	{
+		nBits |= S.nDepthFunc << CFG_DEPTH_FUNC__SHIFT;
+		if (S.bDepthMask)
+		{
+			nBits |= CFG_Z_UPDATE;
+		}
+	}
+	else
+	{
+		nBits |= PGPU_ALWAYS << CFG_DEPTH_FUNC__SHIFT;	// no test, no depth writes
+	}
+
+	return nBits;
+}
+
+// the blend mode compiled into the fragment shader, ~0 if none matches
+u32 CCommands::BlendMode (void) const
+{
+	const TGLState &S = m_State;
+	if (!(S.nEnables & PGPU_CAP_BLEND))
+	{
+		return PGPU_BLEND_NONE;
+	}
+
+	static const struct { u8 uchSrc, uchDst, uchMode; } Modes[] =
+	{
+		{PGPU_ONE, PGPU_ZERO, PGPU_BLEND_NONE},
+		{PGPU_SRC_ALPHA, PGPU_ONE_MINUS_SRC_ALPHA, PGPU_BLEND_ALPHA},
+		{PGPU_ONE, PGPU_ONE, PGPU_BLEND_ADD},
+		{PGPU_ONE, PGPU_ONE_MINUS_SRC_ALPHA, PGPU_BLEND_PREMUL},
+		{PGPU_DST_COLOR, PGPU_ZERO, PGPU_BLEND_MULTIPLY},
+	};
+	for (auto &M : Modes)
+	{
+		if (S.nBlendSrc == M.uchSrc && S.nBlendDst == M.uchDst)
+		{
+			return M.uchMode;
+		}
+	}
+
+	return ~0U;
+}
+
+// viewport transform and clip window, in panel pixels with y down
+boolean CCommands::GetViewport (TViewport *pVP) const
+{
+	const TGLState &S = m_State;
+	float fHeight = m_pRenderer->GetHeight ();
+
+	pVP->fHalfWidth = S.ViewportW * 0.5f;
+	pVP->fHalfHeight = S.ViewportH * 0.5f;
+	pVP->fCentreX = S.ViewportX + pVP->fHalfWidth;
+	pVP->fCentreY = fHeight - (S.ViewportY + pVP->fHalfHeight);
+	pVP->fZScale = (S.DepthFar - S.DepthNear) * 0.5f;
+	pVP->fZOffset = (S.DepthFar + S.DepthNear) * 0.5f;
+
+	// the hardware clips against a guard band: clip the rendering to the
+	// viewport (and the panel)
+	s32 x0 = (s32) S.ViewportX, x1 = (s32) (S.ViewportX + S.ViewportW);
+	s32 y0 = (s32) (fHeight - (S.ViewportY + S.ViewportH)), y1 = (s32) (fHeight - S.ViewportY);
+	s32 w = m_pRenderer->GetWidth (), h = (s32) fHeight;
+	if (x0 < 0) x0 = 0;
+	if (y0 < 0) y0 = 0;
+	if (x1 > w) x1 = w;
+	if (y1 > h) y1 = h;
+	if (x1 <= x0 || y1 <= y0)
+	{
+		return FALSE;
+	}
+	pVP->nClipX = x0;
+	pVP->nClipY = y0;
+	pVP->nClipWidth = x1 - x0;
+	pVP->nClipHeight = y1 - y0;
+
+	return TRUE;
+}
+
+// resolve a shader's uniform stream into the frame's uniform pool
+u32 *CCommands::BuildUniforms (const TProgram *pProgram, const TProgramShader *pShader,
+			       const TViewport &rVP, u32 *pBus)
+{
+	u32 *pStream = m_pRenderer->AllocUniforms (pShader->nUniforms ? pShader->nUniforms : 1, pBus);
+	if (!pStream)
+	{
+		return nullptr;
+	}
+
+	for (unsigned i = 0; i < pShader->nUniforms; i++)
+	{
+		u32 nKind = pShader->pUniforms[2 * i];
+		u32 nData = pShader->pUniforms[2 * i + 1];
+		u32 nValue = 0;
+		float f;
+
+		switch (nKind)
+		{
+		case PGPU_U_CONSTANT:		nValue = nData; break;
+		case PGPU_U_UNIFORM:		nValue = pProgram->pUniforms[nData]; break;
+		case PGPU_U_VIEWPORT_X_SCALE:	f = rVP.fHalfWidth * 16.0f; memcpy (&nValue, &f, 4); break;
+		case PGPU_U_VIEWPORT_Y_SCALE:	f = -rVP.fHalfHeight * 16.0f; memcpy (&nValue, &f, 4); break;
+		case PGPU_U_VIEWPORT_Z_OFFSET:	memcpy (&nValue, &rVP.fZOffset, 4); break;
+		case PGPU_U_VIEWPORT_Z_SCALE:	memcpy (&nValue, &rVP.fZScale, 4); break;
+		case PGPU_U_UNIFORMS_ADDRESS:	nValue = *pBus; break;
+
+		case PGPU_U_TEXTURE_CONFIG_P0:
+		case PGPU_U_TEXTURE_CONFIG_P1: {
+			u32 P0, P1;
+			u32 nTexture = m_TextureUnit[pProgram->SamplerUnit[nData]];
+			if (!m_Textures.Use (nTexture, &P0, &P1))
+			{
+				m_Textures.UseFallback (&P0, &P1);	// reads (0, 0, 0, 1)
+			}
+			nValue = nKind == PGPU_U_TEXTURE_CONFIG_P0 ? P0 : P1;
+			} break;
+
+		default:			// P2 (cube maps only), first level
+			nValue = 0;
+			break;
+		}
+
+		pStream[i] = nValue;
+	}
+
+	return pStream;
+}
+
+u32 CCommands::ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
+			   boolean bIndexed, u32 nIndexType, u32 nIndexBuffer, unsigned nIndexOffset,
+			   u32 *pDetail)
+{
+	TProgram *pProgram = m_Programs.Get (m_nProgram);
+	if (!pProgram)
+	{
+		*pDetail = m_nProgram;
+		return PGPU_ERR_OBJECT;
+	}
+	if (nMode > PGPU_TRIANGLE_FAN || (bIndexed && nIndexType > 1))
+	{
+		return PGPU_ERR_ENUM;
+	}
+	if (nCount > MAX_PROGRAM_VERTICES)
+	{
+		return PGPU_ERR_LIMIT;
+	}
+	if ((m_State.nColorMask & 0xF) != 0xF)
+	{
+		*pDetail = 1;
+		return PGPU_ERR_PROGRAM;
+	}
+
+	unsigned nPrim =   nMode == PGPU_POINTS ? PGPU_PRIM_POINTS
+			 : nMode <= PGPU_LINE_STRIP ? PGPU_PRIM_LINES : PGPU_PRIM_TRIANGLES;
+	u32 nBlend = BlendMode ();
+	const TProgramVariant *pVariant = nBlend == ~0U ? nullptr
+					  : CPrograms::FindVariant (pProgram, nPrim, nBlend);
+	if (!pVariant)
+	{
+		*pDetail = 2;
+		return PGPU_ERR_PROGRAM;
+	}
+
+	if (nCount == 0)
+	{
+		return 0;
+	}
+
+	TViewport VP;
+	if (!GetViewport (&VP))
+	{
+		return 0;			// nothing visible
+	}
+
+	// shader record and attribute records
+	unsigned nAttributes = pProgram->nAttributes;
+	u32 nRecordBus;
+	u8 *pRecord = m_pRenderer->AllocRecord (SHADER_RECORD_BYTES + nAttributes * ATTRIBUTE_RECORD_BYTES,
+						&nRecordBus);
+	if (!pRecord)
+	{
+		return PGPU_ERR_MEMORY;
+	}
+
+	u32 nMaxIndex = 0xFFFF;
+	u8 *pAttribute = pRecord + SHADER_RECORD_BYTES;
+	for (unsigned i = 0; i < nAttributes; i++, pAttribute += ATTRIBUTE_RECORD_BYTES)
+	{
+		u32 nType = PGPU_ATTR_TYPE (pProgram->Attributes[i]);
+		unsigned nSize = PGPU_ATTR_SIZE (pProgram->Attributes[i]);
+		unsigned nBytes = nSize * TypeBytes[nType];
+		u32 nAddress;
+		unsigned nStride;
+
+		if (m_nGenericEnabled & (1 << i))
+		{
+			const TGenericArray &A = m_Generic[i];
+			TBuffer &B = m_Buffers[A.nBuffer];
+			if (A.nBuffer == 0 || !B.pData)
+			{
+				*pDetail = A.nBuffer;
+				return PGPU_ERR_OBJECT;
+			}
+			if (A.nType != nType || A.nSize != nSize)
+			{
+				*pDetail = i;
+				return PGPU_ERR_ENUM;	// not the format the program was compiled for
+			}
+			nStride = A.nStride ? A.nStride : nBytes;
+			if (nStride > 255 || A.nOffset > B.nSize || nBytes > B.nSize - A.nOffset)
+			{
+				return PGPU_ERR_LIMIT;
+			}
+
+			unsigned nLast = (B.nSize - A.nOffset - nBytes) / nStride;	// last vertex in the buffer
+			if (bIndexed)
+			{
+				if (nLast < nMaxIndex)
+				{
+					nMaxIndex = nLast;
+				}
+				nAddress = CV3D::BusAddress (B.pData + A.nOffset);
+			}
+			else
+			{
+				if (nFirst + nCount - 1 > nLast)
+				{
+					return PGPU_ERR_LIMIT;
+				}
+				// the first vertex goes into the address (GFXH-515: the
+				// binner's vertex indices are 16 bits)
+				nAddress = CV3D::BusAddress (B.pData + A.nOffset + nFirst * nStride);
+			}
+			B.bUsed = TRUE;
+		}
+		else
+		{
+			// the current value, in the program's format
+			u8 *pData = m_pRenderer->AllocData (16, &nAddress);
+			if (!pData)
+			{
+				return PGPU_ERR_MEMORY;
+			}
+			memset (pData, 0, 16);
+			ConvertValue (m_GenericValue[i], nType, nSize, pData);
+			nStride = 0;
+		}
+
+		CControlList Rec (pAttribute, ATTRIBUTE_RECORD_BYTES);
+		Rec.Add32 (nAddress);
+		Rec.Add8 (nBytes - 1);
+		Rec.Add8 (nStride);
+		Rec.Add8 (pVariant->pVS->VattrOffsets[i]);
+		Rec.Add8 (pVariant->pCS->VattrOffsets[i]);
+	}
+
+	u32 nIndexBus = 0;
+	if (bIndexed)
+	{
+		if (nIndexBuffer < 1 || nIndexBuffer > MaxBuffers)
+		{
+			*pDetail = nIndexBuffer;
+			return PGPU_ERR_ID;
+		}
+		TBuffer &B = m_Buffers[nIndexBuffer];
+		if (!B.pData)
+		{
+			*pDetail = nIndexBuffer;
+			return PGPU_ERR_OBJECT;
+		}
+		unsigned nIndexBytes = nIndexType ? 2 : 1;
+		if (   (nIndexOffset & (nIndexBytes - 1))
+		    || (u64) nIndexOffset + (u64) nCount * nIndexBytes > B.nSize)
+		{
+			return PGPU_ERR_LIMIT;
+		}
+		nIndexBus = CV3D::BusAddress (B.pData + nIndexOffset);
+		B.bUsed = TRUE;
+	}
+
+	// uniform streams
+	u32 nFSUniforms, nVSUniforms, nCSUniforms;
+	if (   !BuildUniforms (pProgram, pVariant->pFS, VP, &nFSUniforms)
+	    || !BuildUniforms (pProgram, pVariant->pVS, VP, &nVSUniforms)
+	    || !BuildUniforms (pProgram, pVariant->pCS, VP, &nCSUniforms))
+	{
+		return PGPU_ERR_MEMORY;
+	}
+
+	u32 nFSInfo = pVariant->pFS->nInfo;
+	u32 nVSInfo = pVariant->pVS->nInfo;
+	u32 nCSInfo = pVariant->pCS->nInfo;
+	CControlList Rec (pRecord, SHADER_RECORD_BYTES);
+	Rec.Add16 (  (nFSInfo & PGPU_SH_FS_THREADED ? 0 : SR_FS_SINGLE_THREADED)
+		   | (pVariant->nKey & PGPU_VK_POINT_SIZE ? SR_POINT_SIZE : 0)
+		   | SR_ENABLE_CLIPPING);
+	Rec.Add8 (0);					// FS number of uniforms (unused)
+	Rec.Add8 (PGPU_SH_FS_VARYINGS (nFSInfo));
+	Rec.Add32 (pVariant->pFS->nCodeBus);
+	Rec.Add32 (nFSUniforms);
+	Rec.Add16 (0);					// VS number of uniforms (unused)
+	Rec.Add8 (PGPU_SH_ATTR_SELECT (nVSInfo));
+	Rec.Add8 (PGPU_SH_ATTR_SIZE (nVSInfo));
+	Rec.Add32 (pVariant->pVS->nCodeBus);
+	Rec.Add32 (nVSUniforms);
+	Rec.Add16 (0);					// CS number of uniforms (unused)
+	Rec.Add8 (PGPU_SH_ATTR_SELECT (nCSInfo));
+	Rec.Add8 (PGPU_SH_ATTR_SIZE (nCSInfo));
+	Rec.Add32 (pVariant->pCS->nCodeBus);
+	Rec.Add32 (nCSUniforms);
+
+	TGLDraw G;
+	G.nConfigBits = ConfigBits (nPrim == PGPU_PRIM_TRIANGLES);
+	G.nRecordBus = nRecordBus;
+	G.nAttributes = nAttributes;
+	G.fCentreX = VP.fCentreX;
+	G.fCentreY = VP.fCentreY;
+	G.fHalfWidth = VP.fHalfWidth;
+	G.fHalfHeight = VP.fHalfHeight;
+	G.fZScale = VP.fZScale;
+	G.fZOffset = VP.fZOffset;
+	G.nClipX = VP.nClipX;
+	G.nClipY = VP.nClipY;
+	G.nClipWidth = VP.nClipWidth;
+	G.nClipHeight = VP.nClipHeight;
+	G.nMode = nMode;
+	G.bIndexed = bIndexed;
+	G.nCount = nCount;
+	G.nIndexBus = nIndexBus;
+	G.nIndexType = nIndexType;
+	G.nMaxIndex = nMaxIndex;
+
+	if (!m_pRenderer->AddGLDraw (G))
+	{
+		return PGPU_ERR_MEMORY;
+	}
+
+	m_Programs.Use (pProgram);
+	m_bFrameHasDraw = TRUE;
+	m_Stats.nProgramDraws++;
+
+	return 0;
 }

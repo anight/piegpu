@@ -12,6 +12,7 @@
 #include "textures.h"
 #include "geometry.h"
 #include "receiver.h"
+#include "programs.h"
 #include <circle/types.h>
 
 struct TCommandStats
@@ -21,6 +22,7 @@ struct TCommandStats
 	unsigned nErrors;
 	u32 nLastError;			// code << 8 | opcode
 	unsigned nDraws;		// renderer draw records
+	unsigned nProgramDraws;
 	unsigned nTriangles;		// rendered (after clipping, incl. line/point quads)
 	unsigned nPrimitives;		// submitted
 	unsigned nClipped;
@@ -56,6 +58,22 @@ private:
 	{
 		u8 *pData;			// nullptr: no such buffer
 		unsigned nSize;
+		boolean bUsed;			// read by the V3D in the current frame
+	};
+
+	struct TGenericArray
+	{
+		u32 nBuffer;
+		unsigned nOffset;
+		unsigned nStride;		// as given (0 = tightly packed)
+		unsigned nSize;
+		u32 nType;
+	};
+
+	struct TViewport
+	{
+		float fCentreX, fCentreY, fHalfWidth, fHalfHeight, fZScale, fZOffset;
+		unsigned nClipX, nClipY, nClipWidth, nClipHeight;
 	};
 
 	struct TArray
@@ -80,6 +98,15 @@ private:
 	u32 FetchVertices (unsigned nFirst, unsigned nCount);
 	u32 Draw (u32 nMode, unsigned nVertices, const u32 *pIndices, unsigned nCount);
 
+	u32 ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
+			 boolean bIndexed, u32 nIndexType, u32 nIndexBuffer, unsigned nIndexOffset,
+			 u32 *pDetail);
+	boolean GetViewport (TViewport *pViewport) const;
+	u32 *BuildUniforms (const TProgram *pProgram, const TProgramShader *pShader,
+			    const TViewport &rViewport, u32 *pBus);
+	u32 BlendMode (void) const;
+	u32 ConfigBits (boolean bFaces) const;
+	void RetireBuffer (TBuffer *pBuffer);
 	void EndFrame (u32 nFlags);
 
 	void DefaultInput (TInputVertex *pVertex) const;
@@ -99,6 +126,18 @@ private:
 
 	TArray m_Arrays[4];
 	u32 m_nArraysEnabled;
+
+	static const unsigned MaxRetiredBuffers = 64;
+	u8 *m_RetiredBuffers[MaxRetiredBuffers];
+	unsigned m_nRetiredBuffers;
+
+	// programs (GL ES 2.0 subset)
+	CPrograms m_Programs;
+	u32 m_nProgram;			// in use, 0 = fixed function
+	TGenericArray m_Generic[PGPU_MAX_ATTRIBUTES];
+	u32 m_nGenericEnabled;
+	float m_GenericValue[PGPU_MAX_ATTRIBUTES][4];
+	u32 m_TextureUnit[PGPU_MAX_TEXTURE_UNITS];	// unit 0 is also m_State.nBoundTexture
 
 	TInputVertex *m_pInput;			// vertex fetch buffer
 	u32 *m_pIndices;

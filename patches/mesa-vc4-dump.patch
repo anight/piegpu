@@ -1,0 +1,112 @@
+# pico-gpu: dump compiled vc4 shaders (code, uniform stream layout, values) when
+# PGPU_VC4_DUMP is set. For Mesa mesa-26.2.3; applied by tools/glslc/build-mesa.sh.
+
+diff --git a/src/gallium/drivers/vc4/vc4_context.h b/src/gallium/drivers/vc4/vc4_context.h
+index c5559b4..e07d3dc 100644
+--- a/src/gallium/drivers/vc4/vc4_context.h
++++ b/src/gallium/drivers/vc4/vc4_context.h
+@@ -176,6 +176,10 @@ struct vc4_compiled_shader {
+         uint8_t vattrs_live;
+ 
+         const struct vc4_fs_inputs *fs_inputs;
++
++        /* pico-gpu: copy of the code for the dump hook */
++        uint64_t *pgpu_code;
++        uint32_t pgpu_code_count;
+ };
+ 
+ struct vc4_program_stateobj {
+diff --git a/src/gallium/drivers/vc4/vc4_program.c b/src/gallium/drivers/vc4/vc4_program.c
+index d9d51f2..e018802 100644
+--- a/src/gallium/drivers/vc4/vc4_program.c
++++ b/src/gallium/drivers/vc4/vc4_program.c
+@@ -2694,6 +2694,13 @@ vc4_get_compiled_shader(struct vc4_context *vc4, enum qstage stage,
+                 shader->bo = vc4_bo_alloc_shader(vc4->screen, c->qpu_insts,
+                                                  c->qpu_inst_count *
+                                                  sizeof(uint64_t));
++
++                /* pico-gpu: keep the code for the dump hook (vc4_uniforms.c) */
++                shader->pgpu_code = ralloc_array(shader, uint64_t,
++                                                 c->qpu_inst_count);
++                memcpy(shader->pgpu_code, c->qpu_insts,
++                       c->qpu_inst_count * sizeof(uint64_t));
++                shader->pgpu_code_count = c->qpu_inst_count;
+         }
+ 
+         shader->fs_threaded = c->fs_threaded;
+diff --git a/src/gallium/drivers/vc4/vc4_uniforms.c b/src/gallium/drivers/vc4/vc4_uniforms.c
+index f63bbcd..8ab0104 100644
+--- a/src/gallium/drivers/vc4/vc4_uniforms.c
++++ b/src/gallium/drivers/vc4/vc4_uniforms.c
+@@ -187,6 +187,54 @@ get_texrect_scale(struct vc4_texture_stateobj *texstate,
+         return fui(1.0f / dim);
+ }
+ 
++
++/* pico-gpu: dump each compiled shader used by a draw (code, uniform stream
++ * layout and the values written for it) when PGPU_VC4_DUMP names a file.
++ * Used by pico-gpu/tools/glslc to precompile programs offline.
++ */
++#include <stdio.h>
++#include <stdlib.h>
++
++static void
++pgpu_dump_shader(struct vc4_context *vc4, struct vc4_compiled_shader *shader,
++                 const uint32_t *values)
++{
++        const char *path = getenv("PGPU_VC4_DUMP");
++        if (!path)
++                return;
++        FILE *f = fopen(path, "a");
++        if (!f)
++                return;
++
++        const char *stage = shader == vc4->prog.fs ? "fs" :
++                            shader == vc4->prog.vs ? "vs" :
++                            shader == vc4->prog.cs ? "cs" : "?";
++        fprintf(f, "{\"stage\": \"%s\", \"id\": %llu, \"threaded\": %d, "
++                "\"num_inputs\": %u, \"disable_early_z\": %d, "
++                "\"color_inputs\": %u, \"vattrs_live\": %u, \"vattr_offsets\": [",
++                stage, (unsigned long long) shader->program_id,
++                shader->fs_threaded, shader->num_inputs,
++                shader->disable_early_z, shader->color_inputs,
++                shader->vattrs_live);
++        for (int i = 0; i < 9; i++)
++                fprintf(f, "%s%u", i ? ", " : "", shader->vattr_offsets[i]);
++
++        const uint64_t *code = shader->pgpu_code;
++        unsigned n = shader->pgpu_code_count;
++        fprintf(f, "], \"code\": [");
++        for (unsigned i = 0; i < n; i++)
++                fprintf(f, "%s\"%016llx\"", i ? ", " : "",
++                        (unsigned long long) code[i]);
++
++        fprintf(f, "], \"uniforms\": [");
++        for (unsigned i = 0; i < shader->uniforms.count; i++)
++                fprintf(f, "%s[%u, %u, %u]", i ? ", " : "",
++                        shader->uniforms.contents[i],
++                        shader->uniforms.data[i], values[i]);
++        fprintf(f, "]}\n");
++        fclose(f);
++}
++
+ void
+ vc4_write_uniforms(struct vc4_context *vc4, struct vc4_compiled_shader *shader,
+                    struct vc4_constbuf_stateobj *cb,
+@@ -202,6 +250,7 @@ vc4_write_uniforms(struct vc4_context *vc4, struct vc4_compiled_shader *shader,
+         struct vc4_cl_out *uniforms =
+                 cl_start_shader_reloc(&job->uniforms,
+                                       uinfo->num_texture_samples);
++        const uint32_t *pgpu_values = (const uint32_t *) uniforms;
+ 
+         for (int i = 0; i < uinfo->count; i++) {
+                 enum quniform_contents contents = uinfo->contents[i];
+@@ -358,6 +407,8 @@ vc4_write_uniforms(struct vc4_context *vc4, struct vc4_compiled_shader *shader,
+                 }
+         }
+ 
++        pgpu_dump_shader(vc4, shader, pgpu_values);
++
+         cl_end(&job->uniforms, uniforms);
+ }
+ 

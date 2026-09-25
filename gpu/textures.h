@@ -37,6 +37,10 @@ public:
 	/// \return FALSE if there is no such texture
 	boolean Use (u32 nId, u32 *pP0, u32 *pP1);
 
+	/// \brief TMU config of a 1x1 texture reading (0, 0, 0, 1), for samplers
+	/// without a texture
+	void UseFallback (u32 *pP0, u32 *pP1);
+
 	/// \brief Free storage replaced during the frame
 	void EndFrame (void);
 

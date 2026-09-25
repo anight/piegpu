@@ -138,6 +138,24 @@ void pgpu_draw_arrays (uint32_t mode, uint32_t first, uint32_t count);
 void pgpu_draw_elements (uint32_t mode, uint32_t count, uint32_t index_type, uint32_t buffer,
 			 uint32_t offset_bytes);
 
+/* programs (GL ES 2.0 subset, docs/protocol.md 7.10): blobs and uniform
+   tables come from the headers tools/glslc/glslc.py generates */
+void pgpu_program_create (uint32_t id, const uint32_t *blob, uint32_t words);
+void pgpu_program_delete (uint32_t id);
+void pgpu_use_program (uint32_t id);		/* 0 = fixed function */
+/* set a uniform: offsets = the uniform's table from the generated header
+   (scalars vertex-stage offsets, then scalars fragment-stage offsets) */
+void pgpu_program_uniform (uint32_t id, const uint16_t *offsets, uint32_t scalars, const float *values);
+#define PGPU_UNIFORM(id, table, values) \
+	pgpu_program_uniform (id, table, sizeof (table) / sizeof (table[0]) / 2, values)
+void pgpu_program_uniform1f (uint32_t id, const uint16_t *offsets, float value);	/* single float */
+void pgpu_program_sampler (uint32_t id, uint32_t sampler, uint32_t unit);
+void pgpu_texture_bind_unit (uint32_t unit, uint32_t texture);
+void pgpu_vertex_attrib (uint32_t index, float x, float y, float z, float w);
+void pgpu_attrib_array (uint32_t index, uint32_t buffer, uint32_t offset_bytes, uint32_t stride_bytes,
+			uint32_t size, uint32_t type);
+void pgpu_attribs_enable (uint32_t mask);
+
 /* DRAW_INLINE: vertices laid out as in docs/protocol.md 7.8 */
 void pgpu_draw_inline (uint32_t mode, uint32_t count, uint32_t attrib_mask,
 		       const uint32_t *vertex_words, uint32_t words_per_vertex);

@@ -78,6 +78,18 @@ enum pgpu_opcode
 	PGPU_OP_DRAW_ELEMENTS	= 0x53,
 	PGPU_OP_DRAW_INLINE	= 0x54,
 
+	/* programs (GL ES 2.0 subset) */
+	PGPU_OP_PROGRAM_CREATE	= 0x80,
+	PGPU_OP_PROGRAM_DATA	= 0x81,
+	PGPU_OP_PROGRAM_DELETE	= 0x82,
+	PGPU_OP_USE_PROGRAM	= 0x83,
+	PGPU_OP_PROGRAM_UNIFORM	= 0x84,
+	PGPU_OP_PROGRAM_SAMPLER	= 0x85,
+	PGPU_OP_TEXTURE_BIND_UNIT = 0x86,
+	PGPU_OP_VERTEX_ATTRIB	= 0x87,
+	PGPU_OP_ATTRIB_ARRAY	= 0x88,
+	PGPU_OP_ATTRIBS_ENABLE	= 0x89,
+
 	/* debug */
 	PGPU_OP_DEBUG_SCREENSHOT = 0xF0		/* dump the last presented frame to the Zero's USB log */
 };
@@ -103,7 +115,8 @@ enum pgpu_error
 	PGPU_ERR_OBJECT		= 6,
 	PGPU_ERR_MEMORY		= 7,
 	PGPU_ERR_CLEAR_AFTER_DRAW = 8,
-	PGPU_ERR_LIMIT		= 9
+	PGPU_ERR_LIMIT		= 9,
+	PGPU_ERR_PROGRAM	= 10
 };
 
 /* ---- enumerations (section 10) ------------------------------------------- */
@@ -165,7 +178,11 @@ enum pgpu_blend
 };
 
 /* array component types (10.5), DRAW_ELEMENTS index types */
-enum pgpu_type { PGPU_FLOAT, PGPU_SHORT, PGPU_SHORT_NORM, PGPU_UBYTE_NORM, PGPU_BYTE_NORM };
+enum pgpu_type
+{
+	PGPU_FLOAT, PGPU_SHORT, PGPU_SHORT_NORM, PGPU_UBYTE_NORM, PGPU_BYTE_NORM,
+	PGPU_UBYTE, PGPU_BYTE, PGPU_USHORT, PGPU_USHORT_NORM
+};
 enum pgpu_index_type { PGPU_INDEX_U8, PGPU_INDEX_U16 };
 
 /* textures (10.6) */

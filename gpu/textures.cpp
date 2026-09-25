@@ -335,6 +335,24 @@ boolean CTextures::Use (u32 nId, u32 *pP0, u32 *pP1)
 	return TRUE;
 }
 
+void CTextures::UseFallback (u32 *pP0, u32 *pP1)
+{
+	static u32 *s_pPixels = nullptr;		// 4 texels (minimum raster row)
+	if (!s_pPixels)
+	{
+		s_pPixels = (u32 *) CV3D::Alloc (16, 4096);
+		for (unsigned i = 0; i < 4; i++)
+		{
+			s_pPixels[i] = RGBA (0, 0, 0, 255);
+		}
+		CV3D::Flush (s_pPixels, 16);
+	}
+
+	*pP0 = CV3D::BusAddress (s_pPixels) | ((TEX_TYPE_RGBA32R & 15) << P0_TYPE__SHIFT);
+	*pP1 =   P1_TYPE4 | (1 << P1_HEIGHT__SHIFT) | (1 << P1_WIDTH__SHIFT)
+	       | P1_MAGFILT_NEAREST | (1 << P1_MINFILT__SHIFT);
+}
+
 void CTextures::EndFrame (void)
 {
 	for (unsigned i = 0; i < m_nRetired; i++)

@@ -31,6 +31,29 @@ struct TDrawSetup
 	unsigned nUniforms;
 };
 
+// A draw in the V3D's GL shader mode (programs, docs/protocol.md 7.10). The
+// shader record, uniform streams and constant attribute data are placed in
+// the frame's pools with AllocRecord (), AllocUniforms () and AllocData ().
+struct TGLDraw
+{
+	u32 nConfigBits;
+	u32 nRecordBus;			// shader record, 16-byte aligned
+	unsigned nAttributes;		// attribute records after it (1-8)
+
+	// viewport (panel pixels, y down)
+	float fCentreX, fCentreY;
+	float fHalfWidth, fHalfHeight;	// the y scale is -fHalfHeight
+	float fZScale, fZOffset;
+	unsigned nClipX, nClipY, nClipWidth, nClipHeight;
+
+	u8 nMode;			// primitive mode (same values as GL)
+	boolean bIndexed;
+	u32 nCount;
+	u32 nIndexBus;			// indexed: index list
+	u8 nIndexType;			// 0 u8, 1 u16
+	u32 nMaxIndex;
+};
+
 struct TRenderStats
 {
 	unsigned nDraws;
@@ -46,6 +69,7 @@ public:
 	static const unsigned MaxDraws = 4096;			// per frame
 	static const unsigned VertexPoolBytes = 4 * 1024 * 1024;
 	static const unsigned UniformPoolWords = 256 * 1024;
+	static const unsigned RecordPoolBytes = 512 * 1024;
 
 public:
 	CRenderer (CV3D *pV3D, CST7789DMADisplay *pDisplay);
@@ -62,6 +86,15 @@ public:
 	/// \brief Add a triangle list (3 vertices per triangle) to the current frame
 	/// \param pVertices 4 + GetVaryings (nShader) floats per vertex
 	void AddTriangles (const TDrawSetup &rSetup, const float *pVertices, unsigned nVertices);
+
+	/// \brief Add a GL shader mode draw (see TGLDraw)
+	/// \return FALSE if the frame is full (the draw is dropped)
+	boolean AddGLDraw (const TGLDraw &rDraw);
+
+	/// \brief Space in the current frame's pools, nullptr if full
+	u8 *AllocRecord (unsigned nBytes, u32 *pBus);	// 16-byte aligned
+	u32 *AllocUniforms (unsigned nWords, u32 *pBus);
+	u8 *AllocData (unsigned nBytes, u32 *pBus);	// 16-byte aligned, in the vertex pool
 
 	/// \brief Render the collected frame and hand it to the panel
 	/// \param bClear FALSE: start from the previous frame's image (colour only)
@@ -91,6 +124,8 @@ private:
 	u8 *m_pBinCL;
 	u8 *m_pRenderCL;
 	u8 *m_pRecords;			// NV shader state records, 16 bytes each
+	u8 *m_pRecordPool;		// GL shader records
+	unsigned m_nRecordBytes;
 	u32 *m_pShaderCode;
 	u32 m_ShaderBus[64];		// bus address of each variant's code
 	u8 *m_pVertexPool;
@@ -103,6 +138,10 @@ private:
 
 	struct TDraw
 	{
+		boolean bGL;
+		TGLDraw GL;
+
+		// NV (fixed function)
 		unsigned nShader;
 		u32 nConfigBits;
 		unsigned nUniformOffset;	// words into the uniform pool

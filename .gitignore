@@ -23,3 +23,7 @@ __pycache__/
 # SD card image contents (firmware copies and a built kernel)
 sdcard/*
 !sdcard/config.txt
+
+# host Mesa for tools/glslc (tools/glslc/build-mesa.sh)
+/third_party/
+tools/glslc/build/

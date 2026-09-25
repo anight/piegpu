@@ -15,6 +15,27 @@ pico_generate_pio_header(gpulink ${CMAKE_CURRENT_LIST_DIR}/pcm_out.pio)
 target_include_directories(gpulink PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../../protocol)
 target_link_libraries(gpulink pico_stdlib hardware_pio hardware_dma)
 
+# GLSL programs, precompiled by tools/glslc (needs the host Mesa built by
+# tools/glslc/build-mesa.sh)
+set(GLSLC_DIR ${CMAKE_CURRENT_LIST_DIR}/../../tools/glslc)
+set(SHADERS ${CMAKE_CURRENT_LIST_DIR}/shaders)
+function(glsl_program name)
+	set(out ${CMAKE_CURRENT_BINARY_DIR}/${name}_program.h)
+	add_custom_command(
+		OUTPUT ${out}
+		COMMAND python3 ${GLSLC_DIR}/glslc.py -n ${name}
+			--vs ${SHADERS}/${name}.vert --fs ${SHADERS}/${name}.frag ${ARGN} -o ${out}
+		DEPENDS ${SHADERS}/${name}.vert ${SHADERS}/${name}.frag
+			${GLSLC_DIR}/glslc.py ${GLSLC_DIR}/harness.c
+		VERBATIM)
+	target_sources(gpulink PRIVATE ${out})
+endfunction()
+glsl_program(plasma -a a_pos:float:2 -v triangles:none)
+glsl_program(cube -a a_pos:float:3 -a a_normal:byte_norm:3 -a a_uv:float:2 -v triangles:none)
+glsl_program(sparks -a a_pos:float:3 -a a_color:ubyte_norm:4 -v points:add)
+glsl_program(solid -a a_pos:float:2 -v triangles:none -v triangles:alpha -v lines:none)
+target_include_directories(gpulink PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+
 # console on UART0 (GP0/GP1) -> Debugprobe UART bridge
 pico_enable_stdio_uart(gpulink 1)
 pico_enable_stdio_usb(gpulink 0)

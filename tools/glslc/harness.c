@@ -1,0 +1,354 @@
+/*
+ * harness.c - drives Mesa's vc4 driver (on the host, through its no-hardware
+ * DRM shim) to compile a GLSL ES 1.00 program for the VideoCore IV.
+ *
+ * Run by glslc.py, which sets LD_PRELOAD, MESA_LOADER_DRIVER_OVERRIDE=vc4 and
+ * PGPU_VC4_DUMP (the patched driver appends each compiled shader used by a
+ * draw to that file). The job file lists:
+ *
+ *	vs <file>
+ *	fs <file>
+ *	attrib <name> <float|byte|ubyte|short|ushort> <size 1-4> <normalized 0|1>
+ *	variant <triangles|lines|points> <none|alpha|add|premul|multiply>
+ *
+ * Attributes get locations 0, 1, ... in the order listed. Every active
+ * uniform scalar is set to a unique marker value so that glslc.py can find
+ * where it lands in the uniform streams; sampler n is given texture unit n
+ * with a texture of width 4 << n (visible in the texture config uniforms).
+ *
+ * stdout: "uniform", "marker", "sampler" and "error" lines for glslc.py.
+ */
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <GLES2/gl2.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define MARKER_BASE	1000000		/* marker k is stored as float (MARKER_BASE + k) */
+
+static char *read_file (const char *path)
+{
+	FILE *f = fopen (path, "rb");
+	if (!f)
+	{
+		printf ("error cannot open %s\n", path);
+		exit (1);
+	}
+	fseek (f, 0, SEEK_END);
+	long n = ftell (f);
+	fseek (f, 0, SEEK_SET);
+	char *s = malloc (n + 1);
+	if (fread (s, 1, n, f) != (size_t) n)
+	{
+		printf ("error cannot read %s\n", path);
+		exit (1);
+	}
+	s[n] = 0;
+	fclose (f);
+	return s;
+}
+
+static GLuint compile (GLenum type, const char *path)
+{
+	char *src = read_file (path);
+	GLuint h = glCreateShader (type);
+	glShaderSource (h, 1, (const char **) &src, NULL);
+	glCompileShader (h);
+	GLint ok;
+	glGetShaderiv (h, GL_COMPILE_STATUS, &ok);
+	if (!ok)
+	{
+		char log[8192];
+		glGetShaderInfoLog (h, sizeof log, NULL, log);
+		for (char *l = strtok (log, "\n"); l; l = strtok (NULL, "\n"))
+			printf ("error %s: %s\n", path, l);
+		exit (1);
+	}
+	free (src);
+	return h;
+}
+
+static int components (GLenum type, int *is_int)
+{
+	*is_int = 0;
+	switch (type)
+	{
+	case GL_FLOAT:		return 1;
+	case GL_FLOAT_VEC2:	return 2;
+	case GL_FLOAT_VEC3:	return 3;
+	case GL_FLOAT_VEC4:	return 4;
+	case GL_FLOAT_MAT2:	return 4;
+	case GL_FLOAT_MAT3:	return 9;
+	case GL_FLOAT_MAT4:	return 16;
+	case GL_INT: case GL_BOOL:		*is_int = 1; return 1;
+	case GL_INT_VEC2: case GL_BOOL_VEC2:	*is_int = 1; return 2;
+	case GL_INT_VEC3: case GL_BOOL_VEC3:	*is_int = 1; return 3;
+	case GL_INT_VEC4: case GL_BOOL_VEC4:	*is_int = 1; return 4;
+	default:		return 0;	/* samplers */
+	}
+}
+
+static void set_uniform (GLint loc, GLenum type, const float *f, const int *i)
+{
+	switch (type)
+	{
+	case GL_FLOAT:		glUniform1fv (loc, 1, f); break;
+	case GL_FLOAT_VEC2:	glUniform2fv (loc, 1, f); break;
+	case GL_FLOAT_VEC3:	glUniform3fv (loc, 1, f); break;
+	case GL_FLOAT_VEC4:	glUniform4fv (loc, 1, f); break;
+	case GL_FLOAT_MAT2:	glUniformMatrix2fv (loc, 1, GL_FALSE, f); break;
+	case GL_FLOAT_MAT3:	glUniformMatrix3fv (loc, 1, GL_FALSE, f); break;
+	case GL_FLOAT_MAT4:	glUniformMatrix4fv (loc, 1, GL_FALSE, f); break;
+	case GL_INT: case GL_BOOL:		glUniform1iv (loc, 1, i); break;
+	case GL_INT_VEC2: case GL_BOOL_VEC2:	glUniform2iv (loc, 1, i); break;
+	case GL_INT_VEC3: case GL_BOOL_VEC3:	glUniform3iv (loc, 1, i); break;
+	case GL_INT_VEC4: case GL_BOOL_VEC4:	glUniform4iv (loc, 1, i); break;
+	}
+}
+
+int main (int argc, char **argv)
+{
+	if (argc != 3)
+	{
+		fprintf (stderr, "usage: harness <job file> <dump file>\n");
+		return 2;
+	}
+
+	char vs[1024] = "", fs[1024] = "";
+	struct { char name[128]; GLenum type; int size, norm; } attribs[8];
+	int nattribs = 0;
+	struct { GLenum prim; char blend[32]; } variants[32];
+	int nvariants = 0;
+
+	FILE *job = fopen (argv[1], "r");
+	if (!job)
+	{
+		printf ("error cannot open job file\n");
+		return 1;
+	}
+	char line[2048];
+	while (fgets (line, sizeof line, job))
+	{
+		char a[1024], b[64], c[64];
+		int n, m;
+		if (sscanf (line, "vs %1023s", a) == 1)
+			strcpy (vs, a);
+		else if (sscanf (line, "fs %1023s", a) == 1)
+			strcpy (fs, a);
+		else if (sscanf (line, "attrib %127s %63s %d %d", a, b, &n, &m) == 4 && nattribs < 8)
+		{
+			strcpy (attribs[nattribs].name, a);
+			attribs[nattribs].type =   !strcmp (b, "float") ? GL_FLOAT
+						 : !strcmp (b, "byte") ? GL_BYTE
+						 : !strcmp (b, "ubyte") ? GL_UNSIGNED_BYTE
+						 : !strcmp (b, "short") ? GL_SHORT : GL_UNSIGNED_SHORT;
+			attribs[nattribs].size = n;
+			attribs[nattribs].norm = m;
+			nattribs++;
+		}
+		else if (sscanf (line, "variant %63s %63s", b, c) == 2 && nvariants < 32)
+		{
+			variants[nvariants].prim =   !strcmp (b, "points") ? GL_POINTS
+						   : !strcmp (b, "lines") ? GL_LINES : GL_TRIANGLES;
+			strcpy (variants[nvariants].blend, c);
+			nvariants++;
+		}
+	}
+	fclose (job);
+
+	/* EGL on the surfaceless platform: the vc4 driver on the DRM shim */
+	PFNEGLGETPLATFORMDISPLAYEXTPROC get_display =
+		(PFNEGLGETPLATFORMDISPLAYEXTPROC) eglGetProcAddress ("eglGetPlatformDisplayEXT");
+	EGLDisplay dpy = get_display (EGL_PLATFORM_SURFACELESS_MESA, EGL_DEFAULT_DISPLAY, NULL);
+	if (!eglInitialize (dpy, NULL, NULL))
+	{
+		printf ("error eglInitialize failed\n");
+		return 1;
+	}
+	eglBindAPI (EGL_OPENGL_ES_API);
+	EGLint ctx_attribs[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
+	EGLContext ctx = eglCreateContext (dpy, EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT, ctx_attribs);
+	if (!eglMakeCurrent (dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, ctx))
+	{
+		printf ("error eglMakeCurrent failed\n");
+		return 1;
+	}
+	const char *renderer = (const char *) glGetString (GL_RENDERER);
+	if (!renderer || !strstr (renderer, "VC4"))
+	{
+		printf ("error not the vc4 driver: %s\n", renderer ? renderer : "?");
+		return 1;
+	}
+
+	/* render target: RGBA8888 (R in byte 0, as the Zero's tile buffer),
+	   with a depth buffer: the fragment shaders then write Z */
+	GLuint color, depth, fbo;
+	glGenTextures (1, &color);
+	glBindTexture (GL_TEXTURE_2D, color);
+	glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+	glGenRenderbuffers (1, &depth);
+	glBindRenderbuffer (GL_RENDERBUFFER, depth);
+	glRenderbufferStorage (GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, 64, 64);
+	glGenFramebuffers (1, &fbo);
+	glBindFramebuffer (GL_FRAMEBUFFER, fbo);
+	glFramebufferTexture2D (GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color, 0);
+	glFramebufferRenderbuffer (GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depth);
+	if (glCheckFramebufferStatus (GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+	{
+		printf ("error framebuffer incomplete\n");
+		return 1;
+	}
+	glViewport (0, 0, 64, 64);
+	glEnable (GL_DEPTH_TEST);
+
+	GLuint prog = glCreateProgram ();
+	glAttachShader (prog, compile (GL_VERTEX_SHADER, vs));
+	glAttachShader (prog, compile (GL_FRAGMENT_SHADER, fs));
+	for (int i = 0; i < nattribs; i++)
+		glBindAttribLocation (prog, i, attribs[i].name);
+	glLinkProgram (prog);
+	GLint ok;
+	glGetProgramiv (prog, GL_LINK_STATUS, &ok);
+	if (!ok)
+	{
+		char log[8192];
+		glGetProgramInfoLog (prog, sizeof log, NULL, log);
+		for (char *l = strtok (log, "\n"); l; l = strtok (NULL, "\n"))
+			printf ("error link: %s\n", l);
+		return 1;
+	}
+	glUseProgram (prog);
+
+	/* attributes that the program has but the job didn't list */
+	GLint nactive;
+	glGetProgramiv (prog, GL_ACTIVE_ATTRIBUTES, &nactive);
+	for (int i = 0; i < nactive; i++)
+	{
+		char name[256];
+		GLint size;
+		GLenum type;
+		glGetActiveAttrib (prog, i, sizeof name, NULL, &size, &type, name);
+		int found = 0;
+		for (int k = 0; k < nattribs; k++)
+			found |= !strcmp (attribs[k].name, name);
+		if (!found)
+		{
+			printf ("error attribute %s is not listed in the program description\n", name);
+			return 1;
+		}
+	}
+
+	/* uniforms: markers; samplers: unit n, texture width 4 << n */
+	glGetProgramiv (prog, GL_ACTIVE_UNIFORMS, &nactive);
+	int marker = 0, sampler = 0;
+	for (int u = 0; u < nactive; u++)
+	{
+		char name[256];
+		GLint size;
+		GLenum type;
+		glGetActiveUniform (prog, u, sizeof name, NULL, &size, &type, name);
+		char *bracket = strchr (name, '[');
+		if (bracket)
+			*bracket = 0;		/* arrays are reported as "name[0]" */
+
+		int is_int, n = components (type, &is_int);
+		printf ("uniform %d %s 0x%04x %d\n", u, name, type, size);
+
+		if (type == GL_SAMPLER_2D || type == GL_SAMPLER_CUBE)
+		{
+			if (type == GL_SAMPLER_CUBE)
+			{
+				printf ("error %s: cube map samplers are not supported\n", name);
+				return 1;
+			}
+			GLint loc = glGetUniformLocation (prog, name);
+			glUniform1i (loc, sampler);
+			glActiveTexture (GL_TEXTURE0 + sampler);
+			GLuint tex;
+			glGenTextures (1, &tex);
+			glBindTexture (GL_TEXTURE_2D, tex);
+			glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA, 4 << sampler, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+			glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+			glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+			printf ("sampler %s %d\n", name, sampler);
+			sampler++;
+			continue;
+		}
+		if (n == 0)
+		{
+			printf ("error %s: unsupported uniform type 0x%04x\n", name, type);
+			return 1;
+		}
+
+		for (int e = 0; e < size; e++)
+		{
+			char elem[300];
+			if (size > 1)
+				snprintf (elem, sizeof elem, "%s[%d]", name, e);
+			else
+				snprintf (elem, sizeof elem, "%s", name);
+			GLint loc = glGetUniformLocation (prog, elem);
+			float f[16];
+			int iv[16];
+			for (int c = 0; c < n; c++)
+			{
+				printf ("marker %d %d %d %d\n", marker, u, e, c);
+				f[c] = (float) (MARKER_BASE + marker);
+				iv[c] = MARKER_BASE + marker;
+				marker++;
+			}
+			set_uniform (loc, type, f, iv);
+		}
+	}
+	glActiveTexture (GL_TEXTURE0);
+
+	/* vertex data for the draws: enough bytes for any format */
+	static float data[64 * 4];
+	for (int i = 0; i < nattribs; i++)
+	{
+		glVertexAttribPointer (i, attribs[i].size, attribs[i].type, attribs[i].norm, 0, data);
+		glEnableVertexAttribArray (i);
+	}
+
+	FILE *dump = fopen (argv[2], "a");
+	for (int v = 0; v < nvariants; v++)
+	{
+		const char *b = variants[v].blend;
+		if (!strcmp (b, "none"))
+			glDisable (GL_BLEND);
+		else
+		{
+			glEnable (GL_BLEND);
+			glBlendEquation (GL_FUNC_ADD);
+			if (!strcmp (b, "alpha"))
+				glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			else if (!strcmp (b, "add"))
+				glBlendFunc (GL_ONE, GL_ONE);
+			else if (!strcmp (b, "premul"))
+				glBlendFunc (GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+			else if (!strcmp (b, "multiply"))
+				glBlendFunc (GL_DST_COLOR, GL_ZERO);
+			else
+			{
+				printf ("error unknown blend mode %s\n", b);
+				return 1;
+			}
+		}
+
+		fprintf (dump, "{\"variant\": %d}\n", v);
+		fflush (dump);
+		glDrawArrays (variants[v].prim, 0, 6);
+		glFlush ();
+	}
+	fclose (dump);
+	glFinish ();
+
+	if (glGetError () != GL_NO_ERROR)
+	{
+		printf ("error GL error during the draws\n");
+		return 1;
+	}
+	return 0;
+}

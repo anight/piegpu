@@ -4,11 +4,13 @@ This document specifies the link between the **Pico 2 W** (the host, which runs
 the application) and the **Raspberry Pi Zero** (the GPU, which renders with the
 VideoCore IV V3D and drives the ST7789 panel).
 
-Version 1 implements a **fixed-function pipeline in the style of OpenGL ES 1.1**
-(option A). No shader compiler is involved: the Zero uses a small set of built-in
-QPU programs. The opcode space is laid out so that programmable shaders
-(option B: precompiled program blobs and uniforms) can be added later without
-changing the framing.
+Version 1 has two pipelines, which can be mixed within a frame:
+- a **fixed-function pipeline in the style of OpenGL ES 1.1** (option A), run by
+  built-in QPU programs;
+- **programs in the style of OpenGL ES 2.0** (option B, §7.10): GLSL ES 1.00
+  vertex and fragment shaders, compiled on the PC by `tools/glslc` into QPU code
+  and uploaded as program blobs. The Zero runs them in the V3D's GL shader mode,
+  with vertex shading on the QPUs and clipping in hardware.
 
 Status: **draft**. Everything is normative unless marked *informative*.
 
@@ -225,7 +227,7 @@ Payload fields are listed word by word. `[n]` means n words.
 
 | Op | Name | Payload | Meaning |
 |---|---|---|---|
-| `0x01` | RESET | — | Delete all objects and reset all state to the defaults (§7.9). Discard the current frame. Replies `INFO`. |
+| `0x01` | RESET | — | Delete all objects and reset all state to the defaults (§7.11). Discard the current frame. Replies `INFO`. |
 | `0x02` | GET_INFO | — | Replies `INFO` (§9). |
 | `0x03` | PING | `u32 cookie` | Replies `PONG` with the same cookie, once all earlier commands have been **parsed**. |
 | `0x04` | GET_STATUS | — | Replies `STATUS` (§9). |
@@ -311,7 +313,52 @@ POSITION is required. Attributes not in the mask use the current values. The
 count is limited by the packet size: for example 16384 / 4 = 4096 vertices with
 position + colour.
 
-### 7.9 Default state (after power-up and `RESET`)
+### 7.10 Programs (GL ES 2.0 subset)
+
+A **program** is a vertex shader and a fragment shader, precompiled on the PC by
+`tools/glslc/glslc.py` (GLSL ES 1.00, through Mesa's `vc4` compiler). The blob
+(`protocol/pgpu_program.h`) holds QPU code for a few **variants**: primitive class
+(triangles, lines, points) × blend mode, chosen when compiling. The compiler also
+writes a C header with the blob, the attribute locations, the uniform storage
+offsets and the sampler indices.
+
+| Op | Name | Payload | Meaning |
+|---|---|---|---|
+| `0x80` | PROGRAM_CREATE | `id program`, `u32 size_words` | Create a program of this blob size. Recreating an existing id replaces it. |
+| `0x81` | PROGRAM_DATA | `id program`, `u32 offset_words`, `words blob[…]` | Store part of the blob. When the last word has arrived, the Zero checks the blob and loads the code; an invalid blob is reported as `ERROR` 10 and the program stays unusable. |
+| `0x82` | PROGRAM_DELETE | `id program` | Delete it. |
+| `0x83` | USE_PROGRAM | `id program` | Draw with this program; 0 = the fixed-function pipeline. |
+| `0x84` | PROGRAM_UNIFORM | `id program`, `u32 offset_words`, `words values[…]` | Write the program's uniform storage (offsets from the compiler's header). Values are 32-bit floats; `int` and `bool` uniforms are stored as floats too (the V3D has no integer ALU). |
+| `0x85` | PROGRAM_SAMPLER | `id program`, `u32 sampler`, `u32 unit` | Like `glUniform1i` on a sampler: the texture unit (0–7) a sampler reads. Default: sampler n reads unit n. |
+| `0x86` | TEXTURE_BIND_UNIT | `u32 unit`, `id texture` | Bind a texture to unit 0–7 (0 = none). `TEXTURE_BIND` is unit 0. |
+| `0x87` | VERTEX_ATTRIB | `u32 index`, `f32 v[4]` | Current value of a generic attribute (0–7), used when its array is disabled. Default (0, 0, 0, 1). |
+| `0x88` | ATTRIB_ARRAY | `u32 index`, `id buffer`, `u32 offset_bytes`, `u32 stride_bytes`, `u32 size`, `u32 type` | Point generic attribute 0–7 at a buffer. stride 0 = tightly packed; at most 255. |
+| `0x89` | ATTRIBS_ENABLE | `u32 mask` | Which generic attributes come from arrays (bit n = attribute n). |
+
+**Drawing:** while a program is in use, `DRAW_ARRAYS` and `DRAW_ELEMENTS` use
+it and the generic attributes. `DRAW_INLINE` isn't available with programs
+(error 5). The Zero picks the variant that matches the primitive mode and the
+blend state (`ENABLE BLEND` and `BLEND_FUNC`); if the program has none, the draw
+is reported as `ERROR` 10.
+
+- **Attributes:** an array must have exactly the type and size the program was
+  compiled for (error 5 otherwise). A disabled array uses the current value from
+  `VERTEX_ATTRIB`, converted to that format.
+- **State that applies:** viewport and depth range, depth test and mask, culling
+  and front face, blending (through the variant), textures and their parameters.
+  **Ignored:** lighting, fog, alpha test, texture environment, shade model and the
+  fixed-function matrices. The colour mask must be all on (error 10 otherwise).
+- **Textures:** all formats are sampled as RGBA; `A8` returns (1, 1, 1, A), unlike
+  GL ES 2.0's (0, 0, 0, A). A sampler whose unit has no texture reads (0, 0, 0, 1).
+- **GLSL:** GLSL ES 1.00 as compiled by Mesa's `vc4` driver. Not supported:
+  `gl_FragCoord` and `gl_DepthRange` (they need built-in state uniforms), cube-map
+  samplers, and integer arithmetic beyond what fits in floats.
+- **Limits:** 64 programs, blob at most 65536 words, uniform storage at most 4096
+  words, 8 attributes, 8 samplers, `count` at most 65535 per draw.
+- `DRAW_ARRAYS` with a program reads the arrays starting at `first`: `first` can
+  be any value, the array just has to hold the vertices.
+
+### 7.11 Default state (after power-up and `RESET`)
 
 | State | Default |
 |---|---|
@@ -331,7 +378,9 @@ position + colour.
 | shade model | SMOOTH |
 | texture env | MODULATE, env colour (0, 0, 0, 0) |
 | arrays | none enabled, none bound |
-| bound texture | none |
+| bound texture | none (all units) |
+| program | 0 (fixed function); no programs |
+| generic attributes | arrays disabled, current values (0, 0, 0, 1) |
 
 ---
 
@@ -348,7 +397,8 @@ position + colour.
 | `0x40`–`0x4F` | transform, lighting, fog, current values |
 | `0x50`–`0x5F` | arrays and drawing |
 | `0x60`–`0x7F` | reserved for fixed-function additions |
-| `0x80`–`0xBF` | **reserved for programmable shaders (option B)**: program upload, uniforms, generic attributes |
+| `0x80`–`0x8F` | programs (§7.10) |
+| `0x90`–`0xBF` | reserved for program additions |
 | `0xC0`–`0xEF` | reserved |
 | `0xF0`–`0xFF` | debug and vendor |
 
@@ -375,7 +425,8 @@ A reply to a request uses the request's opcode (`GET_INFO` → `INFO`, `PING` �
 
 Error codes: 1 = CRC, 2 = unknown opcode, 3 = bad length, 4 = bad id,
 5 = bad enum, 6 = no such object, 7 = out of memory, 8 = CLEAR after a draw,
-9 = limit exceeded.
+9 = limit exceeded, 10 = program (invalid blob, no matching variant, or
+unsupported state).
 
 `ERROR` detail: the offending id for id and object errors, the received LENGTH
 for length errors, the header word for CRC errors, otherwise 0.
@@ -432,6 +483,10 @@ This is the same order as the V3D's depth-test field.
 | 2 | SHORT_NORM | normalised to −1 … 1 |
 | 3 | UBYTE_NORM | normalised to 0 … 1; for COLOR with size 4 |
 | 4 | BYTE_NORM | normalised to −1 … 1; for NORMAL |
+| 5 | UBYTE | as is (0 … 255) |
+| 6 | BYTE | as is (−128 … 127) |
+| 7 | USHORT | as is |
+| 8 | USHORT_NORM | normalised to 0 … 1 |
 
 ### 10.6 Texture parameters
 
@@ -549,6 +604,12 @@ existing code; uploading to buffers once is the fast path.
   the hardware at 320×240: up to x −960 … 1280 px renders, x −1120 … 1440 px
   loses triangles, although the 12.4 fixed-point format reaches ±2048.
 - **Points and lines** are 1 pixel wide screen-space quads.
+- **Programs** run in the V3D's GL shader mode: the binner runs the coordinate
+  shader, the renderer the vertex and fragment shaders, and the hardware clips.
+  Each draw gets a shader record, attribute records pointing straight into the
+  buffers, and uniform streams resolved at draw time. Buffers used by a program
+  draw are copied on write for the rest of the frame (§6.3). The viewport has a
+  negative y scale, because the panel's rows go top to bottom.
 - **Fragment shaders:** 40 built-in QPU programs (`gpu/shaders.py`, generated with
   `devtools/qpuasm.py`): texture environment (none, MODULATE, REPLACE, DECAL,
   BLEND) × fog × alpha test × blending. Blending and the colour mask are done in
