@@ -99,3 +99,60 @@ glsl_program(hud -a a_pos:float:2 -a a_uv:float:2 -a a_color:ubyte_norm:4 -v tri
 pico_enable_stdio_uart(flight 1)
 pico_enable_stdio_usb(flight 0)
 pico_add_extra_outputs(flight)
+
+# ---- Jet examples on the GPU ----------------------------------------------------
+# The JetExamples scenes picojet runs (jet/examples, MIT, CubeCoders), each
+# with Jet (jet/Jet, MIT) compiled against the scene's own JetConfig.hpp;
+# Jet's pixel work goes to the GPU (jet/gpu/JetGpu.cpp in place of Jet's
+# Renderer.cpp, hooks in Scene.cpp under JET_GPU), the runtime contract is
+# jet/runtime/Runtime.cpp.
+set(JET_DIR ${CMAKE_CURRENT_LIST_DIR}/jet)
+option(JET_PROFILE "print where the Pico's frame time goes (jet-*)" OFF)
+file(GLOB JET_SOURCES CONFIGURE_DEPENDS ${JET_DIR}/Jet/*.cpp)
+list(REMOVE_ITEM JET_SOURCES ${JET_DIR}/Jet/Renderer.cpp)
+function(jet_example name title)
+	set(src ${JET_DIR}/examples/${name})
+	if(ARGN)				# a scene of our own: its directory
+		set(src ${ARGN})
+	endif()
+	set(cfg ${CMAKE_CURRENT_BINARY_DIR}/jet/${name})
+	# Jet includes "JetConfig.hpp" by name: this one comes first on the path
+	file(WRITE ${cfg}/JetConfig.hpp
+"#pragma once
+#include \"${src}/firmware/JetConfig.hpp\"
+#include \"${JET_DIR}/runtime/JetConfigGpu.hpp\"
+")
+	file(GLOB example_sources CONFIGURE_DEPENDS ${src}/*.cpp)
+	add_executable(jet-${name} ${example_sources} ${JET_SOURCES} ${JET_DIR}/gpu/JetGpu.cpp
+		${JET_DIR}/runtime/Runtime.cpp hud.c perf.c pgpu.c pgpu_pico.c gles/pgl.c
+		gles/pgl_compiler_none.c)
+	pico_generate_pio_header(jet-${name} ${CMAKE_CURRENT_LIST_DIR}/pcm_out.pio)
+	target_include_directories(jet-${name} PRIVATE ${cfg} ${src} ${JET_DIR}/Jet ${JET_DIR}/gpu
+		${JET_DIR}/runtime ${CMAKE_CURRENT_LIST_DIR}/../../protocol ${CMAKE_CURRENT_LIST_DIR}
+		${CMAKE_CURRENT_LIST_DIR}/gles ${CMAKE_CURRENT_BINARY_DIR})
+	target_compile_features(jet-${name} PRIVATE cxx_std_17)
+	# some scenes rely on <cstdio> arriving with the ESP-IDF headers (as picojet)
+	target_compile_options(jet-${name} PRIVATE -fno-math-errno
+		$<$<COMPILE_LANGUAGE:CXX>:-include> $<$<COMPILE_LANGUAGE:CXX>:cstdio>)
+	target_compile_definitions(jet-${name} PRIVATE JET_GPU=1 PICOJET_EXAMPLE_NAME="${title}"
+		JET_PROFILE=$<BOOL:${JET_PROFILE}>)
+	target_link_libraries(jet-${name} pico_stdlib hardware_pio hardware_dma)
+	set(GLSL_TARGET jet-${name})
+	glsl_program(jet -a a_pos:short:4 -a a_uv:short:2 -a a_color:ubyte_norm:4 -v triangles)
+	glsl_program(jetwater -a a_pos:short:4 -a a_uv:short:2 -a a_color:ubyte_norm:4 -v triangles)
+	glsl_program(hud -a a_pos:float:2 -a a_uv:float:2 -a a_color:ubyte_norm:4 -v triangles)
+	pico_enable_stdio_uart(jet-${name} 1)
+	pico_enable_stdio_usb(jet-${name} 0)
+	pico_add_extra_outputs(jet-${name})
+endfunction()
+jet_example(template-cube    "Rotating cube")
+jet_example(particles        "Particle Lab")
+jet_example(textured-boxes   "Textured crate")
+jet_example(texture-features "Texture Lab")
+jet_example(postfx-crt       "CRT / Arcade")
+jet_example(lod-billboards   "Woodland")
+jet_example(sprite-controls  "Air Mail")
+jet_example(tropical-island  "Tropical island")
+jet_example(sprites-blending "After Hours")
+# picojet's model viewer (app/main.cpp) as a scene: jet/viewer
+jet_example(viewer           "Model viewer" ${JET_DIR}/viewer)

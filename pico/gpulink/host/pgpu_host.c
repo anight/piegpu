@@ -279,6 +279,7 @@ void pgpu_link_settle (void)
 
 bool pgpu_wait_ready (uint32_t timeout_ms)	{ return true; }	/* USB flow control */
 bool pgpu_wait_frame (uint32_t timeout_ms)	{ return true; }
+uint32_t pgpu_frame_count (void)		{ return 0; }
 void pgpu_set_reply_phase (unsigned phase)	{ }
 
 pgpu_stats_t pgpu_get_stats (void)

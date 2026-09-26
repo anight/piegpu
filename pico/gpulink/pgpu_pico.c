@@ -259,6 +259,11 @@ bool pgpu_wait_ready (uint32_t timeout_ms)
 	return true;
 }
 
+uint32_t pgpu_frame_count (void)
+{
+	return frame_count;
+}
+
 bool pgpu_wait_frame (uint32_t timeout_ms)
 {
 	uint32_t start = frame_count;

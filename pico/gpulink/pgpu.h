@@ -74,6 +74,7 @@ typedef struct
 void pgpu_init (void);
 bool pgpu_wait_ready (uint32_t timeout_ms);	/* the Zero is up and accepting (Pico only) */
 bool pgpu_wait_frame (uint32_t timeout_ms);	/* next FRAME pulse (Pico only) */
+uint32_t pgpu_frame_count (void);		/* FRAME pulses so far (Pico only; 0 on a PC) */
 void pgpu_flush (void);
 uint32_t pgpu_packets_sent (void);		/* packets built since pgpu_init () */
 pgpu_stats_t pgpu_get_stats (void);		/* and reset the counters */
