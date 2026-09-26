@@ -21,10 +21,15 @@ target_link_libraries(gpulink pico_stdlib hardware_pio hardware_dma)
 set(GLSLC_DIR ${CMAKE_CURRENT_LIST_DIR}/../../tools/glslc)
 set(SHADERS ${CMAKE_CURRENT_LIST_DIR}/shaders)
 # glsl_program(NAME options...): NAME_program.h for the target GLSL_TARGET
-# (default gpulink)
+# (default gpulink), from shaders/NAME.vert and .frag (GLSL_VS, if set: that
+# vertex shader instead)
 set(GLSL_TARGET gpulink)
 function(glsl_program name)
 	set(out ${CMAKE_CURRENT_BINARY_DIR}/${name}_program.h)
+	set(vs ${SHADERS}/${name}.vert)
+	if(GLSL_VS)
+		set(vs ${GLSL_VS})
+	endif()
 	get_property(defined GLOBAL PROPERTY glsl_program_${name})
 	if(defined)				# already built for another target
 		target_sources(${GLSL_TARGET} PRIVATE ${out})
@@ -34,8 +39,8 @@ function(glsl_program name)
 	add_custom_command(
 		OUTPUT ${out}
 		COMMAND python3 ${GLSLC_DIR}/glslc.py -n ${name}
-			--vs ${SHADERS}/${name}.vert --fs ${SHADERS}/${name}.frag ${ARGN} -o ${out}
-		DEPENDS ${SHADERS}/${name}.vert ${SHADERS}/${name}.frag
+			--vs ${vs} --fs ${SHADERS}/${name}.frag ${ARGN} -o ${out}
+		DEPENDS ${vs} ${SHADERS}/${name}.frag
 			${GLSLC_DIR}/glslc.py ${GLSLC_DIR}/harness.c
 			${CMAKE_CURRENT_LIST_DIR}/../../devtools/qpuasm.py
 			${CMAKE_CURRENT_LIST_DIR}/../../patches/mesa-vc4-dump.patch
@@ -99,6 +104,40 @@ glsl_program(hud -a a_pos:float:2 -a a_uv:float:2 -a a_color:ubyte_norm:4 -v tri
 pico_enable_stdio_uart(flight 1)
 pico_enable_stdio_usb(flight 0)
 pico_add_extra_outputs(flight)
+
+# ---- Shadertoy-style demos -------------------------------------------------------
+# toy.c draws one full-screen quad; the picture is shaders/toy_NAME.frag (with
+# shaders/toy.vert, Shadertoy's iTime, iResolution and fragCoord). A game adds
+# its Pico side as the extra sources (toy_game.h).
+function(toy_demo name caption)
+	add_executable(toy-${name} toy.c ${ARGN} hud.c perf.c pgpu.c pgpu_pico.c gles/pgl.c
+		gles/pgl_compiler_none.c)
+	if(ARGN)
+		target_compile_definitions(toy-${name} PRIVATE TOY_GAME=1)
+	endif()
+	pico_generate_pio_header(toy-${name} ${CMAKE_CURRENT_LIST_DIR}/pcm_out.pio)
+	target_include_directories(toy-${name} PRIVATE ${CMAKE_CURRENT_LIST_DIR}/../../protocol
+		${CMAKE_CURRENT_LIST_DIR} ${CMAKE_CURRENT_LIST_DIR}/gles ${CMAKE_CURRENT_BINARY_DIR})
+	target_compile_definitions(toy-${name} PRIVATE TOY_HEADER="toy_${name}_program.h"
+		TOY_INFO=toy_${name}_info TOY_CAPTION="${caption}")
+	target_link_libraries(toy-${name} pico_stdlib hardware_pio hardware_dma)
+	set(GLSL_TARGET toy-${name})
+	set(GLSL_VS ${SHADERS}/toy.vert)
+	glsl_program(toy_${name} -a a_pos:float:2 -v triangles)
+	unset(GLSL_VS)
+	glsl_program(hud -a a_pos:float:2 -a a_uv:float:2 -a a_color:ubyte_norm:4 -v triangles)
+	pico_enable_stdio_uart(toy-${name} 1)
+	pico_enable_stdio_usb(toy-${name} 0)
+	pico_add_extra_outputs(toy-${name})
+endfunction()
+toy_demo(tunnel  "TUNNEL")
+toy_demo(spheres "SPHERES")
+toy_demo(clouds  "CLOUDS")
+toy_demo(voronoi "VORONOI")
+# games: self-playing, the Pico keeps the state, the shader draws it all
+toy_demo(pong      "PONG"      pong.c)
+toy_demo(snake     "SNAKE"     snake.c)
+toy_demo(asteroids "ASTEROIDS" asteroids.c)
 
 # ---- Jet examples on the GPU ----------------------------------------------------
 # The JetExamples scenes picojet runs (jet/examples, MIT, CubeCoders), each
