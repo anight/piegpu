@@ -11,8 +11,7 @@
 #include "renderer.h"
 #include "textures.h"
 #include "geometry.h"
-#include "receiver.h"
-#include "hostlink.h"
+#include "link/link.h"
 #include "programs.h"
 #include <circle/types.h>
 
@@ -50,7 +49,7 @@ public:
 	static const unsigned MaxBufferBytes = 16 * 1024 * 1024;
 
 public:
-	CCommands (CRenderer *pRenderer, CReceiver *pReceiver);
+	CCommands (CRenderer *pRenderer, CLink *pLink);
 	~CCommands (void);
 
 	/// \brief RESET: delete all objects, default state, discard the frame
@@ -61,7 +60,8 @@ public:
 
 	/// \brief Replies go to the host's USB stream from now on (the host drives
 	/// the GPU instead of the Pico)
-	void SetHostLink (CHostLink *pHostLink)		{ m_pHostLink = pHostLink; }
+	/// \brief The link replies go to (the kernel's active one)
+	void SetLink (CLink *pLink)			{ m_pLink = pLink; }
 
 	/// \brief Execute one command packet
 	void Execute (u32 nHeader, const u32 *pPayload);
@@ -145,8 +145,7 @@ private:
 
 private:
 	CRenderer *m_pRenderer;
-	CReceiver *m_pReceiver;
-	CHostLink *m_pHostLink;
+	CLink *m_pLink;
 	CTextures m_Textures;
 	CGeometry m_Geometry;
 

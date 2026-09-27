@@ -11,7 +11,7 @@
 #define _renderer_h
 
 #include <v3d.h>
-#include <st7789dma.h>
+#include "display/output.h"
 #include <circle/gpiopin.h>
 #include <circle/types.h>
 
@@ -101,7 +101,7 @@ public:
 	static const unsigned RecordPoolBytes = 512 * 1024;
 
 public:
-	CRenderer (CV3D *pV3D, CST7789DMADisplay *pDisplay);
+	CRenderer (CV3D *pV3D, COutput *pOutput);
 	~CRenderer (void);
 
 	boolean Initialize (void);
@@ -158,7 +158,7 @@ private:
 
 private:
 	CV3D *m_pV3D;
-	CST7789DMADisplay *m_pDisplay;
+	COutput *m_pOutput;
 	CGPIOPin m_PinFrame;
 
 	unsigned m_nWidth;

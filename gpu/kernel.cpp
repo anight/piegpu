@@ -1,7 +1,8 @@
 //
 // gpu: the Pi Zero side of the Pico GPU (docs/protocol.md).
-// Receives the command stream from the Pico over I2S and renders with the V3D
-// on the ST7789 panel.
+// Receives the command stream from the host over a link (link/: the Pico's
+// I2S, or a PC over USB) and renders with the V3D to an output (display/: the
+// ST7789 panel).
 //
 #include "kernel.h"
 #include <circle/2dgraphics.h>
@@ -11,13 +12,6 @@
 #include <pgpu_protocol.h>
 #include <circle/memory.h>
 
-// ST7789 panel on SPI0 (CE0), 75 MHz = 300 MHz core / 4 (config.txt core_freq=300)
-#define SPI_CLOCK_SPEED		75000000
-#define DC_PIN			24
-#define RESET_PIN		25
-#define DISPLAY_WIDTH		320
-#define DISPLAY_HEIGHT		240
-
 #define MAX_PACKETS_PER_LOOP	64
 
 LOGMODULE ("gpu");
@@ -26,11 +20,11 @@ CKernel::CKernel (void)
 :	m_Timer (&m_Interrupt),
 	m_Logger (m_Options.GetLogLevel (), &m_Timer),
 	m_DevLink (&m_Interrupt),
-	m_Display (&m_Interrupt, DC_PIN, RESET_PIN, DISPLAY_WIDTH, DISPLAY_HEIGHT,
-		   SPI_CLOCK_SPEED, 0, TRUE),		// little endian RGB565 from the V3D
-	m_HostLink (&m_DevLink),
-	m_Renderer (&m_V3D, &m_Display),
-	m_Commands (&m_Renderer, &m_Receiver)
+	m_Output (&m_Interrupt),
+	m_USBLink (&m_DevLink),
+	m_Renderer (&m_V3D, &m_Output),
+	m_Commands (&m_Renderer, &m_I2SLink),
+	m_pLinks {&m_USBLink, &m_I2SLink}
 {
 }
 
@@ -44,7 +38,7 @@ boolean CKernel::Initialize (void)
 	       && m_Interrupt.Initialize ()
 	       && m_Timer.Initialize ()
 	       && m_DevLink.Initialize ()
-	       && m_Display.Initialize ();
+	       && m_Output.Initialize ();
 }
 
 TShutdownMode CKernel::Run (void)
@@ -61,10 +55,12 @@ TShutdownMode CKernel::Run (void)
 	}
 	m_Commands.Reset ();
 
-	if (   !m_Receiver.Initialize ()
-	    || !m_HostLink.Initialize ())
+	for (unsigned i = 0; i < Links; i++)
 	{
-		LOGPANIC ("Receiver init failed");
+		if (!m_pLinks[i]->Initialize ())
+		{
+			LOGPANIC ("Link %u init failed", i);
+		}
 	}
 	LOGNOTE ("I2S slave: CLK pin 12, FS pin 35, DIN pin 38, DOUT pin 40; READY pin 36, FRAME pin 37");
 
@@ -73,7 +69,6 @@ TShutdownMode CKernel::Run (void)
 	unsigned nLastReport = m_Timer.GetUptime ();
 	unsigned nWindowStart = CTimer::GetClockTicks ();	// microseconds
 	unsigned nBusyUs = 0;			// receiving and executing packets
-	u32 nCredited = 0;			// stream bytes reported to the host
 	while (1)
 	{
 		m_DevLink.Update ();
@@ -82,35 +77,32 @@ TShutdownMode CKernel::Run (void)
 			DumpScreenshot ();
 		}
 
-		// commands from the Pico (I2S), or from a PC over USB once it has
-		// switched the USB link to its binary stream (then the Pico is ignored)
-		boolean bHost = m_DevLink.IsStreaming ();
-		if (bHost)
+		// commands from the first active link (a PC over USB once it has
+		// switched to its binary stream, else the Pico); the others' input
+		// is discarded
+		CLink *pLink = nullptr;
+		for (unsigned k = 0; k < Links; k++)
 		{
-			m_Commands.SetHostLink (&m_HostLink);
-
-			// flow control: the host may send what the gadget's queue holds
-			// beyond what we have taken
-			u32 nReceived = m_DevLink.GetStreamReceived ();
-			if (nReceived != nCredited)
+			m_pLinks[k]->Update ();
+			if (!pLink && m_pLinks[k]->IsActive ())
 			{
-				m_HostLink.SendReply (PGPU_REPLY_CREDIT, &nReceived, 1);
-				nCredited = nReceived;
+				pLink = m_pLinks[k];
 			}
-
-			u32 nHeader;
-			while (m_Receiver.GetPacket (&nHeader) != nullptr)
+			else
 			{
+				u32 nHeader;
+				while (m_pLinks[k]->GetPacket (&nHeader) != nullptr)
+				{
+				}
 			}
 		}
+		m_Commands.SetLink (pLink);
 
 		u32 nHeader;
 		const u32 *pPayload;
 		unsigned nLoopStart = CTimer::GetClockTicks (), i;
 		for (i = 0;
-		     i < MAX_PACKETS_PER_LOOP
-		     && (pPayload = bHost ? m_HostLink.GetPacket (&nHeader)
-					  : m_Receiver.GetPacket (&nHeader)) != nullptr;
+		     i < MAX_PACKETS_PER_LOOP && (pPayload = pLink->GetPacket (&nHeader)) != nullptr;
 		     i++)
 		{
 			if (PGPU_HEADER_OP (nHeader) == PGPU_OP_DEBUG_SCREENSHOT)
@@ -130,7 +122,7 @@ TShutdownMode CKernel::Run (void)
 		unsigned nNow = m_Timer.GetUptime ();
 		if (nNow != nLastReport)
 		{
-			TReceiverStats R = m_Receiver.GetStats ();
+			TI2SLinkStats R = m_I2SLink.GetStats ();
 			TCommandStats C = m_Commands.GetStats ();
 			unsigned nFrames = C.nFrames ? C.nFrames : 1;
 
@@ -206,7 +198,7 @@ void CKernel::DumpScreenshot (void)
 
 void CKernel::ShowSplash (void)
 {
-	C2DGraphics Graphics (&m_Display);
+	C2DGraphics Graphics (m_Output.GetDisplay ());
 	if (!Graphics.Initialize ())
 	{
 		return;
@@ -221,5 +213,5 @@ void CKernel::ShowSplash (void)
 	Graphics.DrawText (nWidth / 2, 150, COLOR2D (160, 160, 160), "build " __TIME__,
 			   C2DGraphics::AlignCenter);
 	Graphics.UpdateDisplay ();
-	m_Display.WaitIdle ();
+	m_Output.WaitIdle ();
 }

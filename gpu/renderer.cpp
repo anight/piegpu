@@ -36,9 +36,9 @@ static unsigned NVStride (unsigned nShader)
 	return 12 + 4 * FragmentShaders[nShader].nVaryings;	// Xs, Ys (12.4), Zs, 1/Wc, varyings
 }
 
-CRenderer::CRenderer (CV3D *pV3D, CST7789DMADisplay *pDisplay)
+CRenderer::CRenderer (CV3D *pV3D, COutput *pOutput)
 :	m_pV3D (pV3D),
-	m_pDisplay (pDisplay),
+	m_pOutput (pOutput),
 	m_PinFrame (PIN_FRAME, GPIOModeOutput),
 	m_nBuffer (0),
 	m_nDraws (0),
@@ -62,8 +62,8 @@ unsigned CRenderer::GetVaryings (unsigned nShader)
 
 boolean CRenderer::Initialize (void)
 {
-	m_nWidth = m_pDisplay->GetWidth ();
-	m_nHeight = m_pDisplay->GetHeight ();
+	m_nWidth = m_pOutput->GetWidth ();
+	m_nHeight = m_pOutput->GetHeight ();
 	m_nTilesX = (m_nWidth + V3D_TILE_SIZE-1) / V3D_TILE_SIZE;
 	m_nTilesY = (m_nHeight + V3D_TILE_SIZE-1) / V3D_TILE_SIZE;
 	assert (m_nTilesX * m_nTilesY <= MAX_TILES);
@@ -520,15 +520,15 @@ boolean CRenderer::RenderJob (const TRenderTarget &rTarget, u32 nLoadColorBus, b
 	return bOK;
 }
 
-// hand the back buffer to the panel (after the previous frame's DMA) and swap
+// hand the back buffer to the output (once it has taken the previous frame)
+// and swap
 void CRenderer::Present (TRenderStats *pStats)
 {
 	unsigned nStart = CTimer::GetClockTicks ();
-	m_pDisplay->WaitIdle ();
+	m_pOutput->WaitIdle ();
 	unsigned nWaitUs = CTimer::GetClockTicks () - nStart;
 
-	const CDisplay::TArea Full = {0, m_nWidth-1, 0, m_nHeight-1};
-	m_pDisplay->SetArea (Full, m_pFrameBuffer[m_nBuffer], PanelDone, this);
+	m_pOutput->Show (m_pFrameBuffer[m_nBuffer], PanelDone, this);
 	m_nBuffer ^= 1;
 
 	m_PinFrame.Write (HIGH);		// FRAME pulse (>= 10 us)

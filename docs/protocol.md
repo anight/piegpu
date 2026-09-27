@@ -625,16 +625,18 @@ words wherever the Pico has nothing to send.
 
 ## 13. Pico library (*informative*)
 
-The Pico side has two layers:
+The host library (`libpgpu/`, board independent) has two layers:
 
-- **`pgpu`** (`pico/gpulink/pgpu.{h,c}`): one C function per command. It
+- **`pgpu`** (`libpgpu/pgpu.{h,c}`): one C function per command. It
   batches packets, splits large uploads, turns client-side arrays into
   `PROGRAM_DRAW_INLINE`, and parses replies into queues (`ERROR` replies
-  separately, `pgpu_poll_error`). The words go through a transport
-  (`pgpu_link.h`): on the Pico the I2S link (`pgpu_pico.c`: DMA over PIO,
-  READY before each batch, replies sampled into a DMA ring and parsed in a
-  1 ms timer); on a PC the Zero's USB (§13.3).
-- **`pgl`** (`pico/gpulink/gles/pgl.{h,c}`): the **OpenGL ES 2.0 API**, with
+  separately, `pgpu_poll_error`), including the reply stream of an I2S link
+  (`pgpu_rx_parse`, §9.1). The words go through a transport
+  (`libpgpu/pgpu_link.h`, one per link in `transports/`): on the Pico the I2S
+  link (`transports/pico-i2s`: DMA over PIO, READY before each batch, replies
+  sampled into a DMA ring and parsed in a 1 ms timer); on a PC the Zero's USB
+  (`transports/pc-usb`, §13.3). The builds per host board are in `hosts/`.
+- **`pgl`** (`libpgpu/gles/pgl.{h,c}`): the **OpenGL ES 2.0 API**, with
   the **GL ES 1.1 fixed-function calls** for program 0. It keeps the GL state
   (for `glGet*`, `glIsEnabled`, object names) and encodes it into commands.
   `gltest.c` (self test 8) exercises it using only `gl*` calls, on the Pico and
@@ -703,8 +705,8 @@ The Pico side has two layers:
 
 ### 13.3 pgl on a PC (tests)
 
-pgl and pgpu also build for Linux (`pico/gpulink/host`): the transport
-(`pgpu_host.c`) sends the packets to the Zero over its USB serial link (the
+pgl and pgpu also build for Linux (`hosts/pc`): the transport
+(`transports/pc-usb/pgpu_host.c`) sends the packets to the Zero over its USB serial link (the
 gpu app's devlink), so programs on the PC drive the GPU without the Pico:
 
 - **The stream:** the PC sends `pico-gpu-stream` (a new session each time);

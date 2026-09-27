@@ -1,10 +1,10 @@
 #!/bin/bash
 #
 # Build dEQP-GLES2 (the Khronos VK-GL-CTS) for pgl on the PC: the tests' GL
-# calls go through pgl (pico/gpulink/host) to the Zero over USB.
+# calls go through pgl (hosts/pc) to the Zero over USB.
 #
 # Result: third_party/deqp-build/modules/gles2/deqp-gles2 (run it with
-# tools/deqp/run-deqp.sh). Needs the host pgl build (pico/gpulink/host/build).
+# tools/deqp/run-deqp.sh). Needs the host pgl build (hosts/pc/build).
 #
 set -euo pipefail
 
@@ -12,7 +12,7 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 CTS=$ROOT/third_party/VK-GL-CTS
 BUILD=$ROOT/third_party/deqp-build
 COMMIT=1d3e8178af79e52d5467b379fad58f221fbe3d40
-HOST=$ROOT/pico/gpulink/host
+HOST=$ROOT/hosts/pc
 
 if [ ! -d "$CTS" ]; then
 	git clone https://github.com/KhronosGroup/VK-GL-CTS.git "$CTS"
@@ -27,7 +27,7 @@ make -C "$HOST/build" -j"$(nproc)" pgl
 
 # gl* functions of pgl.h for the platform's loader
 mkdir -p "$BUILD/generated"
-python3 - "$ROOT/pico/gpulink/gles/pgl.h" > "$BUILD/generated/pglFunctions.inl" <<'PY'
+python3 - "$ROOT/libpgpu/gles/pgl.h" > "$BUILD/generated/pglFunctions.inl" <<'PY'
 import re, sys
 names = re.findall(r'^\w[\w *]*?\b(gl[A-Z]\w*) \(', open(sys.argv[1]).read(), re.M)
 for n in sorted(set(names)):
@@ -36,7 +36,7 @@ PY
 
 cmake -S "$CTS" -B "$BUILD" -DDEQP_TARGET=pgl -DCMAKE_BUILD_TYPE=RelWithDebInfo \
 	-DPGL_DEQP_DIR="$ROOT/tools/deqp" \
-	-DPGL_INCLUDE_DIRS="$ROOT/pico/gpulink;$ROOT/pico/gpulink/gles;$ROOT/protocol" \
+	-DPGL_INCLUDE_DIRS="$ROOT/libpgpu;$ROOT/libpgpu/gles;$ROOT/protocol" \
 	-DPGL_GENERATED_DIR="$BUILD/generated" \
 	-DPGL_LIBRARY="$HOST/build/libpgl.a"
 make -C "$BUILD" -j"$(nproc)" deqp-gles2

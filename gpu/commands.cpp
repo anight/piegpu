@@ -169,10 +169,9 @@ static u8 *ConvertArray (CRenderer *pRenderer, const u8 *pSrc, unsigned nSrcStri
 	return pDst;
 }
 
-CCommands::CCommands (CRenderer *pRenderer, CReceiver *pReceiver)
+CCommands::CCommands (CRenderer *pRenderer, CLink *pLink)
 :	m_pRenderer (pRenderer),
-	m_pReceiver (pReceiver),
-	m_pHostLink (nullptr),
+	m_pLink (pLink),
 	m_Geometry (pRenderer, &m_Textures),
 	m_nBufferBytes (0),
 	m_nRetiredBuffers (0),
@@ -319,7 +318,7 @@ void CCommands::SendInfo (void)
 		MaxBuffers,
 		CTextures::MaxTextures,
 		4,
-		CReceiver::RingWords * 4
+		m_pLink->GetBufferBytes ()
 	};
 	Reply (PGPU_REPLY_INFO, Info, 7);
 }
@@ -426,9 +425,9 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 		u32 Status[10] =
 		{
 			m_nTotalFrames,
-			m_pReceiver->GetTotalCRCErrors (),
+			m_pLink->GetCRCErrors (),
 			m_nTotalErrors,
-			m_pReceiver->GetFreeBytes (),
+			m_pLink->GetFreeBytes (),
 			m_nLastFrameUs,
 			m_Load.nWindowUs,
 			m_Load.nFrames,
@@ -511,7 +510,7 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 			memcpy (Reply + 1, pPixels + nOffset, n * 4);
 			if (!this->Reply (PGPU_REPLY_PIXELS, Reply, 1 + n))
 			{
-				m_pReceiver->UpdateTx ();		// backlog full: wait for the link
+				m_pLink->Flush ();			// backlog full: wait for the link
 				nRetries++;
 				continue;
 			}
@@ -1736,12 +1735,7 @@ void CCommands::FramebufferFree (TFramebuffer *F)
 
 boolean CCommands::Reply (u8 uchOpcode, const u32 *pPayload, unsigned nLength)
 {
-	if (m_pHostLink)
-	{
-		return m_pHostLink->SendReply (uchOpcode, pPayload, nLength);
-	}
-
-	return m_pReceiver->SendReply (uchOpcode, pPayload, nLength);
+	return m_pLink->SendReply (uchOpcode, pPayload, nLength);
 }
 
 void CCommands::Error (u32 nCode, u32 nOpcode, u32 nDetail)

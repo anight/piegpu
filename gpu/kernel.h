@@ -11,10 +11,10 @@
 #include <circle/logger.h>
 #include <circle/types.h>
 #include <devlink.h>
-#include <st7789dma.h>
 #include <v3d.h>
-#include "receiver.h"
-#include "hostlink.h"
+#include "link/i2s_link.h"
+#include "link/usb_link.h"
+#include "display/panel_output.h"
 #include "renderer.h"
 #include "commands.h"
 
@@ -51,12 +51,15 @@ private:
 	CLogger			m_Logger;
 	CDevLink		m_DevLink;
 
-	CST7789DMADisplay	m_Display;
+	CPanelOutput		m_Output;		// the ST7789 (HDMI would go here)
 	CV3D			m_V3D;
-	CReceiver		m_Receiver;
-	CHostLink		m_HostLink;		// commands from a PC over USB (tests)
+	CI2SLink		m_I2SLink;		// commands from the Pico
+	CUSBLink		m_USBLink;		// commands from a PC over USB (tests)
 	CRenderer		m_Renderer;
 	CCommands		m_Commands;
+
+	static const unsigned Links = 2;
+	CLink			*m_pLinks[Links];	// in priority order: the first active one serves
 };
 
 #endif
