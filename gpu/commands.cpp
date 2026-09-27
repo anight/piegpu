@@ -193,6 +193,7 @@ CCommands::CCommands (CRenderer *pRenderer, CLink *pLink)
 	memset (&m_Load, 0, sizeof m_Load);
 	m_bJobPending = m_bJobClearColor = m_bJobClearZS = FALSE;
 	m_bPanelDrawn = m_bPanelZSValid = FALSE;
+	m_nDisplayWords = 0;
 	m_Geometry.SetJobFullHandler (JobFullHandler, this);
 	m_Textures.SetJobFlush (JobFullHandler, this);
 	m_Programs.SetJobFlush (JobFullHandler, this);
@@ -321,6 +322,34 @@ void CCommands::SendInfo (void)
 		m_pLink->GetBufferBytes ()
 	};
 	Reply (PGPU_REPLY_INFO, Info, 7);
+
+	if (m_nDisplayWords)
+	{
+		Reply (PGPU_REPLY_DISPLAY, m_Display, m_nDisplayWords);
+	}
+}
+
+void CCommands::SetDisplay (const u32 *pPayload, unsigned nWords, boolean bSend)
+{
+	assert (nWords <= DisplayWords);
+	memcpy (m_Display, pPayload, nWords * 4);
+	m_nDisplayWords = nWords;
+	if (bSend)
+	{
+		Reply (PGPU_REPLY_DISPLAY, m_Display, m_nDisplayWords);
+	}
+}
+
+boolean CCommands::IsBetweenFrames (void) const
+{
+	return    !m_bPanelDrawn
+	       && (m_nFramebuffer != 0 || m_pRenderer->GetDraws () == 0);
+}
+
+void CCommands::ScreenChanged (void)
+{
+	m_bPanelZSValid = FALSE;
+	UpdateTarget ();
 }
 
 void CCommands::Execute (u32 nHeader, const u32 *pPayload)

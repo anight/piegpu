@@ -13,6 +13,9 @@
 # waits for rpiboot. Apps must use CDevLink (devtools/devlink.h), which provides the
 # log over USB serial, the reboot magic and a watchdog.
 #
+# CMDLINE sets the kernel command line (cmdline.txt), e.g. CMDLINE="output=panel"
+# for the gpu app (docs/protocol.md 14: output=, panel=, hdmi_pixels=).
+#
 # A photo of the display is taken after booting (CAMERA=/dev/videoN, default
 # /dev/video0 if present, CAMERA=none to disable; CAMERA_ROTATE=0|180, default 180).
 #
@@ -136,6 +139,8 @@ make -C "$APP" -s
 mkdir -p "$BOOTDIR"
 cp "$CIRCLEBOOT"/{bootcode.bin,start.elf,fixup.dat} "$BOOTDIR/"
 cp "$HERE/config.txt" "$BOOTDIR/config.txt"
+# the kernel command line (Circle's options and the app's, e.g. CMDLINE="output=hdmi")
+printf '%s\n' "${CMDLINE:-}" > "$BOOTDIR/cmdline.txt"
 cp "$APP/kernel.img" "$BOOTDIR/kernel.img"
 
 reboot_app

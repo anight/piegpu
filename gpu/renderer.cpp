@@ -36,9 +36,9 @@ static unsigned NVStride (unsigned nShader)
 	return 12 + 4 * FragmentShaders[nShader].nVaryings;	// Xs, Ys (12.4), Zs, 1/Wc, varyings
 }
 
-CRenderer::CRenderer (CV3D *pV3D, COutput *pOutput)
+CRenderer::CRenderer (CV3D *pV3D)
 :	m_pV3D (pV3D),
-	m_pOutput (pOutput),
+	m_pOutput (nullptr),
 	m_PinFrame (PIN_FRAME, GPIOModeOutput),
 	m_nBuffer (0),
 	m_nDraws (0),
@@ -60,13 +60,14 @@ unsigned CRenderer::GetVaryings (unsigned nShader)
 	return FragmentShaders[nShader].nVaryings;
 }
 
-boolean CRenderer::Initialize (void)
+boolean CRenderer::Initialize (COutput *pOutput)
 {
+	m_pOutput = pOutput;
 	m_nWidth = m_pOutput->GetWidth ();
 	m_nHeight = m_pOutput->GetHeight ();
-	m_nTilesX = (m_nWidth + V3D_TILE_SIZE-1) / V3D_TILE_SIZE;
-	m_nTilesY = (m_nHeight + V3D_TILE_SIZE-1) / V3D_TILE_SIZE;
-	assert (m_nTilesX * m_nTilesY <= MAX_TILES);
+	assert (m_nWidth <= MaxWidth && m_nHeight <= MaxHeight && m_nWidth * m_nHeight <= MaxPixels);
+	assert (   ((MaxWidth + V3D_TILE_SIZE-1) / V3D_TILE_SIZE)
+		 * ((MaxHeight + V3D_TILE_SIZE-1) / V3D_TILE_SIZE) <= MAX_TILES);
 
 	m_pBinCL = (u8 *) CV3D::Alloc (BIN_CL_SIZE);
 	m_pRenderCL = (u8 *) CV3D::Alloc (RENDER_CL_SIZE);
@@ -77,15 +78,15 @@ boolean CRenderer::Initialize (void)
 	m_pTileAlloc = (u8 *) CV3D::Alloc (TILE_ALLOC_SIZE);
 	m_pTileState = (u8 *) CV3D::Alloc (MAX_TILES * V3D_TILE_STATE_SIZE);
 	m_pOverflow = (u8 *) CV3D::Alloc (OVERFLOW_SIZE);
+	// for the largest screen: the heap doesn't give back big blocks
 	for (unsigned i = 0; i < 2; i++)
 	{
-		m_pFrameBuffer[i] = (u16 *) CV3D::Alloc (m_nWidth * m_nHeight * sizeof (u16));
-		memset (m_pFrameBuffer[i], 0, m_nWidth * m_nHeight * sizeof (u16));
-		CV3D::Flush (m_pFrameBuffer[i], m_nWidth * m_nHeight * sizeof (u16));
+		m_pFrameBuffer[i] = (u16 *) CV3D::Alloc (MaxPixels * sizeof (u16));
 	}
+	ClearFrameBuffers ();
 	m_pDraws = new TDraw[MaxDraws];
 
-	m_pDepthBuffer = (u32 *) CV3D::Alloc (DEPTH_BUFFER_SIZE (m_nWidth, m_nHeight));
+	m_pDepthBuffer = (u32 *) CV3D::Alloc (DEPTH_BUFFER_SIZE (MaxWidth, MaxHeight));
 
 	// all fragment shader variants in one block (8-byte instructions)
 	unsigned nWords = 0;
@@ -107,6 +108,35 @@ boolean CRenderer::Initialize (void)
 	CV3D::Flush (m_pShaderCode, nWords * 4);
 
 	return TRUE;
+}
+
+boolean CRenderer::SetOutput (COutput *pOutput, unsigned nWidth, unsigned nHeight)
+{
+	if (nWidth > MaxWidth || nHeight > MaxHeight || nWidth * nHeight > MaxPixels)
+	{
+		return FALSE;
+	}
+
+	m_pOutput->WaitIdle ();
+	if (!pOutput->SetSize (nWidth, nHeight))
+	{
+		return FALSE;
+	}
+	m_pOutput = pOutput;
+	m_nWidth = nWidth;
+	m_nHeight = nHeight;
+	ClearFrameBuffers ();
+
+	return TRUE;
+}
+
+void CRenderer::ClearFrameBuffers (void)
+{
+	for (unsigned i = 0; i < 2; i++)
+	{
+		memset (m_pFrameBuffer[i], 0, m_nWidth * m_nHeight * sizeof (u16));
+		CV3D::Flush (m_pFrameBuffer[i], m_nWidth * m_nHeight * sizeof (u16));
+	}
 }
 
 boolean CRenderer::AddTriangles (const TDrawSetup &rSetup, const float *pVertices, unsigned nVertices)

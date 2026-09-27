@@ -15,6 +15,8 @@
 #include "link/i2s_link.h"
 #include "link/usb_link.h"
 #include "display/panel_output.h"
+#include "display/hdmi_output.h"
+#include "display/hdmi_monitor.h"
 #include "renderer.h"
 #include "commands.h"
 
@@ -36,7 +38,12 @@ public:
 	TShutdownMode Run (void);
 
 private:
-	void ShowSplash (void);
+	void ChooseOutput (COutput **ppOutput, unsigned *pWidth, unsigned *pHeight);
+	void HDMISize (unsigned *pWidth, unsigned *pHeight);
+	void ApplyOutput (void);
+	void SendDisplay (boolean bSend = TRUE);
+	void ShowText (COutput *pOutput, const char *pTitle, const char *pLine1, const char *pLine2);
+	void ShowSplash (COutput *pOutput);
 	void DumpScreenshot (void);
 
 private:
@@ -51,7 +58,16 @@ private:
 	CLogger			m_Logger;
 	CDevLink		m_DevLink;
 
-	CPanelOutput		m_Output;		// the ST7789 (HDMI would go here)
+	// the outputs (docs/protocol.md 14): output=auto|panel|hdmi, panel=none,
+	// hdmi_pixels=N in cmdline.txt
+	enum TOutputMode {OutputAuto, OutputPanel, OutputHDMI};
+	TOutputMode		m_OutputMode;
+	boolean			m_bPanelPresent;
+	unsigned		m_nHDMIPixels;		// the largest screen on HDMI
+	CPanelOutput		m_Panel;
+	CHDMIOutput		m_HDMI;
+	CHDMIMonitor		m_Monitor;
+	boolean			m_bOutputPending;	// to be chosen again between frames
 	CV3D			m_V3D;
 	CI2SLink		m_I2SLink;		// commands from the Pico
 	CUSBLink		m_USBLink;		// commands from a PC over USB (tests)

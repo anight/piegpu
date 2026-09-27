@@ -2,12 +2,14 @@
 // gpu: the Pi Zero side of the Pico GPU (docs/protocol.md).
 // Receives the command stream from the host over a link (link/: the Pico's
 // I2S, or a PC over USB) and renders with the V3D to an output (display/: the
-// ST7789 panel).
+// ST7789 panel, or HDMI: by default HDMI while a monitor is connected, else
+// the panel).
 //
 #include "kernel.h"
 #include <circle/2dgraphics.h>
 #include <circle/machineinfo.h>
 #include <circle/string.h>
+#include <circle/util.h>
 #include <circle/synchronize.h>
 #include <pgpu_protocol.h>
 #include <circle/memory.h>
@@ -20,9 +22,13 @@ CKernel::CKernel (void)
 :	m_Timer (&m_Interrupt),
 	m_Logger (m_Options.GetLogLevel (), &m_Timer),
 	m_DevLink (&m_Interrupt),
-	m_Output (&m_Interrupt),
+	m_OutputMode (OutputAuto),
+	m_bPanelPresent (TRUE),
+	m_nHDMIPixels (640 * 360),
+	m_Panel (&m_Interrupt),
+	m_bOutputPending (FALSE),
 	m_USBLink (&m_DevLink),
-	m_Renderer (&m_V3D, &m_Output),
+	m_Renderer (&m_V3D),
 	m_Commands (&m_Renderer, &m_I2SLink),
 	m_pLinks {&m_USBLink, &m_I2SLink}
 {
@@ -34,11 +40,119 @@ CKernel::~CKernel (void)
 
 boolean CKernel::Initialize (void)
 {
+	const char *pOutput = m_Options.GetAppOptionString ("output", "auto");
+	m_OutputMode =   strcmp (pOutput, "panel") == 0 ? OutputPanel
+		       : strcmp (pOutput, "hdmi") == 0 ? OutputHDMI : OutputAuto;
+	m_bPanelPresent = strcmp (m_Options.GetAppOptionString ("panel", "yes"), "none") != 0;
+	m_nHDMIPixels = m_Options.GetAppOptionDecimal ("hdmi_pixels", m_nHDMIPixels);
+	if (m_nHDMIPixels < 320 * 240 || m_nHDMIPixels > CRenderer::MaxPixels)
+	{
+		m_nHDMIPixels = 640 * 360;
+	}
+
 	return    m_Logger.Initialize (&m_Null)
 	       && m_Interrupt.Initialize ()
 	       && m_Timer.Initialize ()
 	       && m_DevLink.Initialize ()
-	       && m_Output.Initialize ();
+	       && (!(m_bPanelPresent || m_OutputMode == OutputPanel) || m_Panel.Initialize ())
+	       && (m_OutputMode == OutputPanel || m_HDMI.Initialize ());
+}
+
+// where frames go now, at which size
+void CKernel::ChooseOutput (COutput **ppOutput, unsigned *pWidth, unsigned *pHeight)
+{
+	if (   m_OutputMode == OutputPanel
+	    || (   m_OutputMode == OutputAuto && m_bPanelPresent
+		&& !m_Monitor.GetState ().bConnected))
+	{
+		*ppOutput = &m_Panel;
+		*pWidth = 320;
+		*pHeight = 240;
+		return;
+	}
+
+	*ppOutput = &m_HDMI;
+	HDMISize (pWidth, pHeight);
+}
+
+// the screen on HDMI: the monitor's preferred mode (or else the mode sent)
+// divided by the smallest whole number that brings it down to hdmi_pixels;
+// the firmware scales it back up. The width is a multiple of 16 (the
+// framebuffer's pitch). Without a monitor the screen keeps its size.
+void CKernel::HDMISize (unsigned *pWidth, unsigned *pHeight)
+{
+	const THDMIState &M = m_Monitor.GetState ();
+	unsigned nWidth = M.bEDID ? M.nWidth : M.nSignalWidth;
+	unsigned nHeight = M.bEDID ? M.nHeight : M.nSignalHeight;
+	if (!M.bConnected || nWidth < 16 || nHeight < 16)
+	{
+		*pWidth = m_HDMI.GetWidth ();
+		*pHeight = m_HDMI.GetHeight ();
+		return;
+	}
+
+	unsigned nDivisor = 1;
+	while (   (nWidth / nDivisor) * (nHeight / nDivisor) > m_nHDMIPixels
+	       || nWidth / nDivisor > CRenderer::MaxWidth
+	       || nHeight / nDivisor > CRenderer::MaxHeight)
+	{
+		nDivisor++;
+	}
+	*pWidth = (nWidth / nDivisor) & ~15;
+	*pHeight = (nHeight / nDivisor) & ~1;
+}
+
+// between frames: the output and screen size for the monitor's state now
+void CKernel::ApplyOutput (void)
+{
+	m_bOutputPending = FALSE;
+
+	COutput *pOutput, *pOld = m_Renderer.GetOutput ();
+	unsigned nWidth, nHeight;
+	ChooseOutput (&pOutput, &nWidth, &nHeight);
+	if (   pOutput != pOld
+	    || nWidth != m_Renderer.GetWidth ()
+	    || nHeight != m_Renderer.GetHeight ())
+	{
+		if (!m_Renderer.SetOutput (pOutput, nWidth, nHeight))
+		{
+			LOGERR ("Can't show %ux%u on %s", nWidth, nHeight, pOutput == &m_HDMI ? "HDMI" : "the panel");
+		}
+		else
+		{
+			m_Commands.ScreenChanged ();
+			LOGNOTE ("Screen: %ux%u on %s", nWidth, nHeight, pOutput == &m_HDMI ? "HDMI" : "the panel");
+
+			if (pOld == &m_Panel && pOutput != &m_Panel)
+			{
+				const THDMIState &M = m_Monitor.GetState ();
+				CString Monitor, Screen;
+				Monitor.Format ("%s %ux%u", M.Name[0] ? M.Name : "monitor", M.nWidth, M.nHeight);
+				Screen.Format ("screen %ux%u", nWidth, nHeight);
+				ShowText (&m_Panel, "HDMI", Monitor, Screen);
+			}
+		}
+	}
+
+	SendDisplay ();
+}
+
+// the DISPLAY reply (docs/protocol.md 9)
+void CKernel::SendDisplay (boolean bSend)
+{
+	const THDMIState &M = m_Monitor.GetState ();
+	u32 Display[PGPU_DISPLAY_WORDS];
+	memset (Display, 0, sizeof Display);
+	Display[0] =   (m_Renderer.GetOutput () == &m_HDMI ? PGPU_OUTPUT_HDMI : PGPU_OUTPUT_PANEL)
+		     | (M.bConnected ? PGPU_DISPLAY_HDMI_CONNECTED : 0)
+		     | (m_bPanelPresent ? PGPU_DISPLAY_PANEL_PRESENT : 0)
+		     | (M.bEDID ? PGPU_DISPLAY_EDID : 0);
+	Display[1] = m_Renderer.GetWidth () | m_Renderer.GetHeight () << 16;
+	Display[2] = M.nWidth | M.nHeight << 16;
+	Display[3] = M.nRefreshMilliHz;
+	Display[4] = M.nSignalWidth | M.nSignalHeight << 16;
+	memcpy (&Display[5], M.Name, sizeof M.Name);		// 13 characters, zero padded
+	m_Commands.SetDisplay (Display, PGPU_DISPLAY_WORDS, bSend);
 }
 
 TShutdownMode CKernel::Run (void)
@@ -46,10 +160,19 @@ TShutdownMode CKernel::Run (void)
 	LOGNOTE ("Compile time: " __DATE__ " " __TIME__);
 	LOGNOTE ("Core clock %u MHz", CMachineInfo::Get ()->GetClockRate (CLOCK_ID_CORE) / 1000000);
 
-	ShowSplash ();
+	m_Monitor.Initialize ();
+	COutput *pOutput;
+	unsigned nWidth, nHeight;
+	ChooseOutput (&pOutput, &nWidth, &nHeight);
+	if (!pOutput->SetSize (nWidth, nHeight))
+	{
+		LOGPANIC ("No %ux%u screen", nWidth, nHeight);
+	}
+	LOGNOTE ("Screen: %ux%u on %s", nWidth, nHeight, pOutput == &m_HDMI ? "HDMI" : "the panel");
+	ShowSplash (pOutput);
 
 	if (   !m_V3D.Initialize ()
-	    || !m_Renderer.Initialize ())
+	    || !m_Renderer.Initialize (pOutput))
 	{
 		LOGPANIC ("V3D init failed");
 	}
@@ -64,7 +187,8 @@ TShutdownMode CKernel::Run (void)
 	}
 	LOGNOTE ("I2S slave: CLK pin 12, FS pin 35, DIN pin 38, DOUT pin 40; READY pin 36, FRAME pin 37");
 
-	m_Commands.SendInfo ();			// once after boot (docs/protocol.md 9)
+	SendDisplay (FALSE);
+	m_Commands.SendInfo ();			// once after boot, with DISPLAY (docs/protocol.md 9)
 
 	unsigned nLastReport = m_Timer.GetUptime ();
 	unsigned nWindowStart = CTimer::GetClockTicks ();	// microseconds
@@ -112,11 +236,25 @@ TShutdownMode CKernel::Run (void)
 			else
 			{
 				m_Commands.Execute (nHeader, pPayload);
+				if (m_bOutputPending && PGPU_HEADER_OP (nHeader) == PGPU_OP_FRAME_END)
+				{
+					ApplyOutput ();
+				}
 			}
 		}
 		if (i)
 		{
 			nBusyUs += CTimer::GetClockTicks () - nLoopStart;
+		}
+
+		// the monitor plugged in or out: a new screen from the next frame
+		if (m_Monitor.Update ())
+		{
+			m_bOutputPending = TRUE;
+		}
+		if (m_bOutputPending && m_Commands.IsBetweenFrames ())
+		{
+			ApplyOutput ();
 		}
 
 		unsigned nNow = m_Timer.GetUptime ();
@@ -157,14 +295,18 @@ TShutdownMode CKernel::Run (void)
 	return ShutdownHalt;
 }
 
-// the last presented frame as base64 lines between markers, for
-// devtools/screenshot.py
+// the frame on screen (the output's copy - HDMI's page - or else the last
+// presented one) as base64 lines between markers, for devtools/screenshot.py
 void CKernel::DumpScreenshot (void)
 {
 	static const char Base64[] =
 		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-	const u8 *p = (const u8 *) m_Renderer.GetLastFrame ();
+	const u8 *p = (const u8 *) m_Renderer.GetOutput ()->GetShownFrame ();
+	if (p == nullptr)
+	{
+		p = (const u8 *) m_Renderer.GetLastFrame ();
+	}
 	unsigned nBytes = m_Renderer.GetWidth () * m_Renderer.GetHeight () * 2;
 	CleanAndInvalidateDataCacheRange ((uintptr) p, nBytes);	// written by the V3D
 
@@ -196,22 +338,27 @@ void CKernel::DumpScreenshot (void)
 	m_DevLink.Update ();
 }
 
-void CKernel::ShowSplash (void)
+void CKernel::ShowSplash (COutput *pOutput)
 {
-	C2DGraphics Graphics (m_Output.GetDisplay ());
+	ShowText (pOutput, "pico-gpu", "waiting for the host", "build " __TIME__);
+}
+
+// a title and two lines in the middle of an output (not while it shows frames)
+void CKernel::ShowText (COutput *pOutput, const char *pTitle, const char *pLine1, const char *pLine2)
+{
+	C2DGraphics Graphics (pOutput->GetDisplay ());
 	if (!Graphics.Initialize ())
 	{
 		return;
 	}
 
 	unsigned nWidth = Graphics.GetWidth ();
+	unsigned y = Graphics.GetHeight () / 2 - 30;
 	Graphics.ClearScreen (COLOR2D (0, 0, 64));
-	Graphics.DrawText (nWidth / 2, 90, COLOR2D (255, 255, 255), "pico-gpu",
+	Graphics.DrawText (nWidth / 2, y, COLOR2D (255, 255, 255), pTitle,
 			   C2DGraphics::AlignCenter, Font12x22);
-	Graphics.DrawText (nWidth / 2, 130, COLOR2D (255, 255, 0), "waiting for the Pico",
-			   C2DGraphics::AlignCenter);
-	Graphics.DrawText (nWidth / 2, 150, COLOR2D (160, 160, 160), "build " __TIME__,
-			   C2DGraphics::AlignCenter);
+	Graphics.DrawText (nWidth / 2, y + 40, COLOR2D (255, 255, 0), pLine1, C2DGraphics::AlignCenter);
+	Graphics.DrawText (nWidth / 2, y + 60, COLOR2D (160, 160, 160), pLine2, C2DGraphics::AlignCenter);
 	Graphics.UpdateDisplay ();
-	m_Output.WaitIdle ();
+	pOutput->WaitIdle ();
 }

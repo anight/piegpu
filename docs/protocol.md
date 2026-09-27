@@ -215,7 +215,22 @@ Coordinates follow OpenGL:
   once the frame has rendered.
 - *Informative:* frequently changing geometry is best sent with `DRAW_INLINE`.
 
-### 6.4 Errors
+### 6.4 The screen: panel or HDMI
+
+- Framebuffer 0 ("the panel" elsewhere in this document) is the **screen**: the
+  ST7789 panel (320×240) or HDMI, where it is a framebuffer of a size chosen
+  for the monitor, which the Zero's firmware scales to the HDMI mode.
+- By default the screen is on HDMI while a monitor is connected and on the
+  panel otherwise; the kernel command line can change that (§14). The Zero
+  watches the HDMI hot-plug line and reads a new monitor's EDID.
+- **The screen changes only between frames**: before the first draw of a
+  frame. Both of its images are cleared then (a frame without a colour `CLEAR`
+  starts from black), and its depth and stencil are undefined until cleared.
+  The GL state does not change: the viewport and scissor box keep their values
+  (pgl moves ones that covered the whole screen, §13.1).
+- After each change the Zero sends `DISPLAY` (§9), and `INFO` gives the new size.
+
+### 6.5 Errors
 
 - An invalid command is ignored as a whole and reported with an `ERROR` reply.
   Invalid means an unknown opcode, a wrong LENGTH, an out-of-range id or enum, or
@@ -404,7 +419,7 @@ program wasn't compiled for it, the draw is reported as `ERROR` 10.
 | State | Default |
 |---|---|
 | matrices | identity |
-| viewport | full panel (0, 0, width, height), depth range 0 … 1 |
+| viewport | the whole screen (0, 0, width, height), depth range 0 … 1 |
 | enables | all off, except DITHER |
 | depth | func LESS, depth writes on |
 | blend | ONE, ZERO |
@@ -464,13 +479,14 @@ A reply to a request uses the request's opcode (`GET_INFO` → `INFO`, `PING` �
 
 | Op | Name | Payload | Sent when |
 |---|---|---|---|
-| `0x02` | INFO | `u32 version`, `u16 width, u16 height`, `u32 max_texture_size`, `u32 max_buffers`, `u32 max_textures`, `u32 max_lights`, `u32 ring_bytes` | After `RESET`, `GET_INFO`, and once after the Zero boots. version = `0x00010000` for 1.0. |
+| `0x02` | INFO | `u32 version`, `u16 width, u16 height` (the screen's, §6.4), `u32 max_texture_size`, `u32 max_buffers`, `u32 max_textures`, `u32 max_lights`, `u32 ring_bytes` | After `RESET`, `GET_INFO`, and once after the Zero boots. version = `0x00010000` for 1.0. |
 | `0x03` | PONG | `u32 cookie` | `PING` |
 | `0x04` | STATUS | `u32 frames`, `u32 crc_errors`, `u32 command_errors`, `u32 ring_free_bytes`, `u32 last_frame_us`, then the last measuring window (about a second): `u32 window_us`, `u32 window_frames`, `u32 v3d_busy_us` (binning and rendering), `u32 arm_busy_us` (receiving and executing commands, without the waits for the V3D and the panel), `u32 panel_wait_us` (for the panel DMA of the previous frame). Older Zeros send the first 5 words | `GET_STATUS` |
+| `0x05` | DISPLAY | `u32 output_flags`, `u16 width, u16 height`, `u16 monitor_width, u16 monitor_height`, `u32 monitor_refresh_mhz`, `u16 signal_width, u16 signal_height`, `u8 monitor_name[16]` (see below) | After each `INFO`, and whenever the screen or the HDMI monitor changes (§6.4) |
 | `0x11` | FRAME_DONE | `u32 frame_number`, `u32 render_us`, `u32 draws`, `u32 triangles` | After a frame whose `FRAME_END` had flag bit 0 set is handed to the panel |
 | `0x16` | PIXELS | `u32 offset`, `color pixels[1 … 61]` | `READ_PIXELS`: the pixels from `offset` (in pixels, rows bottom up), in as many replies as needed |
 | `0x7E` | CREDIT | `u32 bytes` | USB stream only (§13.3): the stream bytes the Zero has taken so far, since the session started |
-| `0x7F` | ERROR | `u32 code`, `u32 opcode`, `u32 detail` | An invalid command (§6.4) or a CRC error (code 1, opcode 0) |
+| `0x7F` | ERROR | `u32 code`, `u32 opcode`, `u32 detail` | An invalid command (§6.5) or a CRC error (code 1, opcode 0) |
 
 Error codes: 1 = CRC, 2 = unknown opcode, 3 = bad length, 4 = bad id,
 5 = bad enum, 6 = no such object, 7 = out of memory, 8 = (not used any more),
@@ -481,6 +497,20 @@ for length errors, the header word for CRC errors, otherwise 0.
 
 The Pico can recognise a reboot of the Zero by an `INFO` reply it didn't ask
 for; all objects and state are gone then.
+
+`DISPLAY` fields:
+
+- `output_flags`: bits 0–7 the screen's output (1 = the panel, 2 = HDMI); bit 8:
+  an HDMI monitor is connected; bit 9: a panel is configured (the Zero can't
+  detect one); bit 10: the monitor's EDID was read.
+- `width`, `height`: the screen (framebuffer 0), as in `INFO`.
+- `monitor_width`, `monitor_height`, `monitor_refresh_mhz`: the monitor's
+  preferred mode from its EDID (refresh in millihertz); 0 without an EDID.
+- `signal_width`, `signal_height`: the mode the Zero sends on HDMI. The
+  firmware sets it at boot and keeps it: the monitor's mode if one was
+  connected, else 640×480.
+- `monitor_name`: the monitor's name from the EDID (up to 13 characters), zero
+  padded; empty if it has none.
 
 ### 9.1 Reply stream alignment
 
@@ -659,7 +689,7 @@ The host library (`libpgpu/`, board independent) has two layers:
 | `glClear`, `glClearColor`, `glClearDepthf`, `glClearStencil` | `CLEAR` |
 | `glReadPixels` (RGBA, UNSIGNED_BYTE) | `READ_PIXELS`, rows at `GL_PACK_ALIGNMENT`. Alpha is 255 on targets without alpha. |
 | `glGetError` | Errors found by pgl at once. `ERROR` replies map to GL errors (ENUM → `GL_INVALID_ENUM`, LIMIT → `GL_INVALID_VALUE`, MEMORY → `GL_OUT_OF_MEMORY`, others → `GL_INVALID_OPERATION`). If commands were sent since the last call, `glGetError` first waits for them with a `PING` (about 80 µs over USB, 1–3 ms over I2S), so it reports their errors. `pglGetZeroError` gives the last one's code, opcode and detail; with `PGL_DEBUG` set (PC), pgl prints them. |
-| `pglSwapBuffers` | `FRAME_END` |
+| `pglSwapBuffers` | `FRAME_END`. Then, if a `DISPLAY` reply has brought a new screen size: a viewport and scissor box that covered the whole old screen are set to the new one (`VIEWPORT`, `SCISSOR`), as a window system does for a resized window. `pglGetScreenSize` gives the size; `pgpu_get_display` the whole `DISPLAY` reply. |
 
 ### 13.2 Differences from GL ES 2.0 and 1.1
 
@@ -784,8 +814,25 @@ gpu app's devlink), so programs on the PC drive the GPU without the Pico:
   level 0 page aligned, cube faces as whole mip trees; rows bottom-up as sent.
   ETC1 is decoded on the ARM. (Raster RGBA32R, used before, reads rows at a
   stride of max(width, 4) texels: verified with widths 1, 2, 4, 8 and 64.)
-- **Output:** the V3D renders RGB565 directly into two alternating panel buffers.
-  The ST7789 DMA driver sends them at 75 MHz (60 fps at 320×240).
+- **Output:** the V3D renders RGB565 directly into two alternating screen
+  buffers. The ST7789 DMA driver sends them to the panel at 75 MHz (60 fps at
+  320×240). On HDMI each frame is copied by DMA into the hidden page of a
+  two-page firmware framebuffer, which is shown from the next vertical sync.
+- **Screen and HDMI** (`gpu/kernel.cpp`, `gpu/display/`): the kernel command
+  line (`cmdline.txt`) sets `output=auto` (the default: HDMI while a monitor is
+  connected, else the panel), `output=panel` or `output=hdmi`; `panel=none`
+  says there is no panel (HDMI keeps the screen without a monitor then);
+  `hdmi_pixels=N` is the largest screen on HDMI (default 230400 = 640×360).
+  The HDMI screen is the monitor's preferred mode divided by the smallest whole
+  number that makes it fit (width a multiple of 16): 1920×1080 and 1280×720
+  give 640×360, 1024×600 gives 512×300.
+- **Hot plug:** the HDMI hot-plug line is GPIO46 on the Zero (low while a
+  monitor is connected), sampled every 20 ms; a change counts after 200 ms.
+  The EDID is read over the DDC bus (BSC2, address 0x50, 100 kHz, about 12 ms),
+  because the firmware's EDID property tag keeps answering with the EDID read
+  at boot after the monitor is gone. The firmware doesn't change the HDMI mode
+  after boot; `config.txt` has `hdmi_force_hotplug=1`, so that HDMI stays on
+  (640×480) when the Zero boots without a monitor.
 
 ## 15. Open points
 

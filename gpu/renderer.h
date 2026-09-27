@@ -99,15 +99,25 @@ public:
 	static const unsigned VertexPoolBytes = 4 * 1024 * 1024;
 	static const unsigned UniformPoolWords = 256 * 1024;
 	static const unsigned RecordPoolBytes = 512 * 1024;
+	static const unsigned MaxWidth = 1024;			// the screen (SetOutput)
+	static const unsigned MaxHeight = 1024;
+	static const unsigned MaxPixels = 1024 * 600;
 
 public:
-	CRenderer (CV3D *pV3D, COutput *pOutput);
+	CRenderer (CV3D *pV3D);
 	~CRenderer (void);
 
-	boolean Initialize (void);
+	/// \param pOutput where frames go first (its size is the screen's)
+	boolean Initialize (COutput *pOutput);
 
 	unsigned GetWidth (void) const		{ return m_nWidth; }
 	unsigned GetHeight (void) const		{ return m_nHeight; }
+
+	/// \brief Show the frames on another output, or at another size (between
+	///	   frames: waits for the current output); both buffers are cleared
+	/// \return FALSE if the output can't have the size (nothing changes then)
+	boolean SetOutput (COutput *pOutput, unsigned nWidth, unsigned nHeight);
+	COutput *GetOutput (void) const		{ return m_pOutput; }
 
 	/// \return Number of varyings of a shader variant
 	static unsigned GetVaryings (unsigned nShader);
@@ -154,6 +164,7 @@ public:
 	const u16 *GetLastFrame (void) const	{ return m_pFrameBuffer[m_nBuffer ^ 1]; }
 
 private:
+	void ClearFrameBuffers (void);
 	static void PanelDone (void *pParam);
 
 private:
@@ -163,8 +174,6 @@ private:
 
 	unsigned m_nWidth;
 	unsigned m_nHeight;
-	unsigned m_nTilesX;
-	unsigned m_nTilesY;
 
 	u8 *m_pBinCL;
 	u8 *m_pRenderCL;

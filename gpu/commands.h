@@ -55,11 +55,20 @@ public:
 	/// \brief RESET: delete all objects, default state, discard the frame
 	void Reset (void);
 
-	/// \brief Send INFO (after boot)
+	/// \brief Send INFO, and DISPLAY if set (after boot)
 	void SendInfo (void);
 
-	/// \brief Replies go to the host's USB stream from now on (the host drives
-	/// the GPU instead of the Pico)
+	/// \brief Set the DISPLAY reply (docs/protocol.md 9) and send it (if
+	///	   bSend); it's sent again after each INFO
+	void SetDisplay (const u32 *pPayload, unsigned nWords, boolean bSend = TRUE);
+
+	/// \return TRUE if nothing has been drawn into the screen's frame yet
+	///	    (the screen may change size now)
+	boolean IsBetweenFrames (void) const;
+
+	/// \brief The renderer's screen has changed (another size or output)
+	void ScreenChanged (void);
+
 	/// \brief The link replies go to (the kernel's active one)
 	void SetLink (CLink *pLink)			{ m_pLink = pLink; }
 
@@ -67,6 +76,8 @@ public:
 	void Execute (u32 nHeader, const u32 *pPayload);
 
 	TCommandStats GetStats (void);
+
+	static const unsigned DisplayWords = 9;
 	unsigned GetTextureBytes (void) const	{ return m_Textures.GetTotalBytes (); }
 
 	void SetLoadStats (const TLoadStats &rLoad)	{ m_Load = rLoad; }
@@ -201,6 +212,8 @@ private:
 	boolean m_bJobClearColor, m_bJobClearZS;
 	TJobClear m_JobClear;
 	boolean m_bPanelDrawn;		// a job rendered into the back buffer this frame
+	u32 m_Display[DisplayWords];	// the DISPLAY reply
+	unsigned m_nDisplayWords;	// 0: not set
 	boolean m_bPanelZSValid;
 	TRenderStats m_FrameStats;
 

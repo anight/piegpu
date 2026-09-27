@@ -119,11 +119,21 @@ enum pgpu_reply
 	PGPU_REPLY_INFO		= 0x02,
 	PGPU_REPLY_PONG		= 0x03,
 	PGPU_REPLY_STATUS	= 0x04,
+	PGPU_REPLY_DISPLAY	= 0x05,		/* the screen and the HDMI monitor */
 	PGPU_REPLY_FRAME_DONE	= 0x11,
 	PGPU_REPLY_PIXELS	= 0x16,
 	PGPU_REPLY_CREDIT	= 0x7E,		/* USB stream only: bytes received so far */
 	PGPU_REPLY_ERROR	= 0x7F
 };
+
+/* DISPLAY word 0: the output (bits 0-7) and flags */
+#define PGPU_OUTPUT_PANEL		1
+#define PGPU_OUTPUT_HDMI		2
+#define PGPU_DISPLAY_OUTPUT(w)		((w) & 0xFF)
+#define PGPU_DISPLAY_HDMI_CONNECTED	(1u << 8)	/* a monitor is plugged in */
+#define PGPU_DISPLAY_PANEL_PRESENT	(1u << 9)	/* a panel is configured */
+#define PGPU_DISPLAY_EDID		(1u << 10)	/* the monitor's EDID was read */
+#define PGPU_DISPLAY_WORDS		9
 
 enum pgpu_error
 {
