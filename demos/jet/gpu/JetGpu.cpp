@@ -85,6 +85,7 @@ int current;
 float water_time;
 int water_line;
 int W, H, TOP, panel_w, panel_h;
+int area_x, area_y, area_w, area_h;	// the scene on the screen (GL window coordinates)
 int draws, triangles, last_draws, last_triangles;
 uint32_t us_textures, us_draws, us_triangles;
 uint16_t gradient_copy[512];
@@ -227,7 +228,7 @@ GLuint texture_of (const Texture* t)
 // the scene's top row in GL window coordinates, for shaders that need rows
 float top_row ()
 {
-	return offscreen && !composed ? H - 0.5f : (float) (panel_h - TOP) - 0.5f;
+	return offscreen && !composed ? H - 0.5f : (float) (area_y + area_h) - 0.5f;
 }
 
 void flush_water ()
@@ -280,7 +281,8 @@ void flush_batch ()
 	glUniform4f (u_mode, state.texture ? 1.0f : 0.0f, state.key ? 1.0f : 0.0f, (float) state.address, 0.0f);
 	glUniform3f (u_flat, ((state.flat >> 11) & 31) / 31.0f, ((state.flat >> 5) & 63) / 63.0f,
 		     (state.flat & 31) / 31.0f);
-	glUniform1f (u_rows, state.scanlines ? top_row () : 0.0f);
+	glUniform2f (u_rows, state.scanlines ? top_row () : 0.0f,
+		     offscreen && !composed ? 1.0f : (float) H / area_h);
 	glBlendFunc (GL_SRC_ALPHA, state.additive ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
 	glBindBuffer (GL_ARRAY_BUFFER, 0);		// client arrays (a bound buffer takes offsets)
 	glVertexAttribPointer (a_pos, 4, GL_SHORT, GL_FALSE, sizeof (Vertex), &batch[0].x);
@@ -339,15 +341,36 @@ void rectangle (const State& s, int x0, int y0, int x1, int y1, int u0, int v0, 
 
 // ---- the runtime's calls ------------------------------------------------------------------
 
+// where the scene goes: the screen (the viewport, whole between frames),
+// as large as fits in the scene's proportions, centred; rows from TOP on.
+// Again each frame: the screen changes with an HDMI monitor
+void place ()
+{
+	GLint vp[4];
+	glGetIntegerv (GL_VIEWPORT, vp);
+	panel_w = vp[2];
+	panel_h = vp[3];
+	if (panel_w * (TOP + H) <= panel_h * W)
+	{
+		area_w = panel_w;
+		area_h = panel_w * H / W;
+	}
+	else
+	{
+		area_h = panel_h * H / (TOP + H);
+		area_w = area_h * W / H;
+	}
+	int top = TOP * area_h / H;
+	area_x = (panel_w - area_w) / 2;
+	area_y = (panel_h - area_h - top) / 2;
+}
+
 void init (int width, int height, int top)
 {
 	W = width;
 	H = height;
 	TOP = top;
-	GLint vp[4];
-	glGetIntegerv (GL_VIEWPORT, vp);
-	panel_w = vp[2];
-	panel_h = vp[3];
+	place ();
 
 	program = glCreateProgram ();
 	glProgramBinaryOES (program, PGL_PROGRAM_BINARY_PGPU, &jet_info, sizeof jet_info);
@@ -408,6 +431,7 @@ void beginFrame ()
 {
 	frame_number++;
 	composed = false;
+	place ();
 	draws = triangles = 0;
 	if (offscreen)
 	{
@@ -418,9 +442,9 @@ void beginFrame ()
 	}
 	else
 	{
-		// the scene's rows on the panel (GL counts rows from the bottom)
-		glViewport (0, panel_h - TOP - H, W, H);
-		glScissor (0, panel_h - TOP - H, W, H);
+		// the scene's place on the screen
+		glViewport (area_x, area_y, area_w, area_h);
+		glScissor (area_x, area_y, area_w, area_h);
 	}
 	glEnable (GL_SCISSOR_TEST);
 	glDisable (GL_DEPTH_TEST);
@@ -445,8 +469,8 @@ void compose ()
 		return;
 	flush ();
 	glBindFramebuffer (GL_FRAMEBUFFER, 0);
-	glViewport (0, panel_h - TOP - H, W, H);
-	glScissor (0, panel_h - TOP - H, W, H);
+	glViewport (area_x, area_y, area_w, area_h);
+	glScissor (area_x, area_y, area_w, area_h);
 	static const uint8_t unlit[4] = {128, 128, 128, 255};
 	const State s = {frame_texture[current], false, CLAMP_UV, false, 0, nullptr, false};
 	rectangle (s, 0, 0, W, H, 0, 1024, 1024, 0, unlit);

@@ -4,9 +4,10 @@
 // render, effects, afterRender, present - but Jet's pixel work is done by the
 // V3D (jet/gpu/JetGpu.cpp): the Pico keeps no framebuffer.
 //
-// The scene fills the 320x240 panel (picojet's is 320x200); over it, as in the
-// other demos, the half-size HUD top right (frame rate and loads: hud.c,
-// perf.c) and the example's title bottom left.
+// The scene is 320x240 (picojet's is 320x200): it fills the panel, and on a
+// larger screen (HDMI) it's scaled up to fit, centred (JetGpu::place). Over
+// it, as in the other demos, the half-size HUD in the screen's top right
+// (frame rate and loads: hud.c, perf.c) and the example's title bottom left.
 #include "Runtime.hpp"
 #include "Display.hpp"
 #include "JetGpu.hpp"
@@ -26,8 +27,12 @@ extern "C" {
 #define PICOJET_EXAMPLE_NAME "Jet example"
 #endif
 
-/* Supplied by the example, as on the ESP32. */
+/* Supplied by the example, as on the ESP32 (renamed jet_app_main: jet.cmake). */
 extern "C" void app_main (void);
+
+#ifdef main	/* renamed by the host's build (ESP-IDF: pgpu_app_main), called from C */
+extern "C" int main (void);
+#endif
 
 int main (void)
 {
@@ -51,12 +56,14 @@ constexpr int TOP = 0;				// the scene's first row on the panel
 void hud (const perf_t& perf)
 {
 	char s[48];
+	unsigned screen_w, screen_h;
+	pglGetScreenSize (&screen_w, &screen_h);
 	hud_begin ();
-	hud_perf (W - hud_perf_width (0.5f) - 2, 2, 0.5f, &perf);	// half size, top right
+	hud_perf (screen_w - hud_perf_width (0.5f) - 2, 2, 0.5f, &perf);	// half size, top right
 	std::snprintf (s, sizeof s, "%s", caption ? caption : PICOJET_EXAMPLE_NAME);
 	for (char* p = s; *p; p++)
 		*p = (char) std::toupper ((unsigned char) *p);	// the HUD font is upper case
-	hud_text_scaled (4, H - 12, s, HUD_RGBA (255, 255, 255, 200), 0.5f);
+	hud_text_scaled (4, screen_h - 12, s, HUD_RGBA (255, 255, 255, 200), 0.5f);
 	hud_end ();
 }
 
