@@ -28,3 +28,8 @@ sdcard/*
 # host Mesa for tools/glslc (tools/glslc/build-mesa.sh)
 /third_party/
 tools/glslc/build/
+
+# ESP-IDF builds (hosts/esp32p4: idf.py -B build-APP)
+hosts/esp32p4/build*/
+hosts/esp32p4/sdkconfig
+hosts/esp32p4/sdkconfig.old

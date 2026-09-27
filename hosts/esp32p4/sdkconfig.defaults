@@ -1,0 +1,12 @@
+CONFIG_IDF_TARGET="esp32p4"
+# the demos' static state and the self tests: a big main task stack
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
+# the apps poll (READY, FRAME, replies) on core 0: no idle-task watchdog there
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU0=n
+# 1 ms ticks: sleep_ms (usleep) of a few milliseconds
+CONFIG_FREERTOS_HZ=1000
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+# the Waveshare board's P4 is chip revision v1.0 (esptool); ESP-IDF v5.5
+# targets v3.x unless told otherwise
+CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
+CONFIG_ESP32P4_REV_MIN_100=y
