@@ -3,9 +3,11 @@
 //
 // HDMI (the Zero's mini-HDMI): the firmware's framebuffer (Circle's
 // CBcmFrameBuffer), RGB565 of any size - the firmware scales it to the HDMI
-// mode - with two pages: a frame is copied by DMA into the hidden one, which
-// is then shown (SetVirtualOffset). WaitIdle waits for the vertical sync, so
-// frames go out at the monitor's rate (60 Hz), one a refresh, without tearing.
+// mode - with three pages, which the renderer draws into directly
+// (GetBuffers): Show makes a page the one on screen from the next vertical
+// sync (SetVirtualOffset), WaitIdle waits for that sync. So frames go out at
+// the monitor's rate, one a refresh, without tearing and without a copy: one
+// page is on screen, one waits for the sync, one is drawn.
 // SetSize allocates a new framebuffer (the firmware replaces the old one).
 //
 #ifndef _hdmi_output_h
@@ -13,7 +15,6 @@
 
 #include "output.h"
 #include <circle/bcmframebuffer.h>
-#include <circle/dmachannel.h>
 
 class CHDMIOutput : public COutput
 {
@@ -28,6 +29,8 @@ public:
 	/// \param nWidth a multiple of 16 (the framebuffer's pitch must be nWidth * 2)
 	boolean SetSize (unsigned nWidth, unsigned nHeight);
 
+	unsigned GetBuffers (u16 **ppBuffers, unsigned nMax);
+
 	void Show (const void *pPixels, TDoneRoutine *pDone, void *pParam);
 
 	void WaitIdle (void);
@@ -41,8 +44,8 @@ private:
 	CBcmFrameBuffer *m_pFrameBuffer;
 	unsigned m_nWidth;
 	unsigned m_nHeight;
-	CDMAChannel m_DMA;
-	unsigned m_nShown;			// the page on screen (0 or 1)
+	static const unsigned Pages = 3;
+	unsigned m_nShown;			// the page on screen
 	boolean m_bFlipped;			// since the last vertical sync
 };
 

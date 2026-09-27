@@ -40,6 +40,7 @@ CRenderer::CRenderer (CV3D *pV3D)
 :	m_pV3D (pV3D),
 	m_pOutput (nullptr),
 	m_PinFrame (PIN_FRAME, GPIOModeOutput),
+	m_nBuffers (0),
 	m_nBuffer (0),
 	m_nDraws (0),
 	m_nVertexBytes (0),
@@ -81,9 +82,9 @@ boolean CRenderer::Initialize (COutput *pOutput)
 	// for the largest screen: the heap doesn't give back big blocks
 	for (unsigned i = 0; i < 2; i++)
 	{
-		m_pFrameBuffer[i] = (u16 *) CV3D::Alloc (MaxPixels * sizeof (u16));
+		m_pOwnBuffer[i] = (u16 *) CV3D::Alloc (MaxPixels * sizeof (u16));
 	}
-	ClearFrameBuffers ();
+	UseBuffers ();
 	m_pDraws = new TDraw[MaxDraws];
 
 	m_pDepthBuffer = (u32 *) CV3D::Alloc (DEPTH_BUFFER_SIZE (MaxWidth, MaxHeight));
@@ -125,14 +126,30 @@ boolean CRenderer::SetOutput (COutput *pOutput, unsigned nWidth, unsigned nHeigh
 	m_pOutput = pOutput;
 	m_nWidth = nWidth;
 	m_nHeight = nHeight;
-	ClearFrameBuffers ();
+	UseBuffers ();
 
 	return TRUE;
 }
 
+// the output's buffers if it has them (at least three: one on screen, one
+// waiting for the vertical sync, one being drawn), else our own two; cleared.
+// The first frame goes into buffer 1: the output shows buffer 0 at first.
+void CRenderer::UseBuffers (void)
+{
+	m_nBuffers = m_pOutput->GetBuffers (m_pFrameBuffer, MaxBuffers);
+	if (m_nBuffers < 3)
+	{
+		m_nBuffers = 2;
+		m_pFrameBuffer[0] = m_pOwnBuffer[0];
+		m_pFrameBuffer[1] = m_pOwnBuffer[1];
+	}
+	m_nBuffer = 1;
+	ClearFrameBuffers ();
+}
+
 void CRenderer::ClearFrameBuffers (void)
 {
-	for (unsigned i = 0; i < 2; i++)
+	for (unsigned i = 0; i < m_nBuffers; i++)
 	{
 		memset (m_pFrameBuffer[i], 0, m_nWidth * m_nHeight * sizeof (u16));
 		CV3D::Flush (m_pFrameBuffer[i], m_nWidth * m_nHeight * sizeof (u16));
@@ -266,7 +283,7 @@ void CRenderer::GetPanelTarget (TRenderTarget *pTarget, u32 *pPreviousBus) const
 	pTarget->nModeFlags = 0;			// BGR565 dithered, raster
 	pTarget->nLoadStore = LOADSTORE_BUFFER_COLOR | LOADSTORE_TILING_RASTER | LOADSTORE_FORMAT_BGR565;
 	pTarget->nZSBus = CV3D::BusAddress (m_pDepthBuffer);
-	*pPreviousBus = CV3D::BusAddress (m_pFrameBuffer[m_nBuffer ^ 1]);
+	*pPreviousBus = CV3D::BusAddress (m_pFrameBuffer[Previous ()]);
 }
 
 boolean CRenderer::RenderJob (const TRenderTarget &rTarget, u32 nLoadColorBus, boolean bLoadZS,
@@ -559,7 +576,7 @@ void CRenderer::Present (TRenderStats *pStats)
 	unsigned nWaitUs = CTimer::GetClockTicks () - nStart;
 
 	m_pOutput->Show (m_pFrameBuffer[m_nBuffer], PanelDone, this);
-	m_nBuffer ^= 1;
+	m_nBuffer = (m_nBuffer + 1) % m_nBuffers;
 
 	m_PinFrame.Write (HIGH);		// FRAME pulse (>= 10 us)
 	CTimer::SimpleusDelay (10);

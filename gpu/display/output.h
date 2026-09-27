@@ -5,7 +5,8 @@
 // little endian, rows top down) and shows each finished one here; the output
 // takes the pixels (a DMA to the panel, a copy to a framebuffer, ...) and says
 // when the buffer may be drawn into again. panel_output: the ST7789 on SPI0;
-// hdmi_output: the firmware's framebuffer (any size, scaled to the monitor).
+// hdmi_output: the firmware's framebuffer (any size, scaled to the monitor),
+// whose pages the renderer draws into directly (GetBuffers).
 //
 #ifndef _output_h
 #define _output_h
@@ -34,6 +35,11 @@ public:
 	{
 		return nWidth == GetWidth () && nHeight == GetHeight ();
 	}
+
+	/// \brief The output's own frame buffers, if the renderer can draw into
+	///	   them (Show then just shows one: no copy); valid until SetSize
+	/// \return Number of buffers (0: none, the renderer uses its own)
+	virtual unsigned GetBuffers (u16 **ppBuffers, unsigned nMax)	{ return 0; }
 
 	/// \brief Show a whole frame (GetWidth x GetHeight RGB565 pixels)
 	/// \param pDone Called (maybe from an interrupt) once the pixels have been taken

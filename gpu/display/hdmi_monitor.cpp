@@ -13,8 +13,9 @@
 
 #define SAMPLE_US		20000		// hot-plug line
 #define STABLE_SAMPLES		10		// a change counts after 200 ms
-#define EDID_TRIES		5		// a monitor may answer late after plugging in
+#define EDID_TRIES		3		// a monitor may answer late after plugging in
 #define EDID_RETRY_MS		100
+#define EDID_LATER_US		1000000		// then tried again every second
 
 // BSC2 (the HDMI DDC bus)
 #define BSC2_BASE		(ARM_IO_BASE + 0x805000)
@@ -45,7 +46,8 @@ LOGMODULE ("hdmi");
 CHDMIMonitor::CHDMIMonitor (void)
 :	m_bLastSample (FALSE),
 	m_nSameSamples (0),
-	m_nLastSampleTicks (0)
+	m_nLastSampleTicks (0),
+	m_nLastEDIDTicks (0)
 {
 	memset (&m_State, 0, sizeof m_State);
 }
@@ -74,6 +76,18 @@ boolean CHDMIMonitor::Update (void)
 		return FALSE;
 	}
 	m_nLastSampleTicks = nTicks;
+
+	// connected, but the EDID hasn't come: once a second
+	if (   m_State.bConnected && !m_State.bEDID
+	    && nTicks - m_nLastEDIDTicks >= EDID_LATER_US)
+	{
+		m_nLastEDIDTicks = nTicks;
+		u8 Block[128];
+		if (ReadEDID (Block) && ParseEDID (Block))
+		{
+			return TRUE;
+		}
+	}
 
 	boolean bSample = ReadHPD ();
 	if (bSample != m_bLastSample)
@@ -108,35 +122,45 @@ boolean CHDMIMonitor::ReadHPD (void)
 	return !(read32 (ARM_GPIO_GPLEV0 + HPD_PIN / 32 * 4) & 1 << (HPD_PIN % 32));
 }
 
-// the monitor's preferred mode (the first detailed timing) and name from EDID block 0
+// a monitor has appeared: its EDID (a few tries, then again every second)
 void CHDMIMonitor::Connected (void)
 {
 	memset (&m_State, 0, sizeof m_State);
 	m_State.bConnected = TRUE;
 
 	u8 Block[128];
-	boolean bRead = FALSE;
-	for (unsigned i = 0; i < EDID_TRIES && !bRead; i++)
+	for (unsigned i = 0; i < EDID_TRIES; i++)
 	{
 		if (i)
 		{
 			CTimer::SimpleMsDelay (EDID_RETRY_MS);
 		}
-		bRead = ReadEDID (Block);
+		if (ReadEDID (Block) && ParseEDID (Block))
+		{
+			return;
+		}
 	}
 
+	LOGWARN ("Monitor connected, no EDID yet");
+	m_nLastEDIDTicks = CTimer::GetClockTicks ();
+}
+
+// the monitor's preferred mode (the first detailed timing) and name from EDID
+// block 0; FALSE if the block isn't valid
+boolean CHDMIMonitor::ParseEDID (const u8 *pBlock)
+{
 	static const u8 Header[8] = {0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0};
 	u8 uchSum = 0;
-	for (unsigned i = 0; i < sizeof Block; i++)
+	for (unsigned i = 0; i < 128; i++)
 	{
-		uchSum += Block[i];
+		uchSum += pBlock[i];
 	}
-	const u8 *d = Block + 54;
+	const u8 *d = pBlock + 54;
 	unsigned nClockKHz = (d[0] | d[1] << 8) * 10;
-	if (!bRead || memcmp (Block, Header, sizeof Header) != 0 || uchSum != 0 || nClockKHz == 0)
+	if (memcmp (pBlock, Header, sizeof Header) != 0 || uchSum != 0 || nClockKHz == 0)
 	{
-		LOGWARN ("Monitor connected, no valid EDID");
-		return;
+		LOGWARN ("Invalid EDID (header %02X %02X, checksum %02X)", pBlock[0], pBlock[1], uchSum);
+		return FALSE;
 	}
 
 	m_State.bEDID = TRUE;
@@ -146,9 +170,10 @@ void CHDMIMonitor::Connected (void)
 	unsigned nVTotal = m_State.nHeight + (d[6] | (d[7] & 0x0F) << 8);
 	m_State.nRefreshMilliHz = (unsigned) ((u64) nClockKHz * 1000000 / (nHTotal * nVTotal));
 
+	memset (m_State.Name, 0, sizeof m_State.Name);
 	for (unsigned n = 0; n < 4; n++)		// the name: display descriptor FC
 	{
-		const u8 *p = Block + 54 + 18 * n;
+		const u8 *p = pBlock + 54 + 18 * n;
 		if (p[0] == 0 && p[1] == 0 && p[3] == 0xFC)
 		{
 			for (unsigned i = 0; i < 13 && p[5 + i] != '\n' && p[5 + i] != 0; i++)
@@ -158,8 +183,10 @@ void CHDMIMonitor::Connected (void)
 		}
 	}
 
-	LOGNOTE ("Monitor \"%s\" connected: %ux%u at %u.%03u Hz", m_State.Name, m_State.nWidth,
+	LOGNOTE ("Monitor \"%s\": %ux%u at %u.%03u Hz", m_State.Name, m_State.nWidth,
 		 m_State.nHeight, m_State.nRefreshMilliHz / 1000, m_State.nRefreshMilliHz % 1000);
+
+	return TRUE;
 }
 
 // EDID block 0 over DDC at 100 kHz (about 12 ms)

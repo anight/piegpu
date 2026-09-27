@@ -45,6 +45,7 @@ private:
 	boolean ReadHPD (void);
 	boolean ReadEDID (u8 *pBlock);
 	void Connected (void);
+	boolean ParseEDID (const u8 *pBlock);
 	void ReadSignal (void);
 
 private:
@@ -53,6 +54,7 @@ private:
 	boolean m_bLastSample;
 	unsigned m_nSameSamples;
 	unsigned m_nLastSampleTicks;
+	unsigned m_nLastEDIDTicks;		// connected without EDID: tried again every second
 };
 
 #endif

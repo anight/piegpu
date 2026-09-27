@@ -99,9 +99,10 @@ public:
 	static const unsigned VertexPoolBytes = 4 * 1024 * 1024;
 	static const unsigned UniformPoolWords = 256 * 1024;
 	static const unsigned RecordPoolBytes = 512 * 1024;
-	static const unsigned MaxWidth = 1024;			// the screen (SetOutput)
-	static const unsigned MaxHeight = 1024;
-	static const unsigned MaxPixels = 1024 * 600;
+	static const unsigned MaxWidth = 1920;			// the screen (SetOutput)
+	static const unsigned MaxHeight = 1200;
+	static const unsigned MaxPixels = 1920 * 1200;
+	static const unsigned MaxBuffers = 3;			// the output's (HDMI: three pages)
 
 public:
 	CRenderer (CV3D *pV3D);
@@ -161,10 +162,12 @@ public:
 	void DiscardFrame (void);
 
 	/// \return The frame last handed to the panel (RGB565, little endian)
-	const u16 *GetLastFrame (void) const	{ return m_pFrameBuffer[m_nBuffer ^ 1]; }
+	const u16 *GetLastFrame (void) const	{ return m_pFrameBuffer[Previous ()]; }
 
 private:
+	void UseBuffers (void);
 	void ClearFrameBuffers (void);
+	unsigned Previous (void) const		{ return (m_nBuffer + m_nBuffers - 1) % m_nBuffers; }
 	static void PanelDone (void *pParam);
 
 private:
@@ -187,9 +190,11 @@ private:
 	u8 *m_pTileAlloc;
 	u8 *m_pTileState;
 	u8 *m_pOverflow;
-	u16 *m_pFrameBuffer[2];
+	u16 *m_pOwnBuffer[2];		// for outputs without buffers (the panel)
+	u16 *m_pFrameBuffer[MaxBuffers];	// drawn in turn: the output's or m_pOwnBuffer
+	unsigned m_nBuffers;
 	u32 *m_pDepthBuffer;		// the panel's depth and stencil (T-format)
-	unsigned m_nBuffer;
+	unsigned m_nBuffer;		// the back buffer
 
 	struct TDraw
 	{

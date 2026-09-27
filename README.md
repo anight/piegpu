@@ -93,6 +93,6 @@ can't detect the panel: without one, set `panel=none` (see below).
 | `output=auto` | the default: HDMI while a monitor is connected, else the panel |
 | `output=panel`, `output=hdmi` | always this output |
 | `panel=none` | no panel: without a monitor the screen stays on HDMI |
-| `hdmi_pixels=N` | the largest screen on HDMI (default 230400 = 640x360) |
+| `hdmi_pixels=N` | cap the screen on HDMI to N pixels (default: the monitor's native resolution, up to 1920x1200) |
 
 With `devtools/run.sh`, pass these as `CMDLINE="output=panel" devtools/run.sh gpu`.

@@ -24,7 +24,7 @@ CKernel::CKernel (void)
 	m_DevLink (&m_Interrupt),
 	m_OutputMode (OutputAuto),
 	m_bPanelPresent (TRUE),
-	m_nHDMIPixels (640 * 360),
+	m_nHDMIPixels (CRenderer::MaxPixels),
 	m_Panel (&m_Interrupt),
 	m_bOutputPending (FALSE),
 	m_USBLink (&m_DevLink),
@@ -47,7 +47,7 @@ boolean CKernel::Initialize (void)
 	m_nHDMIPixels = m_Options.GetAppOptionDecimal ("hdmi_pixels", m_nHDMIPixels);
 	if (m_nHDMIPixels < 320 * 240 || m_nHDMIPixels > CRenderer::MaxPixels)
 	{
-		m_nHDMIPixels = 640 * 360;
+		m_nHDMIPixels = CRenderer::MaxPixels;
 	}
 
 	return    m_Logger.Initialize (&m_Null)
@@ -75,9 +75,10 @@ void CKernel::ChooseOutput (COutput **ppOutput, unsigned *pWidth, unsigned *pHei
 	HDMISize (pWidth, pHeight);
 }
 
-// the screen on HDMI: the monitor's preferred mode (or else the mode sent)
-// divided by the smallest whole number that brings it down to hdmi_pixels;
-// the firmware scales it back up. The width is a multiple of 16 (the
+// the screen on HDMI: the monitor's preferred mode (or else the mode sent),
+// or, if that's more than hdmi_pixels (default: as large as the renderer
+// goes, 1920x1200), divided by the smallest whole number that brings it down;
+// the firmware scales it to the HDMI mode. The width is a multiple of 16 (the
 // framebuffer's pitch). Without a monitor the screen keeps its size.
 void CKernel::HDMISize (unsigned *pWidth, unsigned *pHeight)
 {
@@ -122,19 +123,38 @@ void CKernel::ApplyOutput (void)
 		{
 			m_Commands.ScreenChanged ();
 			LOGNOTE ("Screen: %ux%u on %s", nWidth, nHeight, pOutput == &m_HDMI ? "HDMI" : "the panel");
-
-			if (pOld == &m_Panel && pOutput != &m_Panel)
-			{
-				const THDMIState &M = m_Monitor.GetState ();
-				CString Monitor, Screen;
-				Monitor.Format ("%s %ux%u", M.Name[0] ? M.Name : "monitor", M.nWidth, M.nHeight);
-				Screen.Format ("screen %ux%u", nWidth, nHeight);
-				ShowText (&m_Panel, "HDMI", Monitor, Screen);
-			}
 		}
 	}
 
+	// the panel says where the screen is (again when the monitor's EDID comes)
+	if (m_Renderer.GetOutput () == &m_HDMI)
+	{
+		ShowPanelNotice ();
+	}
+
 	SendDisplay ();
+}
+
+// with the screen on HDMI: the panel says so
+void CKernel::ShowPanelNotice (void)
+{
+	if (!m_bPanelPresent)
+	{
+		return;
+	}
+
+	const THDMIState &M = m_Monitor.GetState ();
+	CString Monitor, Screen;
+	if (M.bEDID)
+	{
+		Monitor.Format ("%s %ux%u", M.Name[0] ? M.Name : "monitor", M.nWidth, M.nHeight);
+	}
+	else
+	{
+		Monitor.Format (M.bConnected ? "monitor: no EDID yet" : "no monitor");
+	}
+	Screen.Format ("screen %ux%u", m_HDMI.GetWidth (), m_HDMI.GetHeight ());
+	ShowText (&m_Panel, "HDMI", Monitor, Screen);
 }
 
 // the DISPLAY reply (docs/protocol.md 9)
@@ -170,6 +190,10 @@ TShutdownMode CKernel::Run (void)
 	}
 	LOGNOTE ("Screen: %ux%u on %s", nWidth, nHeight, pOutput == &m_HDMI ? "HDMI" : "the panel");
 	ShowSplash (pOutput);
+	if (pOutput == &m_HDMI)
+	{
+		ShowPanelNotice ();
+	}
 
 	if (   !m_V3D.Initialize ()
 	    || !m_Renderer.Initialize (pOutput))

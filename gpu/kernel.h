@@ -44,6 +44,7 @@ private:
 	void SendDisplay (boolean bSend = TRUE);
 	void ShowText (COutput *pOutput, const char *pTitle, const char *pLine1, const char *pLine2);
 	void ShowSplash (COutput *pOutput);
+	void ShowPanelNotice (void);
 	void DumpScreenshot (void);
 
 private:
@@ -63,7 +64,7 @@ private:
 	enum TOutputMode {OutputAuto, OutputPanel, OutputHDMI};
 	TOutputMode		m_OutputMode;
 	boolean			m_bPanelPresent;
-	unsigned		m_nHDMIPixels;		// the largest screen on HDMI
+	unsigned		m_nHDMIPixels;		// the largest screen on HDMI (default: native)
 	CPanelOutput		m_Panel;
 	CHDMIOutput		m_HDMI;
 	CHDMIMonitor		m_Monitor;

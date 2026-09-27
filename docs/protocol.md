@@ -507,8 +507,7 @@ for; all objects and state are gone then.
 - `monitor_width`, `monitor_height`, `monitor_refresh_mhz`: the monitor's
   preferred mode from its EDID (refresh in millihertz); 0 without an EDID.
 - `signal_width`, `signal_height`: the mode the Zero sends on HDMI. The
-  firmware sets it at boot and keeps it: the monitor's mode if one was
-  connected, else 640×480.
+  firmware sets it at boot (`config.txt`, §14) and keeps it.
 - `monitor_name`: the monitor's name from the EDID (up to 13 characters), zero
   padded; empty if it has none.
 
@@ -816,23 +815,31 @@ gpu app's devlink), so programs on the PC drive the GPU without the Pico:
   stride of max(width, 4) texels: verified with widths 1, 2, 4, 8 and 64.)
 - **Output:** the V3D renders RGB565 directly into two alternating screen
   buffers. The ST7789 DMA driver sends them to the panel at 75 MHz (60 fps at
-  320×240). On HDMI each frame is copied by DMA into the hidden page of a
-  two-page firmware framebuffer, which is shown from the next vertical sync.
+  320×240). On HDMI the V3D renders straight into the pages of a three-page
+  firmware framebuffer: one on screen, one waiting for the vertical sync that
+  shows it, one being drawn; no copy (a DMA copy cost 2.6 ms of CPU a frame at
+  512×300: CPU-G 20% instead of 6%).
 - **Screen and HDMI** (`gpu/kernel.cpp`, `gpu/display/`): the kernel command
   line (`cmdline.txt`) sets `output=auto` (the default: HDMI while a monitor is
   connected, else the panel), `output=panel` or `output=hdmi`; `panel=none`
   says there is no panel (HDMI keeps the screen without a monitor then);
-  `hdmi_pixels=N` is the largest screen on HDMI (default 230400 = 640×360).
-  The HDMI screen is the monitor's preferred mode divided by the smallest whole
-  number that makes it fit (width a multiple of 16): 1920×1080 and 1280×720
-  give 640×360, 1024×600 gives 512×300.
+  `hdmi_pixels=N` caps the screen on HDMI. The HDMI screen is the monitor's
+  preferred mode (native: 1024×600 for a 1024×600 monitor), up to 1920×1200;
+  a larger one, or one over `hdmi_pixels`, is divided by the smallest whole
+  number that makes it fit (with `hdmi_pixels=230400`, 1920×1080 and 1280×720
+  give 640×360, 1024×600 gives 512×300). The width is a multiple of 16.
 - **Hot plug:** the HDMI hot-plug line is GPIO46 on the Zero (low while a
   monitor is connected), sampled every 20 ms; a change counts after 200 ms.
   The EDID is read over the DDC bus (BSC2, address 0x50, 100 kHz, about 12 ms),
   because the firmware's EDID property tag keeps answering with the EDID read
-  at boot after the monitor is gone. The firmware doesn't change the HDMI mode
-  after boot; `config.txt` has `hdmi_force_hotplug=1`, so that HDMI stays on
-  (640×480) when the Zero boots without a monitor.
+  at boot after the monitor is gone. While a connected monitor doesn't answer,
+  the EDID is tried again every second.
+- **HDMI mode:** the firmware chooses it at boot and doesn't change it later.
+  `config.txt` has `hdmi_force_hotplug=1`, so that HDMI stays on (640×480)
+  when the Zero boots without a monitor. By default the firmware prefers TV
+  modes: for a 1024×600 monitor it sent 720×576 at 50 Hz, capping frames at
+  50 fps. `hdmi_group=2` gave 1024×768 at 60 Hz; `hdmi_mode=87` with
+  `hdmi_cvt=1024 600 60` gives that monitor's own mode (measured: 59.9 fps).
 
 ## 15. Open points
 
