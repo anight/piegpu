@@ -9,6 +9,7 @@
 #include <circle/string.h>
 #include <circle/synchronize.h>
 #include <pgpu_protocol.h>
+#include <circle/memory.h>
 
 // ST7789 panel on SPI0 (CE0), 75 MHz = 300 MHz core / 4 (config.txt core_freq=300)
 #define SPI_CLOCK_SPEED		75000000
@@ -149,10 +150,13 @@ TShutdownMode CKernel::Run (void)
 				 C.nPrimitives / nFrames, C.nClipped / nFrames, C.nRejected / nFrames,
 				 C.nDropped, C.nRenderUs / nFrames, C.nPresentWaitUs / nFrames);
 			LOGNOTE ("link: %u packets, %u KB, CRC err %u, garbage %u, max fill %u KB, READY low %u | "
-				 "cmd errors %u (last %03X) | replies %u dropped %u late %u",
+				 "cmd errors %u (last %03X) | replies %u dropped %u late %u | "
+				 "heap %u KB free, textures %u KB",
 				 R.nPackets, (R.nWords - R.nIdleWords) / 256, R.nCRCErrors,
 				 R.nGarbageWords, R.nMaxFill / 256, R.nReadyLow,
-				 C.nErrors, C.nLastError, R.nReplies, R.nRepliesDropped, R.nTxLate);
+				 C.nErrors, C.nLastError, R.nReplies, R.nRepliesDropped, R.nTxLate,
+				 (unsigned) (CMemorySystem::Get ()->GetHeapFreeSpace (HEAP_LOW) / 1024),
+				 m_Commands.GetTextureBytes () / 1024);
 
 			nLastReport = nNow;
 		}

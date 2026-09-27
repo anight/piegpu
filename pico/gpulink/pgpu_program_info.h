@@ -29,6 +29,8 @@ typedef struct
 	const uint16_t *offsets;	/* size * components storage words for the vertex
 					   shaders, then as many for the fragment shader;
 					   0xffff = not used there (samplers: NULL) */
+	uint8_t array;			/* declared an array: GL names it "name[0]" even
+					   when one element is active (size 1) */
 } pgpu_uniform_info_t;
 
 typedef struct

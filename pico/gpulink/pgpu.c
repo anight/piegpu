@@ -795,11 +795,16 @@ static bool draw_inline_packet (uint32_t mode, uint32_t first, uint32_t count,
 	return true;
 }
 
+/* the largest vertex count of the current client arrays that fits a packet */
+uint32_t pgpu_client_max_vertices (void)
+{
+	uint32_t per_vertex = inline_words (1, 0) - inline_words (0, 0) + 1;
+	return (PGPU_STAGING_WORDS - 16 - inline_words (0, 0)) / per_vertex;
+}
+
 bool pgpu_draw_arrays_client (uint32_t mode, uint32_t first, uint32_t count)
 {
-	/* the largest vertex count that fits a packet */
-	uint32_t per_vertex = inline_words (1, 0) - inline_words (0, 0) + 1;
-	uint32_t max = (PGPU_STAGING_WORDS - 16 - inline_words (0, 0)) / per_vertex;
+	uint32_t max = pgpu_client_max_vertices ();
 
 	if (count <= max)
 	{

@@ -29,14 +29,16 @@
 #define HW_STREAM_INDEX		252		/* fixed-function client indices */
 #define HW_TEMP_VERTEX		253		/* program draws too large for a packet */
 #define HW_TEMP_INDEX		254
-#define MAX_TEXTURE_NAMES	110		/* Zero ids 1 .. 110 */
+#define MAX_TEXTURE_NAMES	109		/* Zero ids 1 .. 109 */
+#define HW_SURFACE_TEXTURE	110		/* pglInitSurface: the default framebuffer's colour */
 #define TEX_DEFAULT_2D		111		/* texture object 0 of each target */
 #define TEX_DEFAULT_CUBE	112
 #define HW_SCRATCH_BASE		112		/* colour for framebuffers without: 113 .. 120 */
 #define SCRATCH_TEXTURES	8
 #define MAX_RENDERBUFFER_NAMES	8		/* colour storage: Zero textures 121 .. 128 */
 #define HW_RENDERBUFFER_BASE	120
-#define MAX_FRAMEBUFFER_NAMES	16		/* Zero ids 1 .. 16 */
+#define MAX_FRAMEBUFFER_NAMES	15		/* Zero ids 1 .. 15 */
+#define HW_SURFACE_FRAMEBUFFER	16		/* pglInitSurface: the default framebuffer */
 #define MAX_OBJECT_NAMES	128		/* programs and shaders */
 #define MAX_HW_PROGRAMS		64
 #define UNITS			PGPU_MAX_TEXTURE_UNITS
@@ -121,6 +123,7 @@ typedef struct
 {
 	uint8_t kind;
 	bool delete_pending;
+	GLuint name;			/* its GL name: the slot + MAX_OBJECT_NAMES * a generation */
 	/* shader */
 	GLenum shader_type;
 	uint16_t attached;		/* number of programs it is attached to */
@@ -186,6 +189,8 @@ static struct
 	GLuint texture_names[MAX_TEXTURE_NAMES + 1];
 	GLuint renderbuffer_names[MAX_RENDERBUFFER_NAMES + 1];
 	GLuint framebuffer_names[MAX_FRAMEBUFFER_NAMES + 1];
+	GLuint last_name[4];			/* per kind: names only grow (as Mesa's) */
+	GLuint last_object_name;		/* shaders and programs */
 
 	buffer_t buffers[MAX_BUFFER_NAMES + 1];
 	texture_t textures[TEX_DEFAULT_CUBE + 1];	/* and the default objects */
@@ -261,6 +266,7 @@ static struct
 	uint32_t sent_ff_mask;
 	bool sent_ff_mask_valid;
 	GLuint sent_framebuffer;
+	bool surface;			/* the default framebuffer is HW_SURFACE_FRAMEBUFFER */
 	uint32_t stream_bytes[2];	/* sizes of the stream buffers */
 } S;
 
@@ -565,6 +571,27 @@ bool pglInit (void)
 	return ok;
 }
 
+bool pglInitSurface (unsigned width, unsigned height)
+{
+	if (!pglInit ())
+	{
+		return false;
+	}
+	if (width < 1 || height < 1 || width > MAX_SIZE || height > MAX_SIZE)
+	{
+		return false;
+	}
+	pgpu_texture_create (HW_SURFACE_TEXTURE, width, height, PGPU_RGBA8888);
+	pgpu_framebuffer_create (HW_SURFACE_FRAMEBUFFER, HW_SURFACE_TEXTURE, 0, PGPU_FRAMEBUFFER_DEPTH_STENCIL);
+	S.surface = true;
+	S.width = width;
+	S.height = height;
+	/* sent too: the Zero's viewport after RESET is the panel's */
+	glViewport (0, 0, (GLsizei) width, (GLsizei) height);
+	glScissor (0, 0, (GLsizei) width, (GLsizei) height);
+	return true;
+}
+
 void pglSwapBuffers (void)
 {
 	pgpu_frame_end (0);
@@ -684,6 +711,7 @@ static int map_texture_format (GLenum format, GLenum type)
 	switch (format)
 	{
 	case GL_RGBA: case GL_RGB: case GL_LUMINANCE: case GL_ALPHA: case GL_LUMINANCE_ALPHA:
+	case GL_BGRA_EXT:			/* EXT_texture_format_BGRA8888: stored RGBA */
 		break;
 	default:
 		return -1;
@@ -694,6 +722,7 @@ static int map_texture_format (GLenum format, GLenum type)
 		switch (format)
 		{
 		case GL_RGBA:		 return PGPU_RGBA8888;
+		case GL_BGRA_EXT:	 return PGPU_RGBA8888;
 		case GL_RGB:		 return PGPU_RGB888;
 		case GL_LUMINANCE:	 return PGPU_L8;
 		case GL_ALPHA:		 return PGPU_A8;
@@ -825,7 +854,8 @@ void glDisableClientState (GLenum array)
 
 static bool rb_is_color (GLenum f)
 {
-	return f == GL_RGBA4 || f == GL_RGB5_A1 || f == GL_RGB565 || f == GL_RGBA8_OES || f == GL_RGB8_OES;
+	return    f == GL_RGBA4 || f == GL_RGB5_A1 || f == GL_RGB565 || f == GL_RGBA8_OES || f == GL_RGB8_OES
+	       || f == GL_BGRA_EXT || f == GL_BGRA8_EXT;	/* EXT_texture_format_BGRA8888: stored RGBA */
 }
 
 static bool rb_has_depth (GLenum f)
@@ -962,7 +992,7 @@ static bool target_has_alpha (void)
 {
 	if (!S.framebuffer)
 	{
-		return false;
+		return S.surface;
 	}
 	const attachment_t *c = &S.framebuffers[S.framebuffer].att[ATT_COLOR];
 	if (c->type == GL_NONE)
@@ -1064,10 +1094,11 @@ static bool validate_framebuffer (void)
 			fb->sent_generation = generation;
 		}
 	}
-	if (S.sent_framebuffer != S.framebuffer)
+	GLuint hw = S.framebuffer ? S.framebuffer : S.surface ? HW_SURFACE_FRAMEBUFFER : 0;
+	if (S.sent_framebuffer != hw)
 	{
-		pgpu_bind_framebuffer (S.framebuffer);
-		S.sent_framebuffer = S.framebuffer;
+		pgpu_bind_framebuffer (hw);
+		S.sent_framebuffer = hw;
 	}
 	return true;
 }
@@ -1184,11 +1215,12 @@ static void gen_names (GLsizei n, GLuint *out, int kind, void (*take) (unsigned)
 	}
 	for (GLsizei i = 0; i < n; i++)
 	{
-		GLuint name = 1;
-		while (slot_of (kind, name))
+		GLuint name = S.last_name[kind] + 1;
+		while (!name || slot_of (kind, name))
 		{
-			name++;			/* the lowest name not in use */
+			name++;			/* names only grow (as Mesa's): a deleted one stays invalid */
 		}
+		S.last_name[kind] = name;
 		unsigned slot = slot_for (kind, name);
 		if (!slot)
 		{
@@ -1695,6 +1727,37 @@ static uint32_t unpack_stride (unsigned row_bytes)
 	return (row_bytes + a - 1) / a * a;
 }
 
+/* texel conversions for TEXTURE_DATA, rows at a time (a row is at most 8 KB:
+   MAX_SIZE RGBA texels) */
+static uint8_t convert_rows[8192];
+
+/* GL_BGRA_EXT pixels (EXT_texture_format_BGRA8888): the Zero stores RGBA, so
+   blue and red are swapped on the way */
+static void texture_data_bgra (GLuint name, GLint level, unsigned face, GLint x, GLint y,
+			       GLsizei width, GLsizei height, const void *pixels)
+{
+	uint32_t src_stride = unpack_stride (width * 4), row = width * 4;
+	uint32_t rows = sizeof convert_rows / row;
+	for (GLsizei y0 = 0; y0 < height; y0 += rows)
+	{
+		uint32_t n = height - y0 < (GLsizei) rows ? height - y0 : rows;
+		for (uint32_t r = 0; r < n; r++)
+		{
+			const uint8_t *src = (const uint8_t *) pixels + (y0 + r) * src_stride;
+			uint8_t *dst = convert_rows + r * row;
+			for (GLsizei i = 0; i < width; i++, src += 4, dst += 4)
+			{
+				dst[0] = src[2];
+				dst[1] = src[1];
+				dst[2] = src[0];
+				dst[3] = src[3];
+			}
+		}
+		pgpu_texture_data_stride (name, level, face, x, y + y0, width, n, PGPU_RGBA8888,
+					  convert_rows, row);
+	}
+}
+
 static void auto_mipmap (GLuint name, texture_t *t, GLint level)
 {
 	if (level == 0 && t->generate_mipmap && is_pot (t->width) && is_pot (t->height))
@@ -1718,6 +1781,10 @@ void glTexImage2D (GLenum target, GLint level, GLint internalformat, GLsizei wid
 	{
 		ERROR (GL_INVALID_ENUM);
 	}
+	if (internalformat == GL_BGRA8_EXT)
+	{
+		internalformat = GL_BGRA_EXT;	/* EXT_texture_format_BGRA8888 allows it sized too */
+	}
 	if (map_texture_format (internalformat, GL_UNSIGNED_BYTE) < 0)
 	{
 		ERROR (GL_INVALID_VALUE);
@@ -1739,7 +1806,12 @@ void glTexImage2D (GLenum target, GLint level, GLint internalformat, GLsizei wid
 	{
 		return;
 	}
-	if (pixels)
+	if (pixels && format == GL_BGRA_EXT)
+	{
+		texture_data_bgra (name, level, face, 0, 0, width, height, pixels);
+		auto_mipmap (name, t, level);
+	}
+	else if (pixels)
 	{
 		pgpu_texture_data_stride (name, level, face, 0, 0, width, height, f, pixels,
 					  unpack_stride (width * format_bytes[f]));
@@ -1787,7 +1859,11 @@ void glTexSubImage2D (GLenum target, GLint level, GLint xoffset, GLint yoffset, 
 		return;
 	}
 	uint32_t src_stride = unpack_stride (width * format_bytes[f]);
-	if (type == t->gl_type)
+	if (format == GL_BGRA_EXT)
+	{
+		texture_data_bgra (name, level, face, xoffset, yoffset, width, height, pixels);
+	}
+	else if (type == t->gl_type)
 	{
 		pgpu_texture_data_stride (name, level, face, xoffset, yoffset, width, height, f, pixels,
 					  src_stride);
@@ -1795,11 +1871,10 @@ void glTexSubImage2D (GLenum target, GLint level, GLint xoffset, GLint yoffset, 
 	else
 	{
 		/* TEXTURE_DATA is in the texture's format: convert, rows at a time */
-		static uint8_t converted[8192];
 		uint32_t dst_bpp = format_bytes[t->format], src_bpp = format_bytes[f];
 		uint32_t dst_row = (width * dst_bpp + 3) & ~3u;
-		uint32_t rows = dst_row <= sizeof converted ? sizeof converted / dst_row : 0;
-		uint32_t span = rows ? width : sizeof converted / dst_bpp;
+		uint32_t rows = dst_row <= sizeof convert_rows ? sizeof convert_rows / dst_row : 0;
+		uint32_t span = rows ? width : sizeof convert_rows / dst_bpp;
 		rows = rows ? rows : 1;
 		for (GLsizei y = 0; y < height; y += rows)
 		{
@@ -1815,11 +1890,11 @@ void glTexSubImage2D (GLenum target, GLint level, GLint xoffset, GLint yoffset, 
 					{
 						uint8_t rgba[4];
 						unpack_texel (f, src + i * src_bpp, rgba);
-						pack_texel (t->format, rgba, converted + r * stride + i * dst_bpp);
+						pack_texel (t->format, rgba, convert_rows + r * stride + i * dst_bpp);
 					}
 				}
 				pgpu_texture_data_stride (name, level, face, xoffset + x, yoffset + y, w, n,
-							  t->format, converted, stride);
+							  t->format, convert_rows, stride);
 			}
 		}
 	}
@@ -1902,7 +1977,7 @@ void glCopyTexImage2D (GLenum target, GLint level, GLenum internalformat, GLint 
 		return;
 	}
 	int f = map_texture_format (internalformat, GL_UNSIGNED_BYTE);
-	if (f < 0)
+	if (f < 0 || internalformat == GL_BGRA_EXT)	/* BGRA: TexImage2D, TexSubImage2D only */
 	{
 		ERROR (GL_INVALID_ENUM);
 	}
@@ -2903,28 +2978,48 @@ void glReadPixels (GLint x, GLint y, GLsizei width, GLsizei height, GLenum forma
 
 /* ---- programs and shaders --------------------------------------------------------------------- */
 
+/* the object a GL name stands for, or one of another generation */
+static object_t *object_at (GLuint name)
+{
+	return &S.objects[name ? (name - 1) % MAX_OBJECT_NAMES + 1 : 0];
+}
+
+static bool object_exists (GLuint name)
+{
+	const object_t *o = object_at (name);
+	return name && o->kind != OBJ_NONE && o->name == name;
+}
+
 static object_t *get_object (GLuint name, uint8_t kind)
 {
-	if (!name || name > MAX_OBJECT_NAMES || S.objects[name].kind == OBJ_NONE)
+	if (!object_exists (name))
 	{
 		ERROR_RET (GL_INVALID_VALUE, NULL);
 	}
-	if (S.objects[name].kind != kind)
+	if (object_at (name)->kind != kind)
 	{
 		ERROR_RET (GL_INVALID_OPERATION, NULL);
 	}
-	return &S.objects[name];
+	return object_at (name);
 }
 
+/* names only grow, as Mesa's: a deleted name stays invalid (tests rely on
+   it), and slots are reused in turn */
 static GLuint new_object (uint8_t kind)
 {
-	for (GLuint i = 1; i <= MAX_OBJECT_NAMES; i++)
+	const GLuint last = S.last_object_name;
+	for (GLuint k = 1; k <= MAX_OBJECT_NAMES; k++)
 	{
-		if (S.objects[i].kind == OBJ_NONE)
+		GLuint slot = (last + k - 1) % MAX_OBJECT_NAMES + 1;
+		if (S.objects[slot].kind == OBJ_NONE)
 		{
-			memset (&S.objects[i], 0, sizeof S.objects[i]);
-			S.objects[i].kind = kind;
-			return i;
+			/* the next name above the last with this slot */
+			GLuint name = last + 1 + (slot - 1 + MAX_OBJECT_NAMES - last % MAX_OBJECT_NAMES) % MAX_OBJECT_NAMES;
+			memset (&S.objects[slot], 0, sizeof S.objects[slot]);
+			S.objects[slot].kind = kind;
+			S.objects[slot].name = name;
+			S.last_object_name = name;
+			return name;
 		}
 	}
 	ERROR_RET (GL_OUT_OF_MEMORY, 0);
@@ -2939,7 +3034,7 @@ GLuint glCreateShader (GLenum type)
 	GLuint name = new_object (OBJ_SHADER);
 	if (name)
 	{
-		S.objects[name].shader_type = type;
+		object_at (name)->shader_type = type;
 	}
 	return name;
 }
@@ -2951,12 +3046,12 @@ GLuint glCreateProgram (void)
 
 GLboolean glIsShader (GLuint shader)
 {
-	return shader && shader <= MAX_OBJECT_NAMES && S.objects[shader].kind == OBJ_SHADER;
+	return object_exists (shader) && object_at (shader)->kind == OBJ_SHADER;
 }
 
 GLboolean glIsProgram (GLuint program)
 {
-	return program && program <= MAX_OBJECT_NAMES && S.objects[program].kind == OBJ_PROGRAM;
+	return object_exists (program) && object_at (program)->kind == OBJ_PROGRAM;
 }
 
 /* without a shader compiler (the Pico), these generate INVALID_OPERATION
@@ -3100,14 +3195,14 @@ void glShaderBinary (GLsizei n, const GLuint *shaders, GLenum binaryformat, cons
 	}
 	for (GLsizei i = 0; i < n; i++)
 	{
-		S.objects[shaders[i]].binary = binary;
-		S.objects[shaders[i]].compiled = false;
+		object_at (shaders[i])->binary = binary;
+		object_at (shaders[i])->compiled = false;
 	}
 }
 
 static void free_shader (GLuint name)
 {
-	object_t *s = &S.objects[name];
+	object_t *s = object_at (name);
 	free (s->source);
 	free (s->compiled_source);
 	free (s->log_buf);
@@ -3154,7 +3249,7 @@ void glAttachShader (GLuint program, GLuint shader)
 static void detach (object_t *p, int slot)
 {
 	GLuint shader = p->shaders[slot];
-	object_t *s = &S.objects[shader];
+	object_t *s = object_at (shader);
 	p->shaders[slot] = 0;
 	if (--s->attached == 0 && s->delete_pending)
 	{
@@ -3223,7 +3318,7 @@ void glBindAttribLocation (GLuint program, GLuint index, const GLchar *name)
 	}
 
 	/* used by the next glLinkProgram from source */
-	object_t *p = &S.objects[program];
+	object_t *p = object_at (program);
 	for (unsigned i = 0; i < p->n_bindings; i++)
 	{
 		if (strcmp (p->bindings[i].name, name) == 0)
@@ -3260,8 +3355,8 @@ void glLinkProgram (GLuint program)
 	{
 		return;
 	}
-	const object_t *vs = p->shaders[0] ? &S.objects[p->shaders[0]] : NULL;
-	const object_t *fs = p->shaders[1] ? &S.objects[p->shaders[1]] : NULL;
+	const object_t *vs = p->shaders[0] ? object_at (p->shaders[0]) : NULL;
+	const object_t *fs = p->shaders[1] ? object_at (p->shaders[1]) : NULL;
 	pgpu_program_info_t *compiled = NULL;
 	const pgpu_program_info_t *info = NULL;
 	if (vs && fs && vs->compiled && fs->compiled)
@@ -3339,7 +3434,7 @@ static void release_program (object_t *p)
 
 static void free_program (GLuint name)
 {
-	object_t *p = &S.objects[name];
+	object_t *p = object_at (name);
 	for (int slot = 0; slot < 2; slot++)
 	{
 		if (p->shaders[slot])
@@ -3392,6 +3487,24 @@ void glProgramBinaryOES (GLuint program, GLenum binaryFormat, const void *binary
 		return;
 	}
 	link_binary (program, p, binary);
+}
+
+/* GL_EXT_debug_marker: for a debugger's trace; none here. They never set an
+   error, whatever the arguments (the extension says so) */
+void glInsertEventMarkerEXT (GLsizei length, const GLchar *marker)
+{
+	(void) length;
+	(void) marker;
+}
+
+void glPushGroupMarkerEXT (GLsizei length, const GLchar *marker)
+{
+	(void) length;
+	(void) marker;
+}
+
+void glPopGroupMarkerEXT (void)
+{
 }
 
 /* load a program binary into a program object, as linking does */
@@ -3512,7 +3625,7 @@ void glUseProgram (GLuint program)
 	GLuint old = S.program;
 	S.program = program;
 	pgpu_use_program (p ? p->hw : 0);
-	if (old && old != program && S.objects[old].delete_pending)
+	if (old && old != program && object_at (old)->delete_pending)
 	{
 		free_program (old);
 	}
@@ -3539,7 +3652,7 @@ static int max_name_length (const object_t *p, bool uniforms)
 		for (uint32_t i = 0; i < p->info->n_uniforms; i++)
 		{
 			const pgpu_uniform_info_t *u = &p->info->uniforms[i];
-			int n = strlen (u->name) + 1 + (u->size > 1 ? 3 : 0);	/* "[0]" */
+			int n = strlen (u->name) + 1 + (u->size > 1 || u->array ? 3 : 0);	/* "[0]" */
 			max = n > max ? n : max;
 		}
 	}
@@ -3735,7 +3848,7 @@ void glGetActiveUniform (GLuint program, GLuint index, GLsizei bufsize, GLsizei 
 	}
 	const pgpu_uniform_info_t *u = &p->info->uniforms[index];
 	char buffer[80];
-	snprintf (buffer, sizeof buffer, "%s%s", u->name, u->size > 1 ? "[0]" : "");
+	snprintf (buffer, sizeof buffer, "%s%s", u->name, u->size > 1 || u->array ? "[0]" : "");
 	copy_string (buffer, bufsize, length, name);
 	*size = u->size;
 	*type = u->type;
@@ -3840,7 +3953,7 @@ static void set_uniform (GLint location, GLsizei count, unsigned comps, char kin
 	{
 		return;
 	}
-	object_t *p = &S.objects[S.program];
+	object_t *p = object_at (S.program);
 	uint32_t index = (uint32_t) location >> 16, element = location & 0xFFFF;
 	if (location < 0 || index >= p->info->n_uniforms || element >= (uint32_t) p->info->uniforms[index].size)
 	{
@@ -3848,7 +3961,7 @@ static void set_uniform (GLint location, GLsizei count, unsigned comps, char kin
 	}
 	const pgpu_uniform_info_t *u = &p->info->uniforms[index];
 	char uk = uniform_kind (u->type);
-	if (count > 1 && u->size == 1)
+	if (count > 1 && u->size == 1 && !u->array)
 	{
 		ERROR (GL_INVALID_OPERATION);
 	}
@@ -3872,9 +3985,13 @@ static void set_uniform (GLint location, GLsizei count, unsigned comps, char kin
 				ERROR (GL_INVALID_VALUE);
 			}
 		}
-		for (uint32_t e = 0; e < n; e++)
+		for (uint32_t e = 0; u->sampler >= 0 && e < n; e++)
 		{
 			uint32_t sampler = u->sampler + element + e;
+			if (sampler >= PGPU_MAX_SAMPLERS)
+			{
+				break;			/* glslc gives every sampler an index */
+			}
 			p->units[sampler] = units[e];
 			pgpu_program_sampler (p->hw, sampler, units[e]);
 		}
@@ -4175,7 +4292,7 @@ static void validate_textures (void)
 
 	if (S.program)
 	{
-		const object_t *p = &S.objects[S.program];
+		const object_t *p = object_at (S.program);
 		for (uint32_t i = 0; i < p->info->n_uniforms; i++)
 		{
 			const pgpu_uniform_info_t *u = &p->info->uniforms[i];
@@ -4329,7 +4446,7 @@ static void draw_via_buffers (GLenum mode, GLint first, GLsizei count, const voi
 static void draw_program (GLenum mode, GLint first, GLsizei count, bool indexed, uint32_t index_type,
 			  const void *indices)
 {
-	const object_t *p = &S.objects[S.program];
+	const object_t *p = object_at (S.program);
 	uint32_t used = 0, buffer_mask = 0, client_mask = 0;
 	for (uint32_t i = 0; i < p->info->n_attribs; i++)
 	{
@@ -4419,15 +4536,9 @@ static void draw_program (GLenum mode, GLint first, GLsizei count, bool indexed,
 	uint32_t step = mode_step (mode);
 	if (!indexed)
 	{
-		uint32_t vertex_bytes = 0;
-		for (unsigned i = 0; i < ATTRIBS; i++)
-		{
-			if (client_mask & (1u << i))
-			{
-				vertex_bytes += S.attribs[i].size * type_bytes[S.attribs[i].type];
-			}
-		}
-		uint32_t max = (PGPU_STAGING_WORDS - 64) * 4 / vertex_bytes;
+		/* pgpu's own limit: past it pgpu would split, and the buffer
+		   arrays (set per chunk below) would not follow */
+		uint32_t max = pgpu_client_max_vertices ();
 		uint32_t chunk = count;
 		if ((uint32_t) count > max)
 		{
@@ -5343,9 +5454,9 @@ static int get_state (GLenum pname, double *v, int *kind)
 	switch (pname)
 	{
 	/* bits of the bound framebuffer */
-	case GL_RED_BITS:	return I1 (!S.framebuffer ? 5 : target_has_color () ? 8 : 0);
-	case GL_GREEN_BITS:	return I1 (!S.framebuffer ? 6 : target_has_color () ? 8 : 0);
-	case GL_BLUE_BITS:	return I1 (!S.framebuffer ? 5 : target_has_color () ? 8 : 0);
+	case GL_RED_BITS:	return I1 (!S.framebuffer && !S.surface ? 5 : target_has_color () ? 8 : 0);
+	case GL_GREEN_BITS:	return I1 (!S.framebuffer && !S.surface ? 6 : target_has_color () ? 8 : 0);
+	case GL_BLUE_BITS:	return I1 (!S.framebuffer && !S.surface ? 5 : target_has_color () ? 8 : 0);
 	case GL_ALPHA_BITS:	return I1 (target_has_alpha () ? 8 : 0);
 	case GL_DEPTH_BITS:	return I1 (target_has_depth () ? 24 : 0);
 	case GL_STENCIL_BITS:	return I1 (target_has_stencil () ? 8 : 0);
@@ -5361,7 +5472,7 @@ static int get_state (GLenum pname, double *v, int *kind)
 	case GL_MAX_VERTEX_ATTRIBS:		return I1 (ATTRIBS);
 	case GL_MAX_TEXTURE_IMAGE_UNITS:
 	case GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS:	return I1 (UNITS);
-	case GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS:	return I1 (0);
+	case GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS:	return I1 (UNITS);
 	/* uniform storage: 4096 words per program, both stages */
 	case GL_MAX_VERTEX_UNIFORM_VECTORS:
 	case GL_MAX_FRAGMENT_UNIFORM_VECTORS:	return I1 (512);
@@ -5557,7 +5668,8 @@ const GLubyte *glGetString (GLenum name)
 	case GL_SHADING_LANGUAGE_VERSION:	return (const GLubyte *) "OpenGL ES GLSL ES 1.00 (precompiled, tools/glslc)";
 	case GL_EXTENSIONS:
 		return (const GLubyte *) "GL_OES_get_program_binary GL_OES_compressed_ETC1_RGB8_texture "
-					 "GL_OES_rgb8_rgba8 GL_OES_depth24 GL_OES_packed_depth_stencil";
+					 "GL_OES_rgb8_rgba8 GL_OES_depth24 GL_OES_packed_depth_stencil "
+					 "GL_EXT_texture_format_BGRA8888 GL_EXT_debug_marker";
 	default:
 		ERROR_RET (GL_INVALID_ENUM, NULL);
 	}

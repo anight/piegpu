@@ -2,7 +2,7 @@
 """run-deqp.py - run dEQP-GLES2 on the Pico GPU (pgl on the PC, the Zero over
 USB; tools/deqp/build-deqp.sh builds it).
 
-usage: run-deqp.py [-o OUT_DIR] [-x EXCLUDE]... [--resume] PATTERN...
+usage: run-deqp.py [-o OUT_DIR] [-x EXCLUDE]... [--resume] [--pbuffer] PATTERN...
 
   PATTERN  test case names with wildcards, e.g. 'dEQP-GLES2.functional.color_clear.*'
 
@@ -19,8 +19,10 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 GLES2 = os.path.join(ROOT, 'third_party', 'deqp-build', 'modules', 'gles2')
 DEQP = os.path.join(GLES2, 'deqp-gles2')
 BASE_ARGS = ['--deqp-log-images=disable', '--deqp-log-shader-sources=disable',
-             '--deqp-surface-width=320', '--deqp-surface-height=240',
              '--deqp-visibility=hidden', '--deqp-watchdog=disable']
+PANEL = ['--deqp-surface-width=320', '--deqp-surface-height=240']
+# Mesa CI's vc4 configuration (deqp-broadcom-rpi3-gl.toml): 256x256 RGBA8888
+PBUFFER = ['--deqp-surface-type=pbuffer', '--deqp-surface-width=256', '--deqp-surface-height=256']
 
 
 def all_cases():
@@ -80,6 +82,8 @@ def main():
     ap.add_argument('-x', '--exclude', action='append', default=[], help='PATTERN to leave out')
     ap.add_argument('--resume', action='store_true',
                     help='keep the results of an interrupted run in OUT_DIR, run the rest')
+    ap.add_argument('--pbuffer', action='store_true',
+                    help="render offscreen like Mesa CI (256x256 RGBA8888), not on the panel")
     ap.add_argument('patterns', nargs='+')
     args = ap.parse_args()
     args.out = os.path.abspath(args.out)		# dEQP runs in its data directory
@@ -103,12 +107,20 @@ def main():
     remaining = [c for c in cases if c not in results]
     t0 = time.time()
     while remaining:
+        # a Zero booted just before this run may not be on USB yet
+        for _ in range(30):
+            if os.path.exists(TTY):
+                break
+            time.sleep(1)
+        else:
+            if not reboot_zero():
+                sys.exit('run-deqp: the Zero does not come up')
         caselist = os.path.join(args.out, 'caselist.txt')
         open(caselist, 'w').write('\n'.join(remaining) + '\n')
         log = os.path.join(args.out, f'batch{batch}.qpa')
         with open(os.path.join(args.out, f'batch{batch}.out'), 'w') as out:
             proc = subprocess.Popen([DEQP, f'--deqp-caselist-file={caselist}', f'--deqp-log-filename={log}']
-                                    + BASE_ARGS, cwd=GLES2, stdout=out, stderr=subprocess.STDOUT,
+                                    + BASE_ARGS + (PBUFFER if args.pbuffer else PANEL), cwd=GLES2, stdout=out, stderr=subprocess.STDOUT,
                                     env=dict(os.environ, PGPU_TEXT_LOG=os.path.join(args.out, f'zero{batch}.log')))
             size, since = -1, time.time()
             while proc.poll() is None:

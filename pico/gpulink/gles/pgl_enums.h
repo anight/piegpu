@@ -497,5 +497,7 @@
 #define GL_DEPTH24_STENCIL8_OES                          0x88F0
 #define GL_RGB8_OES                                      0x8051
 #define GL_RGBA8_OES                                     0x8058
+#define GL_BGRA_EXT                                      0x80E1
+#define GL_BGRA8_EXT                                     0x93A1
 
 #endif

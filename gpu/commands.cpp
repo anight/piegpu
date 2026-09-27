@@ -195,6 +195,8 @@ CCommands::CCommands (CRenderer *pRenderer, CReceiver *pReceiver)
 	m_bJobPending = m_bJobClearColor = m_bJobClearZS = FALSE;
 	m_bPanelDrawn = m_bPanelZSValid = FALSE;
 	m_Geometry.SetJobFullHandler (JobFullHandler, this);
+	m_Textures.SetJobFlush (JobFullHandler, this);
+	m_Programs.SetJobFlush (JobFullHandler, this);
 
 	DefaultState ();
 }
@@ -1091,11 +1093,17 @@ u32 CCommands::BufferData (const u32 *p, unsigned nLength)
 
 void CCommands::RetireBuffer (TBuffer *pBuffer)
 {
-	if (m_nRetiredBuffers < MaxRetiredBuffers)
+	if (m_nRetiredBuffers == MaxRetiredBuffers)
+	{
+		// too many in one frame: render the job (frees the retired ones);
+		// nothing reads this one any more
+		FlushJob (FALSE);
+		delete [] pBuffer->pData;
+	}
+	else
 	{
 		m_RetiredBuffers[m_nRetiredBuffers++] = pBuffer->pData;
 	}
-	// else: too many in one frame, leak rather than corrupt
 
 	pBuffer->pData = nullptr;
 	pBuffer->bUsed = FALSE;

@@ -210,6 +210,9 @@ void pgpu_attribs_enable (uint32_t mask);
    draws must fit one packet (false otherwise). */
 void pgpu_client_attrib_pointer (uint32_t index, uint32_t size, uint32_t type, uint32_t stride,
 				 const void *pointer);
+/* the most vertices pgpu_draw_arrays_client sends in one packet (more are
+   split there, which buffer arrays mixed in can't follow: callers split) */
+uint32_t pgpu_client_max_vertices (void);
 bool pgpu_draw_arrays_client (uint32_t mode, uint32_t first, uint32_t count);
 bool pgpu_draw_elements_client (uint32_t mode, uint32_t count, uint32_t index_type, const void *indices);
 

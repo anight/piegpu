@@ -319,39 +319,51 @@ int main (int argc, char **argv)
 		/* arrays are reported as "name[0]" (only the last subscript: members
 		   of arrays of structures are "name[1].member") */
 		size_t len = strlen (name);
-		if (len > 3 && !strcmp (name + len - 3, "[0]"))
+		int is_array = len > 3 && !strcmp (name + len - 3, "[0]");
+		if (is_array)
 			name[len - 3] = 0;
 
 		int is_int, n = components (type, &is_int);
-		printf ("uniform %d %s 0x%04x %d\n", u, name, type, size);
+		printf ("uniform %d %s 0x%04x %d %d\n", u, name, type, size, is_array);
 
 		if (type == GL_SAMPLER_2D || type == GL_SAMPLER_CUBE)
 		{
+			/* every element of a sampler array its own unit (and texture
+			   width): glslc tells them apart; element 0 carries the name */
 			GLint loc = glGetUniformLocation (prog, name);
-			glUniform1i (loc, sampler);
-			glActiveTexture (GL_TEXTURE0 + sampler);
-			GLuint tex;
-			glGenTextures (1, &tex);
-			if (type == GL_SAMPLER_2D)
+			GLint units[32];
+			for (int e = 0; e < size && e < 32; e++)
+				units[e] = sampler + e;
+			glUniform1iv (loc, size < 32 ? size : 32, units);
+			for (int e = 0; e < size && e < 32; e++, sampler++)
 			{
-				glBindTexture (GL_TEXTURE_2D, tex);
-				glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA, 4 << sampler, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-				glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-				glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-				glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+				glActiveTexture (GL_TEXTURE0 + sampler);
+				GLuint tex;
+				glGenTextures (1, &tex);
+				if (type == GL_SAMPLER_2D)
+				{
+					glBindTexture (GL_TEXTURE_2D, tex);
+					glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA, 4 << sampler, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+					glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+					glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+					glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+				}
+				else
+				{
+					glBindTexture (GL_TEXTURE_CUBE_MAP, tex);
+					for (int f = 0; f < 6; f++)
+						glTexImage2D (GL_TEXTURE_CUBE_MAP_POSITIVE_X + f, 0, GL_RGBA, 4 << sampler,
+							      4 << sampler, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+					glTexParameteri (GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+					glTexParameteri (GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+					glTexParameteri (GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+				}
+				if (e == 0)
+					printf ("sampler %s %d %s\n", name, sampler, type == GL_SAMPLER_CUBE ? "cube" : "2d");
+				else
+					printf ("sampler %s[%d] %d %s\n", name, e, sampler,
+						type == GL_SAMPLER_CUBE ? "cube" : "2d");
 			}
-			else
-			{
-				glBindTexture (GL_TEXTURE_CUBE_MAP, tex);
-				for (int f = 0; f < 6; f++)
-					glTexImage2D (GL_TEXTURE_CUBE_MAP_POSITIVE_X + f, 0, GL_RGBA, 4 << sampler,
-						      4 << sampler, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-				glTexParameteri (GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-				glTexParameteri (GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-				glTexParameteri (GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-			}
-			printf ("sampler %s %d %s\n", name, sampler, type == GL_SAMPLER_CUBE ? "cube" : "2d");
-			sampler++;
 			continue;
 		}
 		if (n == 0)

@@ -81,6 +81,9 @@ public:
 
 	/// \brief Free code retired during the frame
 	void EndFrame (void);
+	/// \brief Called when too much storage waits for the frame to end: renders the job so far
+	typedef void TJobFlush (void *pParam);
+	void SetJobFlush (TJobFlush *pFlush, void *pParam)	{ m_pJobFlush = pFlush; m_pJobFlushParam = pParam; }
 
 private:
 	void Free (TProgram *pProgram, boolean bKeepCode);
@@ -92,6 +95,8 @@ private:
 	static const unsigned MaxRetired = 64;
 	u8 *m_Retired[MaxRetired];
 	unsigned m_nRetired;
+	TJobFlush *m_pJobFlush;
+	void *m_pJobFlushParam;
 };
 
 #endif

@@ -6,7 +6,7 @@
 // (vc4_resource.c, vc4_tiling.c): each mip level is LT (small levels) or
 // T-format (4 KB tiles), the levels are stored smallest first with level 0
 // page aligned, and the faces of a cube map are whole mip trees at a page
-// aligned stride. ETC1 is decoded on the ARM.
+// aligned stride. ETC1 stays compressed: the TMU decodes it (as Mesa).
 //
 // Power-of-two textures have a full mip chain; non-power-of-two textures
 // have only level 0 (as in GL ES 2.0). A texture that isn't complete for
@@ -80,6 +80,11 @@ public:
 
 	/// \brief Free storage replaced during the job (after it has rendered)
 	void EndFrame (void);
+	/// \brief Called when too much storage waits for the frame to end: renders the job so far
+	typedef void TJobFlush (void *pParam);
+	void SetJobFlush (TJobFlush *pFlush, void *pParam)	{ m_pJobFlush = pFlush; m_pJobFlushParam = pParam; }
+	unsigned GetTotalBytes (void) const	{ return m_nTotalBytes; }
+
 
 private:
 	struct TStorage
@@ -114,6 +119,7 @@ private:
 	};
 
 	void Layout (TTexture *pTexture);
+	u8 *PixelAddress (TTexture *pTexture, unsigned nFace, unsigned nLevel, unsigned x, unsigned y);
 	u32 *TexelAddress (TTexture *pTexture, unsigned nFace, unsigned nLevel, unsigned x, unsigned y);
 	boolean Complete (const TTexture *pTexture) const;
 	static boolean HasAlpha (u32 nFormat);
@@ -122,7 +128,6 @@ private:
 	void Retire (TStorage *pStorage);
 	boolean CopyOnWrite (TTexture *pTexture);
 
-	static void DecodeETC1 (const u8 *pBlock, u32 Out[16]);
 
 private:
 	TTexture m_Textures[MaxTextures + 1];	// ids 1 .. MaxTextures
@@ -131,6 +136,8 @@ private:
 	static const unsigned MaxRetired = 64;
 	TStorage m_Retired[MaxRetired];
 	unsigned m_nRetired;
+	TJobFlush *m_pJobFlush;
+	void *m_pJobFlushParam;
 
 	u32 *m_pFallback;
 };

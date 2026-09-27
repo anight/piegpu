@@ -165,13 +165,13 @@ void pglc_free (pgpu_program_info_t *program)
 }
 
 /* glslc --pgl: "program N", "blob <hex>...", "attrib NAME LOC TYPE SIZE",
-   "uniform NAME TYPE SIZE COMPONENTS SAMPLER OFFSETS...", "end" */
+   "uniform NAME TYPE SIZE COMPONENTS SAMPLER ARRAY OFFSETS...", "end" */
 static program_t *parse_program (FILE *f)
 {
 	program_t *p = calloc (1, sizeof *p);
-	p->attribs = calloc (PGPU_MAX_ATTRIBUTES, sizeof *p->attribs);
+	p->attribs = calloc (1, sizeof *p->attribs);
 	p->uniforms = calloc (1, sizeof *p->uniforms);
-	uint32_t words = 0, max_uniforms = 1;
+	uint32_t words = 0, max_uniforms = 1, max_attribs = 1;
 	bool end = false;
 	char *line = NULL;
 	size_t cap = 0;
@@ -194,8 +194,13 @@ static program_t *parse_program (FILE *f)
 				p->blob[words++] = strtoul (tok, NULL, 16);
 			}
 		}
-		else if (!strcmp (tok, "attrib") && p->info.n_attribs < PGPU_MAX_ATTRIBUTES)
+		else if (!strcmp (tok, "attrib"))
 		{
+			/* more names than locations with aliasing (GL ES 2.0 2.10.4) */
+			if (p->info.n_attribs == max_attribs)
+			{
+				p->attribs = realloc (p->attribs, (max_attribs *= 2) * sizeof *p->attribs);
+			}
 			pgpu_attrib_info_t *a = &p->attribs[p->info.n_attribs++];
 			a->name = strdup (strtok_r (NULL, " \n", &save));
 			a->location = strtoul (strtok_r (NULL, " \n", &save), NULL, 10);
@@ -215,6 +220,7 @@ static program_t *parse_program (FILE *f)
 			u->size = strtol (strtok_r (NULL, " \n", &save), NULL, 10);
 			u->components = strtoul (strtok_r (NULL, " \n", &save), NULL, 10);
 			u->sampler = strtol (strtok_r (NULL, " \n", &save), NULL, 10);
+			u->array = strtoul (strtok_r (NULL, " \n", &save), NULL, 10) != 0;
 			if (u->components)
 			{
 				uint32_t n = 2 * u->size * u->components;

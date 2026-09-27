@@ -67,6 +67,8 @@ public:
 	void Execute (u32 nHeader, const u32 *pPayload);
 
 	TCommandStats GetStats (void);
+	unsigned GetTextureBytes (void) const	{ return m_Textures.GetTotalBytes (); }
+
 	void SetLoadStats (const TLoadStats &rLoad)	{ m_Load = rLoad; }
 
 private:

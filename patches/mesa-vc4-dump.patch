@@ -1,9 +1,3 @@
-# pico-gpu: dump compiled vc4 shaders (code, uniform stream layout, values, VS
-# inputs) and where the built-in state variables and the uniforms are in the
-# constant buffers, when PGPU_VC4_DUMP is set; gl_FragCoord at the pixel centre;
-# a switch for the lower left point sprite origin (PGPU_POINT_LOWER_LEFT).
-# For Mesa mesa-26.2.3; applied by tools/glslc/build-mesa.sh.
-
 diff --git a/src/gallium/drivers/vc4/vc4_context.h b/src/gallium/drivers/vc4/vc4_context.h
 index c5559b4..0a0e97e 100644
 --- a/src/gallium/drivers/vc4/vc4_context.h
@@ -23,7 +17,7 @@ index c5559b4..0a0e97e 100644
  
  struct vc4_program_stateobj {
 diff --git a/src/gallium/drivers/vc4/vc4_program.c b/src/gallium/drivers/vc4/vc4_program.c
-index d9d51f2..88741e7 100644
+index d9d51f2..ac46d1e 100644
 --- a/src/gallium/drivers/vc4/vc4_program.c
 +++ b/src/gallium/drivers/vc4/vc4_program.c
 @@ -23,6 +23,7 @@
@@ -51,7 +45,27 @@ index d9d51f2..88741e7 100644
          c->inputs[attr * 4 + 2] =
                  qir_FMUL(c,
                           qir_ITOF(c, qir_FRAG_Z(c)),
-@@ -2694,6 +2701,15 @@ vc4_get_compiled_shader(struct vc4_context *vc4, enum qstage stage,
+@@ -2129,7 +2136,9 @@ nir_to_qir(struct vc4_compile *c)
+         }
+ }
+ 
+-static const nir_shader_compiler_options nir_options = {
++/* pico-gpu: not const - PGPU_NO_UNROLL (below) keeps loops as loops, for
++ * glslc to retry shaders whose unrolled form fails register allocation */
++static nir_shader_compiler_options nir_options = {
+         .lower_extract_byte = true,
+         .lower_extract_word = true,
+         .lower_insert_byte = true,
+@@ -2160,6 +2169,8 @@ const struct nir_shader_compiler_options *
+ vc4_screen_get_compiler_options(struct pipe_screen *pscreen,
+                                 mesa_shader_stage shader)
+ {
++        if (getenv("PGPU_NO_UNROLL"))
++                nir_options.max_unroll_iterations = 0;
+         return &nir_options;
+ }
+ 
+@@ -2694,6 +2705,15 @@ vc4_get_compiled_shader(struct vc4_context *vc4, enum qstage stage,
                  shader->bo = vc4_bo_alloc_shader(vc4->screen, c->qpu_insts,
                                                   c->qpu_inst_count *
                                                   sizeof(uint64_t));
@@ -67,7 +81,7 @@ index d9d51f2..88741e7 100644
          }
  
          shader->fs_threaded = c->fs_threaded;
-@@ -2795,6 +2811,12 @@ vc4_update_compiled_fs(struct vc4_context *vc4, uint8_t prim_mode)
+@@ -2795,6 +2815,12 @@ vc4_update_compiled_fs(struct vc4_context *vc4, uint8_t prim_mode)
                  key->point_coord_upper_left =
                          (vc4->rasterizer->base.sprite_coord_mode ==
                           PIPE_SPRITE_COORD_UPPER_LEFT);
@@ -80,6 +94,34 @@ index d9d51f2..88741e7 100644
          }
  
          key->ubo_1_size = vc4->constbuf[MESA_SHADER_FRAGMENT].cb[1].buffer_size;
+diff --git a/src/gallium/drivers/vc4/vc4_screen.c b/src/gallium/drivers/vc4/vc4_screen.c
+index efc9832..db0eff8 100644
+--- a/src/gallium/drivers/vc4/vc4_screen.c
++++ b/src/gallium/drivers/vc4/vc4_screen.c
+@@ -152,12 +152,21 @@ vc4_init_shader_caps(struct vc4_screen *screen)
+                 caps->max_inputs = 8;
+                 caps->max_outputs = i == MESA_SHADER_FRAGMENT ? 1 : 8;
+                 caps->max_temps = 256; /* GL_MAX_PROGRAM_TEMPORARIES_ARB */
+-                caps->max_const_buffer0_size = 16 * 1024 * sizeof(float);
++                /* pico-gpu: pgl's limits, so the shaders' gl_Max* constants
++                 * match glGetIntegerv: 512 uniform vectors per stage (the
++                 * Zero's uniform storage is 4096 words). st_extensions.c
++                 * reserves room for lowered state out of this - 8 clip
++                 * planes in the VS, the alpha test value in the FS (measured:
++                 * 504 and 511 vectors without these), which GLES 2.0
++                 * shaders never use */
++                caps->max_const_buffer0_size =
++                        (512 * 4 + (i == MESA_SHADER_VERTEX ? 4 * 8 : 4)) * sizeof(float);
+                 caps->max_const_buffers = 1;
+                 caps->indirect_const_addr = true;
+                 caps->integers = true;
++                /* pico-gpu: 8 texture units (PGPU_MAX_TEXTURE_UNITS) */
+                 caps->max_texture_samplers =
+-                caps->max_sampler_views = VC4_MAX_TEXTURE_SAMPLERS;
++                caps->max_sampler_views = 8;
+                 caps->supported_irs = 1 << PIPE_SHADER_IR_NIR;
+         }
+ }
 diff --git a/src/gallium/drivers/vc4/vc4_uniforms.c b/src/gallium/drivers/vc4/vc4_uniforms.c
 index f63bbcd..f405779 100644
 --- a/src/gallium/drivers/vc4/vc4_uniforms.c
@@ -202,3 +244,16 @@ index 4759c34..1f5a126 100644
     /* update constants */
     if (params && params->NumParameters) {
        struct pipe_constant_buffer cb;
+diff --git a/src/mesa/state_tracker/st_extensions.c b/src/mesa/state_tracker/st_extensions.c
+index 577ca92..dda0c8d 100644
+--- a/src/mesa/state_tracker/st_extensions.c
++++ b/src/mesa/state_tracker/st_extensions.c
+@@ -381,6 +381,8 @@ void st_init_limits(struct pipe_screen *screen,
+    c->MaxCombinedTextureImageUnits =
+       MAX2(c->MaxCombinedTextureImageUnits,
+            mesh_pipeline_max_combined_texture_image_units);
++   /* pico-gpu: 8 texture units in all (PGPU_MAX_TEXTURE_UNITS), as pgl reports */
++   c->MaxCombinedTextureImageUnits = MIN2(c->MaxCombinedTextureImageUnits, 8);
+ 
+    /* This depends on program constants. */
+    c->MaxTextureCoordUnits

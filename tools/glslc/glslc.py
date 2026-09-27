@@ -81,6 +81,11 @@ SUPPORTED_KINDS = {
     'QUNIFORM_TEXTURE_CONFIG_P2', 'QUNIFORM_TEXTURE_FIRST_LEVEL',
     'QUNIFORM_UNIFORMS_ADDRESS', 'QUNIFORM_STENCIL', 'QUNIFORM_UBO0_ADDR',
 }
+# uniform kinds whose data is a sampler index
+TEXTURE_KINDS = {
+    'QUNIFORM_TEXTURE_CONFIG_P0', 'QUNIFORM_TEXTURE_CONFIG_P1',
+    'QUNIFORM_TEXTURE_CONFIG_P2', 'QUNIFORM_TEXTURE_FIRST_LEVEL',
+}
 EXPECTED_KINDS = {
     'QUNIFORM_CONSTANT': 0, 'QUNIFORM_UNIFORM': 1,
     'QUNIFORM_VIEWPORT_X_SCALE': 2, 'QUNIFORM_VIEWPORT_Y_SCALE': 3,
@@ -291,8 +296,9 @@ def cache_key(args):
     return h.hexdigest()
 
 
-def harness_env(dump):
-    return dict(os.environ,
+def harness_env(dump, no_unroll=False):
+    extra = {'PGPU_NO_UNROLL': '1'} if no_unroll else {}	# see the Mesa patch
+    return dict(os.environ, **extra,
                 LD_LIBRARY_PATH=MESA_LIB,
                 LD_PRELOAD=os.path.join(MESA_LIB, 'libvc4_noop_drm_shim.so'),
                 MESA_LOADER_DRIVER_OVERRIDE='vc4',
@@ -300,12 +306,12 @@ def harness_env(dump):
                 PGPU_VC4_DUMP=dump)
 
 
-def run_harness(job_lines, tmp):
+def run_harness(job_lines, tmp, no_unroll=False):
     job = os.path.join(tmp, 'job')
     dump = os.path.join(tmp, 'dump.jsonl')
     with open(job, 'w') as f:
         f.write(''.join(l + '\n' for l in job_lines))
-    r = subprocess.run([build_harness(), job, dump], env=harness_env(dump),
+    r = subprocess.run([build_harness(), job, dump], env=harness_env(dump, no_unroll),
                        capture_output=True, text=True)
     return r, r.stdout.splitlines(), dump
 
@@ -342,9 +348,14 @@ def auto_attribs(args):
         if not loc.isdigit():
             fail(f'bad binding {b!r}, expected NAME=LOCATION')
         binds[name] = int(loc)
+    # the probe links with the bindings (the harness binds its attribute
+    # lines in order: "a,b" aliases, "-" none): unbound, more attributes than
+    # locations would fail although aliasing is legal (GL ES 2.0 2.10.4)
+    bound = [','.join(n for n, l in binds.items() if l == loc) or '-'
+             for loc in range(max(binds.values()) + 1)] if binds else []
     with tempfile.TemporaryDirectory() as tmp:
         r, out, _ = run_harness([f'vs {os.path.abspath(args.vs)}', f'fs {os.path.abspath(args.fs)}',
-                                 'probe'], tmp)
+                                 'probe'] + [f'attrib {names} float 1 0' for names in bound], tmp)
     errors = [l[6:] for l in out if l.startswith('error ')]
     if errors or r.returncode:
         fail('\n'.join(errors or [r.stderr.strip()]))
@@ -382,6 +393,26 @@ def auto_attribs(args):
             for l in range(max(sizes) + 1)]
 
 
+def shaders_per_variant(records):
+    """the shaders used by each variant draw (fs, vs, cs); a draw that didn't
+    re-emit its shader state uses the previous one"""
+    per_variant = []
+    current = {}
+    pending = None
+    for o in records:
+        if 'param' in o or 'uniform_param' in o:
+            continue
+        if 'variant' in o:
+            if pending is not None:
+                per_variant.append(dict(current))
+            pending = o['variant']
+            continue
+        current[o['stage']] = o
+    if pending is not None:
+        per_variant.append(dict(current))
+    return per_variant
+
+
 def compile_program(args):
     kind_names = uniform_kinds()
 
@@ -410,21 +441,34 @@ def compile_program(args):
         # one for texture targets (rows bottom up)
         variants.append('points_texture')
 
-    with tempfile.TemporaryDirectory() as tmp:
-        r, out, dump = run_harness(
-            [f'vs {os.path.abspath(args.vs)}', f'fs {os.path.abspath(args.fs)}']
-            + [f'attrib {name} {TYPES[t][1]} {size} {TYPES[t][2]}' for name, t, size in attribs]
-            + [f'variant {prim}' for prim in variants], tmp)
-        errors = [l[6:] for l in out if l.startswith('error ')]
-        if errors or r.returncode:
-            fail('\n  '.join(['compile failed:'] + (errors or [r.stderr.strip()])))
-        records = [json.loads(l) for l in open(dump)] if os.path.exists(dump) else []
-        driver_log = r.stderr.strip()
-        if args.keep:
-            open((args.output or args.pgl) + '.dump.jsonl', 'w').write(''.join(json.dumps(o) + '\n' for o in records))
+    def compile_variants(no_unroll):
+        with tempfile.TemporaryDirectory() as tmp:
+            r, out, dump = run_harness(
+                [f'vs {os.path.abspath(args.vs)}', f'fs {os.path.abspath(args.fs)}']
+                + [f'attrib {name} {TYPES[t][1]} {size} {TYPES[t][2]}' for name, t, size in attribs]
+                + [f'variant {prim}' for prim in variants], tmp, no_unroll)
+            errors = [l[6:] for l in out if l.startswith('error ')]
+            if errors or r.returncode:
+                fail('\n  '.join(['compile failed:'] + (errors or [r.stderr.strip()])))
+            records = [json.loads(l) for l in open(dump)] if os.path.exists(dump) else []
+            return r, out, records
+
+    def compiled_all(records):
+        per_variant = shaders_per_variant(records)
+        return len(per_variant) == len(variants) and all(len(v) == 3 for v in per_variant)
+
+    # the driver unrolls loops (up to 32 iterations); when the unrolled shader
+    # fails register allocation, the loop may still fit as a loop
+    r, out, records = compile_variants(False)
+    if not compiled_all(records):
+        r, out, records = compile_variants(True)
+    driver_log = r.stderr.strip()
+    if args.keep:
+        open((args.output or args.pgl) + '.dump.jsonl', 'w').write(''.join(json.dumps(o) + '\n' for o in records))
 
     # harness output: uniforms, markers, samplers
     uniforms = {}		# index -> (name, gl type, array size)
+    uniform_arrays = set()	# names declared as arrays
     markers = {}		# marker -> (uniform index, element, component)
     samplers = {}		# unit (= harness order) -> name
     active_attribs = {}		# name -> (gl type, size)
@@ -434,6 +478,8 @@ def compile_program(args):
             active_attribs[p[1]] = (int(p[2], 16), int(p[3]))
         elif p[0] == 'uniform':
             uniforms[int(p[1])] = (p[2], int(p[3], 16), int(p[4]))
+            if len(p) > 5 and p[5] == '1':
+                uniform_arrays.add(p[2])		# GL names it "name[0]"
         elif p[0] == 'marker':
             markers[int(p[1])] = tuple(int(x) for x in p[2:5])
         elif p[0] == 'sampler':
@@ -471,22 +517,7 @@ def compile_program(args):
                     for row in range(rows):
                         layout_words[stage][offsets[e * cols + col] + row] = (u, e, col * rows + row)
 
-    # the shaders used by each variant draw (fs, vs, cs); a draw that didn't
-    # re-emit its shader state uses the previous one
-    per_variant = []
-    current = {}
-    pending = None
-    for o in records:
-        if 'param' in o or 'uniform_param' in o:
-            continue
-        if 'variant' in o:
-            if pending is not None:
-                per_variant.append(dict(current))
-            pending = o['variant']
-            continue
-        current[o['stage']] = o
-    if pending is not None:
-        per_variant.append(dict(current))
+    per_variant = shaders_per_variant(records)
     if len(per_variant) != len(variants) or any(len(v) != 3 for v in per_variant):
         fail('the driver did not compile every variant (see --keep)'
              + (':\n' + driver_log[-2000:] if driver_log else ''))
@@ -494,7 +525,7 @@ def compile_program(args):
     # shader table (deduplicated)
     shaders, shader_index = [], {}
     uniform_slots = {'v': {}, 'f': {}}	# constant buffer word -> (uniform, element, component)
-    sampler_units = {}		# sampler index (texture uniforms data) -> harness unit
+    sampler_units = set()	# program sampler indices the shaders read (= harness units)
     indirect = set()		# stages that read their constant buffer through the TMU
     kinds_used = set()
 
@@ -509,6 +540,7 @@ def compile_program(args):
         for stage in ('fs', 'vs', 'cs'):
             o = used[stage]
             o['stream'] = []		# (kind, data) as the Zero gets them
+            stage_units = {}		# Mesa's sampler index in this stage -> harness unit
             for kind, data, value in o['uniforms']:
                 o['stream'].append([kind, data, value])
                 kname = kind_names.get(kind, f'#{kind}')
@@ -555,7 +587,20 @@ def compile_program(args):
                     unit = {4 << n: n for n in range(8)}.get(width)
                     if unit is None:
                         fail(f'cannot identify sampler {data} (width {width})')
-                    sampler_units[data] = unit
+                    if stage_units.setdefault(data, unit) != unit:
+                        fail(f'{stage} sampler {data} reads two units')
+            # Mesa numbers each stage's samplers apart (VS and FS both from
+            # 0); the Zero has one table per program: the index is the
+            # sampler's harness unit, which names each element of each
+            # sampler uniform once
+            for e in o['stream']:
+                if kind_names.get(e[0]) in TEXTURE_KINDS:
+                    # data: the sampler in the low 16 bits (P2: explicit LOD above)
+                    unit = stage_units.get(e[1] & 0xFFFF)
+                    if unit is None:
+                        fail(f'{stage} texture uniform for sampler {e[1] & 0xFFFF} without its P1')
+                    e[1] = e[1] & ~0xFFFF | unit
+                    sampler_units.add(unit)
             if stage == 'fs':
                 continue
             k = shader_key(o)
@@ -583,10 +628,13 @@ def compile_program(args):
             variant_words += [key, shader_index[k] | idx[0] << 8 | idx[1] << 16]
             n_variants += 1
 
-    for s, unit in sampler_units.items():
-        if s >= 8:
-            fail('too many samplers')
-    sampler_names = {s: samplers[u] for s, u in sampler_units.items()}
+    # every active sampler element has an index, read or not (compiled
+    # away, it still holds a unit: glUniform1i, glGetUniform)
+    sampler_names = dict(samplers)
+    n_samplers = len(samplers)
+    if n_samplers > 8:
+        fail('too many samplers')
+    sampler_index = {n: s for s, n in sampler_names.items()}
 
     # a stage that indexes uniform arrays dynamically reads any word of them:
     # all its uniforms' words must be in the storage
@@ -603,7 +651,7 @@ def compile_program(args):
         fail('the uniform storage is too large')
 
     # blob
-    blob = [MAGIC, 0, len(attribs) | len(sampler_names) << 8 | n_variants << 16 | len(shaders) << 24,
+    blob = [MAGIC, 0, len(attribs) | n_samplers << 8 | n_variants << 16 | len(shaders) << 24,
             uniform_words, 0, 0, 0, 0]
     for name, t, size in attribs:
         blob.append(TYPES[t][0] | size << 8)
@@ -648,12 +696,11 @@ def compile_program(args):
 
     # the uniforms: (name, GL type, size, scalars per element, sampler index,
     # storage words: VS then FS, 0xffff = not used there)
-    sampler_index = {n: s for s, n in sampler_names.items()}
     table = []
     for u in sorted(uniforms):
         name, gltype, size = uniforms[u]
         if name in samplers.values():
-            table.append((name, gltype, size, 0, sampler_index.get(name, -1), None))
+            table.append((name, gltype, size, 0, sampler_index.get(name, -1), None, name in uniform_arrays))
             continue
         comps = sum(1 for m in markers.values() if m[0] == u and m[1] == 0)
         offs = []
@@ -662,7 +709,7 @@ def compile_program(args):
                 for c in range(comps):
                     word = next((w for w, m in uniform_slots[stage].items() if m == (u, e, c)), None)
                     offs.append(0xFFFF if word is None else base + word)
-        table.append((name, gltype, size, comps, -1, offs))
+        table.append((name, gltype, size, comps, -1, offs, name in uniform_arrays))
     # the active attributes (GL lists only those)
     active = [(i, n, *active_attribs[n]) for i, (name, t, size) in enumerate(attribs)
               for n in name.split(',') if n in active_attribs]
@@ -675,8 +722,8 @@ def compile_program(args):
             lines.append('blob ' + ' '.join(f'{w:x}' for w in blob[i:i + 8]))
         for i, name, gltype, gsize in active:
             lines.append(f'attrib {name} {i} {gltype:x} {gsize}')
-        for name, gltype, size, comps, sampler, offs in table:
-            lines.append(f'uniform {name} {gltype:x} {size} {comps} {sampler} '
+        for name, gltype, size, comps, sampler, offs, array in table:
+            lines.append(f'uniform {name} {gltype:x} {size} {comps} {sampler} {int(array)} '
                          + ' '.join(str(o) for o in offs or []))
         lines.append('end')
         open(args.pgl, 'w').write('\n'.join(lines) + '\n')
@@ -706,7 +753,7 @@ def write_header(args, blob, attribs, variants, shaders, table, active, sampler_
     lines += ['', '/* uniforms: the storage word of each scalar (element-major, column-major)',
               '   for the vertex shaders, then for the fragment shader; 0xffff = not used',
               '   there. See pgpu_program_uniform (). */']
-    for name, gltype, size, comps, sampler, offs in table:
+    for name, gltype, size, comps, sampler, offs, array in table:
         if offs is not None:
             lines.append(f'static const uint16_t {ident}_{cname(name)}[{len(offs)}] = '
                          f'{{{", ".join(str(o) for o in offs)}}};')
@@ -723,9 +770,9 @@ def write_header(args, blob, attribs, variants, shaders, table, active, sampler_
     if not active:
         lines.append('\t{0}')
     lines += ['};', '', f'static const pgpu_uniform_info_t {ident}_uniforms[] =', '{']
-    for name, gltype, size, comps, sampler, offs in table:
+    for name, gltype, size, comps, sampler, offs, array in table:
         ref = f'{ident}_{cname(name)}' if offs is not None else '0'
-        lines.append(f'\t{{"{name}", 0x{gltype:04x}, {size}, {comps}, {sampler}, {ref}}},')
+        lines.append(f'\t{{"{name}", 0x{gltype:04x}, {size}, {comps}, {sampler}, {ref}, {int(array)}}},')
     if not table:
         lines.append('\t{0}')
     lines += ['};', '',

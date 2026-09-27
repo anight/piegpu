@@ -8,7 +8,9 @@
 #include <assert.h>
 
 CPrograms::CPrograms (void)
-:	m_nRetired (0)
+:	m_nRetired (0),
+	m_pJobFlush (nullptr),
+	m_pJobFlushParam (nullptr)
 {
 	memset (m_Programs, 0, sizeof m_Programs);
 }
@@ -30,7 +32,12 @@ void CPrograms::Free (TProgram *p, boolean bKeepCode)
 {
 	if (p->pCode)
 	{
-		if (bKeepCode && p->bUsed && m_nRetired < MaxRetired)
+		if (bKeepCode && p->bUsed && m_nRetired == MaxRetired && m_pJobFlush)
+		{
+			(*m_pJobFlush) (m_pJobFlushParam);	// renders the job: the code is free
+			delete [] p->pCode;
+		}
+		else if (bKeepCode && p->bUsed && m_nRetired < MaxRetired)
 		{
 			m_Retired[m_nRetired++] = p->pCode;
 		}
@@ -38,7 +45,6 @@ void CPrograms::Free (TProgram *p, boolean bKeepCode)
 		{
 			delete [] p->pCode;
 		}
-		// else: too many retired in one frame, leak rather than corrupt
 	}
 
 	delete [] p->pBlob;

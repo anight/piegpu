@@ -2,12 +2,19 @@
 // textures.cpp
 //
 // The tiled layouts follow Mesa's vc4 driver (vc4_resource.c: vc4_setup_slices,
-// vc4_tiling.c: t_utile_address; MIT license), for 32 bits per pixel: a utile
-// is 4x4 pixels (64 bytes), an LT image is rows of utiles, a T image is 4 KB
+// vc4_tiling.c: t_utile_address; MIT license): a utile is 64 bytes, 4x4 pixels
+// of 32 bits or 2x4 ETC1 blocks (the TMU reads ETC1 itself, a 4x4 block of 8
+// bytes being a "pixel"); an LT image is rows of utiles, a T image is 4 KB
 // tiles of 2x2 1 KB subtiles of 4x4 utiles.
 //
 #include "textures.h"
 #include <v3d.h>
+
+// Circle loses heap blocks bigger than its largest bucket when they are freed;
+// textures are bigger than the default 512 KB: devtools/configure-circle.sh
+#ifndef PGPU_HEAP_BUCKETS
+#error "Circle needs heap buckets up to 64 MB: run devtools/configure-circle.sh"
+#endif
 #include <pgpu_protocol.h>
 #include <circle/util.h>
 #include <assert.h>
@@ -24,9 +31,11 @@ static const unsigned BytesPerPixel[FORMATS] = {4, 2, 2, 2, 1, 1, 2, 0, 3};
 // TMU config (Mesa's kernel/vc4_packet.h)
 #define TEX_TYPE_RGBA8888	0		// tiled
 #define TEX_TYPE_RGBX8888	1		// tiled, alpha reads as 1
+#define TEX_TYPE_ETC1		8
 #define P0_TYPE__SHIFT		4
 #define P0_CMMODE		(1 << 9)	// cube map
 #define P1_HEIGHT__SHIFT	20
+#define P1_ETCFLIP		(1 << 19)	// as Mesa sets it for ETC1
 #define P1_WIDTH__SHIFT		8
 #define P1_MAGFILT__SHIFT	7		// 0 linear, 1 nearest
 #define P1_MINFILT__SHIFT	4
@@ -51,9 +60,15 @@ static unsigned NextPowerOfTwo (unsigned n)
 
 static unsigned Align (unsigned n, unsigned a)	{ return (n + a - 1) & ~(a - 1); }
 
+// bytes per stored pixel (ETC1: per 4x4 block) and pixels across a utile
+static unsigned StoredBytes (u32 nFormat)	{ return nFormat == FORMAT_ETC1 ? 8 : 4; }
+static unsigned UtileWidth (unsigned nCpp)	{ return nCpp == 8 ? 2 : 4; }
+
 CTextures::CTextures (void)
 :	m_nTotalBytes (0),
 	m_nRetired (0),
+	m_pJobFlush (nullptr),
+	m_pJobFlushParam (nullptr),
 	m_pFallback (nullptr)
 {
 	memset (m_Textures, 0, sizeof m_Textures);
@@ -74,40 +89,52 @@ void CTextures::Reset (void)
 	}
 }
 
-// mip levels as Mesa's vc4_setup_slices, for 32 bits per pixel
+// mip levels as Mesa's vc4_setup_slices; ETC1 levels in blocks, sized from
+// the block size of level 0 (as Mesa)
 void CTextures::Layout (TTexture *T)
 {
 	unsigned nPotWidth = NextPowerOfTwo (T->nWidth), nPotHeight = NextPowerOfTwo (T->nHeight);
+	unsigned nCpp = StoredBytes (T->nFormat), nUtileW = UtileWidth (nCpp);
+	unsigned nBlock = T->nFormat == FORMAT_ETC1 ? 4 : 1;
+	unsigned nStoredWidth = (T->nWidth + nBlock - 1) / nBlock;
+	unsigned nStoredHeight = (T->nHeight + nBlock - 1) / nBlock;
+	unsigned nPotStoredWidth = NextPowerOfTwo (nStoredWidth);
+	unsigned nPotStoredHeight = NextPowerOfTwo (nStoredHeight);
 	unsigned nOffset = 0;
 
 	for (int i = T->nLevels - 1; i >= 0; i--)
 	{
 		TLevel &L = T->Levels[i];
+		unsigned w, h;			// stored pixels
 		if (i == 0)
 		{
 			L.nWidth = T->nWidth;
 			L.nHeight = T->nHeight;
+			w = nStoredWidth;
+			h = nStoredHeight;
 		}
 		else
 		{
 			L.nWidth = nPotWidth >> i ? nPotWidth >> i : 1;
 			L.nHeight = nPotHeight >> i ? nPotHeight >> i : 1;
+			w = nPotStoredWidth >> i ? nPotStoredWidth >> i : 1;
+			h = nPotStoredHeight >> i ? nPotStoredHeight >> i : 1;
 		}
 
-		unsigned w, h;
-		L.bT = !(L.nWidth <= 16 || L.nHeight <= 16);	// LT: up to 4 utiles in either direction
+		// LT: up to 4 utiles in either direction
+		L.bT = !(w <= 4 * nUtileW || h <= 16);
 		if (L.bT)
 		{
-			w = Align (L.nWidth, 32);
-			h = Align (L.nHeight, 32);
+			w = Align (w, 8 * nUtileW);
+			h = Align (h, 32);
 		}
 		else
 		{
-			w = Align (L.nWidth, 4);
-			h = Align (L.nHeight, 4);
+			w = Align (w, nUtileW);
+			h = Align (h, 4);
 		}
 		L.nOffset = nOffset;
-		L.nStride = w * 4;
+		L.nStride = w * nCpp;
 		nOffset += h * L.nStride;
 	}
 
@@ -124,11 +151,12 @@ void CTextures::Layout (TTexture *T)
 	T->nBytes = T->bCube ? 6 * T->nFaceStride : nFaceBytes;
 }
 
-// the address of a pixel (vc4_tiling.c)
-u32 *CTextures::TexelAddress (TTexture *T, unsigned nFace, unsigned nLevel, unsigned x, unsigned y)
+// the address of a stored pixel (ETC1: of the block x, y) (vc4_tiling.c)
+u8 *CTextures::PixelAddress (TTexture *T, unsigned nFace, unsigned nLevel, unsigned x, unsigned y)
 {
 	const TLevel &L = T->Levels[nLevel];
-	unsigned ux = x >> 2, uy = y >> 2;		// utile
+	unsigned nCpp = StoredBytes (T->nFormat), nUtileW = UtileWidth (nCpp);
+	unsigned ux = x / nUtileW, uy = y >> 2;		// utile
 	unsigned nOffset;
 
 	if (!L.bT)
@@ -139,7 +167,7 @@ u32 *CTextures::TexelAddress (TTexture *T, unsigned nFace, unsigned nLevel, unsi
 	{
 		// t_utile_address: 4 KB tiles, odd tile rows right to left, and
 		// the subtile order depends on the row
-		unsigned nTileStride = L.nStride / 4 / 4 / 8;	// tiles per row
+		unsigned nTileStride = L.nStride / nCpp / nUtileW / 8;	// tiles per row
 		unsigned tx = ux >> 3, ty = uy >> 3;
 		boolean bOdd = ty & 1;
 		if (bOdd)
@@ -153,9 +181,15 @@ u32 *CTextures::TexelAddress (TTexture *T, unsigned nFace, unsigned nLevel, unsi
 			  + 1024 * (bOdd ? OddMap[nSubtile] : EvenMap[nSubtile])
 			  + ((uy & 3) * 4 + (ux & 3)) * 64;	// utile in the subtile (LT)
 	}
-	nOffset += (y & 3) * 16 + (x & 3) * 4;			// pixel in the utile
+	nOffset += (y & 3) * nUtileW * nCpp + x % nUtileW * nCpp;	// pixel in the utile
 
-	return (u32 *) (T->Storage.pBase + nFace * T->nFaceStride + L.nOffset + nOffset);
+	return T->Storage.pBase + nFace * T->nFaceStride + L.nOffset + nOffset;
+}
+
+u32 *CTextures::TexelAddress (TTexture *T, unsigned nFace, unsigned nLevel, unsigned x, unsigned y)
+{
+	assert (T->nFormat != FORMAT_ETC1);
+	return (u32 *) PixelAddress (T, nFace, nLevel, x, y);
 }
 
 boolean CTextures::Alloc (TTexture *T, TStorage *pStorage)
@@ -186,11 +220,18 @@ void CTextures::Free (TStorage *pStorage)
 // storage still referenced by the current frame: free it after the frame
 void CTextures::Retire (TStorage *pStorage)
 {
+	if (m_nRetired == MaxRetired && m_pJobFlush)
+	{
+		// too many replacements in one frame: render the job, which frees
+		// the retired storage; nothing samples this one any more
+		(*m_pJobFlush) (m_pJobFlushParam);
+		Free (pStorage);
+		return;
+	}
 	if (m_nRetired < MaxRetired)
 	{
 		m_Retired[m_nRetired++] = *pStorage;
 	}
-	// else: too many replacements in one frame, leak rather than corrupt
 
 	pStorage->pRaw = nullptr;
 	pStorage->pBase = nullptr;
@@ -307,21 +348,12 @@ u32 CTextures::Data (u32 nId, unsigned nLevel, unsigned nFace, unsigned x, unsig
 			return PGPU_ERR_LENGTH;
 		}
 
+		// the blocks as they come (as Mesa: the TMU decodes them)
 		for (unsigned by = 0; by < nBlocksY; by++)
 		{
 			for (unsigned bx = 0; bx < nBlocksX; bx++, pBytes += 8)
 			{
-				u32 Out[16];
-				DecodeETC1 (pBytes, Out);
-				// the block's first pixel row is the first row sent (t increasing)
-				for (unsigned py = 0; py < 4 && by * 4 + py < nHeight; py++)
-				{
-					for (unsigned px = 0; px < 4 && bx * 4 + px < nWidth; px++)
-					{
-						*TexelAddress (&T, nFace, nLevel, x + bx * 4 + px, y + by * 4 + py)
-							= Out[py * 4 + px];
-					}
-				}
+				memcpy (PixelAddress (&T, nFace, nLevel, x / 4 + bx, y / 4 + by), pBytes, 8);
 			}
 		}
 	}
@@ -413,6 +445,10 @@ u32 CTextures::GenerateMipmap (u32 nId)
 	}
 
 	TTexture &T = m_Textures[nId];
+	if (T.nFormat == FORMAT_ETC1)
+	{
+		return PGPU_ERR_ENUM;		// compressed (GL: INVALID_OPERATION)
+	}
 	if (T.nLevels == 1)
 	{
 		return 0;			// non-power-of-two: level 0 only
@@ -551,7 +587,8 @@ boolean CTextures::Use (u32 nId, TConfig *pConfig)
 
 	// formats without alpha read alpha 1, also after rendering into them
 	pConfig->P0 =   CV3D::BusAddress (T.Storage.pBase + T.nLevel0)	// level 0, page aligned
-		      | (HasAlpha (T.nFormat) ? TEX_TYPE_RGBA8888 : TEX_TYPE_RGBX8888) << P0_TYPE__SHIFT
+		      | (  T.nFormat == FORMAT_ETC1 ? TEX_TYPE_ETC1
+			 : HasAlpha (T.nFormat) ? TEX_TYPE_RGBA8888 : TEX_TYPE_RGBX8888) << P0_TYPE__SHIFT
 		      | (bMipmap ? T.nLevels - 1 : 0)
 		      | (T.bCube ? P0_CMMODE : 0);
 	pConfig->P1 =   (T.nHeight & 2047) << P1_HEIGHT__SHIFT
@@ -559,8 +596,12 @@ boolean CTextures::Use (u32 nId, TConfig *pConfig)
 		      | (T.nMagFilter == PGPU_NEAREST ? 1 : 0) << P1_MAGFILT__SHIFT
 		      | MinFilter[T.nMinFilter] << P1_MINFILT__SHIFT
 		      | T.nWrapT << P1_WRAP_T__SHIFT
-		      | T.nWrapS << P1_WRAP_S__SHIFT;
-	pConfig->P2 = T.bCube ? P2_PTYPE_CUBE_MAP_STRIDE | (T.nFaceStride >> 12) << P2_CMST__SHIFT : 0;
+		      | T.nWrapS << P1_WRAP_S__SHIFT
+		      | (T.nFormat == FORMAT_ETC1 ? P1_ETCFLIP : 0);
+	// always the cube map stride type (stride 0 unless a cube), as Mesa's vc4:
+	// only then does the TMU see the word's BSLOD bit, which the shader sets for
+	// an explicit LOD (texture2DLod, and every vertex shader lookup)
+	pConfig->P2 = P2_PTYPE_CUBE_MAP_STRIDE | (T.bCube ? (T.nFaceStride >> 12) << P2_CMST__SHIFT : 0);
 	pConfig->bCube = T.bCube;
 	pConfig->bAlphaFormat = T.nFormat == FORMAT_A8;
 
@@ -594,7 +635,7 @@ void CTextures::UseFallback (TConfig *pConfig)
 	pConfig->P0 = CV3D::BusAddress (m_pFallback) | TEX_TYPE_RGBA8888 << P0_TYPE__SHIFT;
 	pConfig->P1 =   1 << P1_HEIGHT__SHIFT | 1 << P1_WIDTH__SHIFT
 		      | 1 << P1_MAGFILT__SHIFT | 1 << P1_MINFILT__SHIFT;
-	pConfig->P2 = 0;
+	pConfig->P2 = P2_PTYPE_CUBE_MAP_STRIDE;
 	pConfig->bCube = FALSE;
 	pConfig->bAlphaFormat = FALSE;
 }
@@ -603,7 +644,7 @@ boolean CTextures::GetRenderTarget (u32 nId, unsigned nFace, u32 *pBus, unsigned
 				    unsigned *pHeight, boolean *pTFormat)
 {
 	if (   nId < 1 || nId > MaxTextures || !m_Textures[nId].bValid
-	    || nFace >= (m_Textures[nId].bCube ? 6U : 1U))
+	    || nFace >= (m_Textures[nId].bCube ? 6U : 1U) || m_Textures[nId].nFormat == FORMAT_ETC1)
 	{
 		return FALSE;
 	}
@@ -629,7 +670,7 @@ void CTextures::Invalidate (u32 nId)
 u32 CTextures::ReadRGBA (u32 nId, unsigned nFace, unsigned x, unsigned y)
 {
 	TTexture &T = m_Textures[nId];
-	if (!T.bValid || x >= T.nWidth || y >= T.nHeight)
+	if (!T.bValid || x >= T.nWidth || y >= T.nHeight || T.nFormat == FORMAT_ETC1)
 	{
 		return 0;
 	}
@@ -645,6 +686,10 @@ u32 CTextures::WriteRGBA (u32 nId, unsigned nLevel, unsigned nFace, unsigned x, 
 		return PGPU_ERR_OBJECT;
 	}
 	TTexture &T = m_Textures[nId];
+	if (T.nFormat == FORMAT_ETC1)
+	{
+		return PGPU_ERR_ENUM;		// compressed (GL: INVALID_OPERATION)
+	}
 	if (   nLevel >= T.nLevels || nFace >= (T.bCube ? 6U : 1U)
 	    || x + nWidth > T.Levels[nLevel].nWidth || y + nHeight > T.Levels[nLevel].nHeight)
 	{
@@ -691,66 +736,5 @@ void CTextures::EndFrame (void)
 	for (unsigned i = 1; i <= MaxTextures; i++)
 	{
 		m_Textures[i].bUsed = FALSE;
-	}
-}
-
-// ETC1 (Ericsson texture compression), one 4x4 block of 8 bytes, big endian
-void CTextures::DecodeETC1 (const u8 *pBlock, u32 Out[16])
-{
-	static const int Modifiers[8][4] =
-	{
-		{2, 8, -2, -8}, {5, 17, -5, -17}, {9, 29, -9, -29}, {13, 42, -13, -42},
-		{18, 60, -18, -60}, {24, 80, -24, -80}, {33, 106, -33, -106}, {47, 183, -47, -183}
-	};
-
-	u32 nHigh = pBlock[0] << 24 | pBlock[1] << 16 | pBlock[2] << 8 | pBlock[3];
-	u32 nLow  = pBlock[4] << 24 | pBlock[5] << 16 | pBlock[6] << 8 | pBlock[7];
-
-	boolean bDiff = (nHigh >> 1) & 1;
-	boolean bFlip = nHigh & 1;
-	unsigned nTable[2] = {(nHigh >> 5) & 7, (nHigh >> 2) & 7};
-
-	int Base[2][3];
-	for (unsigned c = 0; c < 3; c++)
-	{
-		unsigned nShift = 24 - 8 * c;		// R: bits 31.., G: 23.., B: 15..
-		if (bDiff)
-		{
-			int nBase = (nHigh >> (nShift + 3)) & 0x1F;
-			int nDelta = (nHigh >> nShift) & 7;
-			if (nDelta & 4)
-			{
-				nDelta -= 8;
-			}
-			int nSecond = nBase + nDelta;
-			Base[0][c] = (nBase << 3) | (nBase >> 2);
-			Base[1][c] = ((nSecond & 0x1F) << 3) | ((nSecond & 0x1F) >> 2);
-		}
-		else
-		{
-			int nFirst = (nHigh >> (nShift + 4)) & 0xF;
-			int nSecond = (nHigh >> nShift) & 0xF;
-			Base[0][c] = nFirst * 17;
-			Base[1][c] = nSecond * 17;
-		}
-	}
-
-	for (unsigned x = 0; x < 4; x++)
-	{
-		for (unsigned y = 0; y < 4; y++)
-		{
-			unsigned nIndex = x * 4 + y;		// pixel indices run column-wise
-			unsigned nSub = bFlip ? (y >= 2) : (x >= 2);
-			unsigned nMSB = (nLow >> (nIndex + 16)) & 1;
-			unsigned nLSB = (nLow >> nIndex) & 1;
-			int nMod = Modifiers[nTable[nSub]][nMSB << 1 | nLSB];
-
-			int r = Base[nSub][0] + nMod, g = Base[nSub][1] + nMod, b = Base[nSub][2] + nMod;
-			r = r < 0 ? 0 : r > 255 ? 255 : r;
-			g = g < 0 ? 0 : g > 255 ? 255 : g;
-			b = b < 0 ? 0 : b > 255 ? 255 : b;
-
-			Out[y * 4 + x] = RGBA (r, g, b, 255);	// row y (top row first), column x
-		}
 	}
 }

@@ -63,6 +63,10 @@ typedef char		GLchar;
 /* after pgpu_init (): RESET the Zero, set the GL defaults; false if the Zero
    doesn't answer */
 bool pglInit (void);
+/* pglInit, and the default framebuffer offscreen instead of the panel: a
+   WIDTH x HEIGHT RGBA8888 surface with 24-bit depth and 8-bit stencil (a
+   pbuffer: glReadPixels reads it, the panel is not drawn) */
+bool pglInitSurface (unsigned width, unsigned height);
 /* end the frame: the panel shows it (FRAME_END) */
 void pglSwapBuffers (void);
 /* the last ERROR reply of the Zero (code, opcode, detail; docs/protocol.md 9),
@@ -230,6 +234,10 @@ void glViewport (GLint x, GLint y, GLsizei width, GLsizei height);
 void glGetProgramBinaryOES (GLuint program, GLsizei bufSize, GLsizei *length, GLenum *binaryFormat,
 			    void *binary);
 void glProgramBinaryOES (GLuint program, GLenum binaryFormat, const void *binary, GLint length);
+/* GL_EXT_debug_marker: markers for a debugger; nothing records them here */
+void glInsertEventMarkerEXT (GLsizei length, const GLchar *marker);
+void glPushGroupMarkerEXT (GLsizei length, const GLchar *marker);
+void glPopGroupMarkerEXT (void);
 
 /* ---- GL ES 1.1 fixed function (used while program 0 is current) --------------- */
 
