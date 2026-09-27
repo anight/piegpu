@@ -1,5 +1,5 @@
 /*
- * perf.c - frame rate and load for the demos' HUD (perf.h); board independent
+ * perf.c - frame rate and load for the demos' HUD (pgpu_perf.h); board independent
  * (the link's clock, pgpu_time_us)
  */
 #include <math.h>
@@ -7,7 +7,7 @@
 #include <string.h>
 #include "pgpu.h"
 #include "hud.h"
-#include "perf.h"
+#include "pgpu_perf.h"
 
 static uint64_t window_start;
 static bool started;

@@ -19,7 +19,7 @@
 extern "C" {
 #include "pgpu.h"
 #include "hud.h"
-#include "perf.h"
+#include "pgpu_perf.h"
 }
 
 #ifndef PICOJET_EXAMPLE_NAME

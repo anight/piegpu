@@ -25,7 +25,7 @@ target_link_libraries(pgl PUBLIC m)
 
 # self test 8 on the PC
 add_executable(gltest_host gltest_main.c ${ROOT}/libpgpu/test/gltest.c)
-target_include_directories(gltest_host PRIVATE include ${CMAKE_BINARY_DIR}/glsl)
+target_include_directories(gltest_host PRIVATE ${PGPU_COMPAT_INCLUDE_DIR} ${CMAKE_BINARY_DIR}/glsl)
 target_link_libraries(gltest_host pgl)
 pgpu_glsl_program(TARGET gltest_host NAME gltest DIR ${ROOT}/libpgpu/test
 	ARGS -a a_pos:float:2 -a a_uv:float:2 -a a_color:ubyte_norm:4)

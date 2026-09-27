@@ -137,7 +137,7 @@ static void quad (float x, float y, float w, float h, float u0, float v0, float 
 	}
 	const hud_vertex_t c[4] =
 	{
-		{x, y, u0, v0}, {x + w, y, u1, v0}, {x + w, y + h, u1, v1}, {x, y + h, u0, v1},
+		{x, y, u0, v0, {0}}, {x + w, y, u1, v0, {0}}, {x + w, y + h, u1, v1, {0}}, {x, y + h, u0, v1, {0}},
 	};
 	static const int order[6] = {0, 1, 2, 0, 2, 3};
 	for (int i = 0; i < 6; i++)

@@ -17,7 +17,7 @@
 #include "gles/pgl.h"
 #include "pgpu.h"
 #include "hud.h"
-#include "perf.h"
+#include "pgpu_perf.h"
 #include "gears_program.h"
 
 #define PI	3.14159265f

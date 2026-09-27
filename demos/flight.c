@@ -24,7 +24,7 @@
 #include "gles/pgl.h"
 #include "pgpu.h"
 #include "hud.h"
-#include "perf.h"
+#include "pgpu_perf.h"
 #include "mat4.h"
 #include "assets/mesh_biplane.h"
 #include "assets/tex_biplane.h"

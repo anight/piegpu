@@ -18,6 +18,8 @@ set(DEMOS ${ROOT}/demos)
 set(SHADERS ${DEMOS}/shaders)
 include(${ROOT}/libpgpu/pgpu.cmake)
 
+include(${ROOT}/demos/demos.cmake)
+
 # pico_host_executable (name sources...): an executable on the I2S transport,
 # with pgpu, pgl (precompiled programs) and the HUD; console on UART0
 # (GP0/GP1, the Debugprobe's UART bridge)
@@ -36,64 +38,16 @@ function(demo_program target name)
 	pgpu_glsl_program(TARGET ${target} NAME ${name} DIR ${SHADERS} ARGS ${ARGN})
 endfunction()
 
-# ---- self tests: the link, the protocol and pgl (main.c, gltest.c) -----------------
-pico_host_executable(gpulink main.c ${ROOT}/libpgpu/test/gltest.c)
-demo_program(gpulink plasma -a a_pos:float:2 -v triangles)
-demo_program(gpulink cube -a a_pos:float:3 -a a_normal:byte_norm:3 -a a_uv:float:2 -v triangles)
-demo_program(gpulink sparks -a a_pos:float:3 -a a_color:ubyte_norm:4 -v points)
-demo_program(gpulink solid -a a_pos:float:2 -v triangles -v lines)
-demo_program(gpulink texview -a a_pos:float:2 -v triangles)
-foreach(p builtin gltest ctrl)
-	set(args_builtin -a a_pos:float:2 -v triangles -v points)
-	set(args_gltest -a a_pos:float:2 -a a_uv:float:2 -a a_color:ubyte_norm:4)
-	set(args_ctrl -a a_pos:float:2)
-	pgpu_glsl_program(TARGET gpulink NAME ${p} DIR ${ROOT}/libpgpu/test ARGS ${args_${p}})
-endforeach()
-
-# ---- demos (plain gl* calls) ---------------------------------------------------------
-# gears: three meshing gears, after glxgears
-pico_host_executable(gears ${DEMOS}/gears.c)
-demo_program(gears gears -a a_pos:float:3 -a a_normal:float:3 -v triangles)
-
-# breakout: a self-playing 3D Breakout
-pico_host_executable(breakout ${DEMOS}/breakout.c)
-demo_program(breakout blocks -a a_pos:float:3 -a a_normal:float:3 -a a_color:ubyte_norm:4 -v triangles)
-demo_program(breakout glow -a a_pos:float:3 -a a_color:ubyte_norm:4 -v points)
-
-# flight: a biplane over a cloud deck, after ~/picojet's flight demo
-pico_host_executable(flight ${DEMOS}/flight.c)
-demo_program(flight sky -a a_pos:float:2 -v triangles)
-demo_program(flight deck -a a_grid:float:2 -v triangles)
-demo_program(flight cirrus -a a_grid:float:2 -v triangles)
-demo_program(flight biplane -a a_pos:short:3 -a a_uv:short:2 -a a_normal:short:3 -v triangles)
-demo_program(flight plume -a a_geom:float:4 -v triangles)
-
-# ---- Shadertoy-style demos -------------------------------------------------------
-# toy.c draws one full-screen quad; the picture is shaders/toy_NAME.frag (with
-# shaders/toy.vert, Shadertoy's iTime, iResolution and fragCoord). A game adds
-# its Pico side as the extra sources (toy_game.h).
-function(toy_demo name caption)
-	set(sources)
-	foreach(s ${ARGN})
-		list(APPEND sources ${DEMOS}/${s})
-	endforeach()
-	pico_host_executable(toy-${name} ${DEMOS}/toy.c ${sources})
-	if(ARGN)
-		target_compile_definitions(toy-${name} PRIVATE TOY_GAME=1)
+# ---- the self tests and the demos (demos/demos.cmake) ------------------------------
+# gpulink: the self tests (the link, the protocol and pgl); the others by name
+pico_host_executable(gpulink)
+pgpu_demo(gpulink selftest)
+foreach(app ${PGPU_DEMO_APPS})
+	if(NOT app STREQUAL "selftest")
+		pico_host_executable(${app})
+		pgpu_demo(${app} ${app})
 	endif()
-	target_compile_definitions(toy-${name} PRIVATE TOY_HEADER="toy_${name}_program.h"
-		TOY_INFO=toy_${name}_info TOY_CAPTION="${caption}")
-	pgpu_glsl_program(TARGET toy-${name} NAME toy_${name} VS ${SHADERS}/toy.vert DIR ${SHADERS}
-		ARGS -a a_pos:float:2 -v triangles)
-endfunction()
-toy_demo(tunnel  "TUNNEL")
-toy_demo(spheres "SPHERES")
-toy_demo(clouds  "CLOUDS")
-toy_demo(voronoi "VORONOI")
-# games: self-playing, the Pico keeps the state, the shader draws it all
-toy_demo(pong      "PONG"      pong.c)
-toy_demo(snake     "SNAKE"     snake.c)
-toy_demo(asteroids "ASTEROIDS" asteroids.c)
+endforeach()
 
 # ---- Jet examples on the GPU ----------------------------------------------------
 # The JetExamples scenes picojet runs (demos/jet/examples, MIT, CubeCoders),

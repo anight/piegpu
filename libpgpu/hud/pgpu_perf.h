@@ -1,9 +1,9 @@
 /*
- * perf.h - frame rate and load for the demos' HUD: the Pico's own numbers,
+ * pgpu_perf.h - frame rate and load for the demos' HUD: the Pico's own numbers,
  * the Zero's from its STATUS reply (docs/protocol.md 9), once a second.
  */
-#ifndef PERF_H
-#define PERF_H
+#ifndef PGPU_PERF_H
+#define PGPU_PERF_H
 
 #include <stdbool.h>
 #include <stdint.h>
