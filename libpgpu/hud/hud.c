@@ -71,6 +71,7 @@ static hud_vertex_t verts[MAX_QUADS * 6];
 static unsigned n_verts, drawn_verts;
 static GLuint prog, texture, buffer;
 static GLint a_pos, a_uv, a_color;
+static GLint u_scale, scale_w, scale_h;	/* the viewport u_scale is for */
 
 static void cell_uv (unsigned cell, float *u0, float *v0)
 {
@@ -113,10 +114,9 @@ bool hud_init (void)
 	a_pos = glGetAttribLocation (prog, "a_pos");
 	a_uv = glGetAttribLocation (prog, "a_uv");
 	a_color = glGetAttribLocation (prog, "a_color");
-	GLint vp[4];
-	glGetIntegerv (GL_VIEWPORT, vp);
+	u_scale = glGetUniformLocation (prog, "u_scale");
+	scale_w = scale_h = 0;
 	glUseProgram (prog);
-	glUniform2f (glGetUniformLocation (prog, "u_scale"), 2.0f / vp[2], -2.0f / vp[3]);
 	glUniform1i (glGetUniformLocation (prog, "u_font"), 0);
 
 	glGenBuffers (1, &buffer);
@@ -194,6 +194,14 @@ void hud_draw (void)
 		return;
 	}
 	glUseProgram (prog);
+	GLint vp[4];				/* pixels: follows the screen's size */
+	glGetIntegerv (GL_VIEWPORT, vp);
+	if (vp[2] != scale_w || vp[3] != scale_h)
+	{
+		scale_w = vp[2];
+		scale_h = vp[3];
+		glUniform2f (u_scale, 2.0f / vp[2], -2.0f / vp[3]);
+	}
 	glDisable (GL_DEPTH_TEST);
 	glDisable (GL_CULL_FACE);
 	glEnable (GL_BLEND);

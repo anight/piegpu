@@ -43,6 +43,43 @@ static uint32_t reply_head, reply_tail;	/* tail written by the parser */
 static uint32_t error_queue[ERROR_QUEUE][3];
 static uint32_t error_head, error_tail;
 
+/* DISPLAY replies: the latest one, under a sequence count (odd while the
+   parser writes it) */
+static uint32_t display_words[PGPU_DISPLAY_WORDS];
+static uint32_t display_seq;
+
+uint32_t pgpu_get_display (pgpu_display_t *display)
+{
+	uint32_t w[PGPU_DISPLAY_WORDS], seq;
+	do
+	{
+		while ((seq = LOAD (display_seq)) & 1)
+		{
+		}
+		for (int i = 0; i < PGPU_DISPLAY_WORDS; i++)
+		{
+			w[i] = __atomic_load_n (&display_words[i], __ATOMIC_RELAXED);
+		}
+		__atomic_thread_fence (__ATOMIC_ACQUIRE);
+	}
+	while (__atomic_load_n (&display_seq, __ATOMIC_RELAXED) != seq);
+
+	memset (display, 0, sizeof *display);
+	display->output = PGPU_DISPLAY_OUTPUT (w[0]);
+	display->hdmi_connected = (w[0] & PGPU_DISPLAY_HDMI_CONNECTED) != 0;
+	display->panel_present = (w[0] & PGPU_DISPLAY_PANEL_PRESENT) != 0;
+	display->edid = (w[0] & PGPU_DISPLAY_EDID) != 0;
+	display->width = w[1] & 0xFFFF;
+	display->height = w[1] >> 16;
+	display->monitor_width = w[2] & 0xFFFF;
+	display->monitor_height = w[2] >> 16;
+	display->monitor_refresh_mhz = w[3];
+	display->signal_width = w[4] & 0xFFFF;
+	display->signal_height = w[4] >> 16;
+	memcpy (display->monitor_name, &w[5], 13);
+	return seq / 2;
+}
+
 bool pgpu_poll_reply (pgpu_reply_t *reply)
 {
 	uint32_t head = reply_head;
@@ -205,6 +242,18 @@ void pgpu_deliver_reply (uint8_t opcode, const uint32_t *payload, uint32_t lengt
 			memcpy (error_queue[tail], payload, sizeof error_queue[tail]);
 			STORE (error_tail, (tail + 1) % ERROR_QUEUE);
 		}
+		return;
+	}
+	if (opcode == PGPU_REPLY_DISPLAY && length >= PGPU_DISPLAY_WORDS)
+	{
+		uint32_t seq = display_seq;
+		STORE (display_seq, seq + 1);
+		__atomic_thread_fence (__ATOMIC_RELEASE);
+		for (int i = 0; i < PGPU_DISPLAY_WORDS; i++)
+		{
+			__atomic_store_n (&display_words[i], payload[i], __ATOMIC_RELAXED);
+		}
+		STORE (display_seq, seq + 2);
 		return;
 	}
 	if (length > PGPU_MAX_REPLY_PAYLOAD)

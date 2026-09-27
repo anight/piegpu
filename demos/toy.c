@@ -21,6 +21,7 @@
 #include "pgpu.h"
 #include "hud.h"
 #include "pgpu_perf.h"
+#include "screen.h"
 #include TOY_HEADER
 #ifdef TOY_GAME
 #include "toy_game.h"
@@ -91,25 +92,23 @@ int main (void)
 	glBindBuffer (GL_ARRAY_BUFFER, buffer);
 	glBufferData (GL_ARRAY_BUFFER, sizeof quad, quad, GL_STATIC_DRAW);
 
-	GLint vp[4];
-	glGetIntegerv (GL_VIEWPORT, vp);
+	GLint vp[4] = {0};			/* the screen (screen_update) */
 	glUseProgram (prog);
-	glUniform2f (u_resolution, (float) vp[2], (float) vp[3]);
 	if (u_channel0 >= 0)
 	{
 		noise_texture ();
 		glUniform1i (u_channel0, NOISE_UNIT);
 	}
 	glDisable (GL_DITHER);
-#ifdef TOY_GAME
-	game_init (prog, (float) vp[2], (float) vp[3]);
-#endif
 	if (!hud_init ())
 	{
 		printf ("toy: the HUD program didn't link\n");
 	}
 
-	printf ("toy %s: %dx%d, running\n", TOY_CAPTION, (int) vp[2], (int) vp[3]);
+	printf ("toy %s: running\n", TOY_CAPTION);
+#ifdef TOY_GAME
+	bool started = false;
+#endif
 	absolute_time_t start = get_absolute_time ();
 	float last = 0.0f;
 	unsigned windows = 0;
@@ -117,6 +116,28 @@ int main (void)
 	memset (&m, 0, sizeof m);
 	while (true)
 	{
+		/* iResolution: the screen's pixels; a game's world is 240 high and
+		   as wide as the screen's shape (its sizes are in these units) */
+		if (screen_update ("toy " TOY_CAPTION, vp))
+		{
+#ifdef TOY_GAME
+			float w = 240.0f * vp[2] / vp[3], h = 240.0f;
+			glUseProgram (prog);
+			if (!started)
+			{
+				game_init (prog, w, h);
+			}
+			else
+			{
+				game_resize (w, h);
+			}
+			started = true;
+#else
+			float w = (float) vp[2], h = (float) vp[3];
+#endif
+			glUseProgram (prog);
+			glUniform2f (u_resolution, w, h);
+		}
 		float t = absolute_time_diff_us (start, get_absolute_time ()) / 1e6f;
 
 		/* every pixel is drawn: no clear */

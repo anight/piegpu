@@ -176,7 +176,7 @@ typedef struct
 
 static struct
 {
-	uint16_t width, height;		/* the panel */
+	uint16_t width, height;		/* the screen (framebuffer 0) */
 
 	uint32_t errors;		/* GL error flags: bit (error - GL_INVALID_ENUM) */
 	uint32_t synced_packets;	/* pgpu_packets_sent () at the last error sync */
@@ -592,9 +592,53 @@ bool pglInitSurface (unsigned width, unsigned height)
 	return true;
 }
 
+/* the screen has a new size (a monitor plugged in or out, DISPLAY): a
+   viewport and scissor box that covered the whole screen cover the new one,
+   as when a window system resizes a window. The Zero changes size between
+   frames and tells afterwards, so a frame or two may still use the old size */
+static uint32_t display_seen;
+
+static void screen_update (void)
+{
+	pgpu_display_t d;
+	uint32_t n = pgpu_get_display (&d);
+	if (n == display_seen || S.surface)
+	{
+		return;
+	}
+	display_seen = n;
+	if (d.width == 0 || d.height == 0 || (d.width == S.width && d.height == S.height))
+	{
+		return;
+	}
+
+	bool viewport_full =    S.viewport[0] == 0 && S.viewport[1] == 0
+			     && S.viewport[2] == (GLint) S.width && S.viewport[3] == (GLint) S.height;
+	bool scissor_full =    S.scissor[0] == 0 && S.scissor[1] == 0
+			    && S.scissor[2] == (GLint) S.width && S.scissor[3] == (GLint) S.height;
+	S.width = d.width;
+	S.height = d.height;
+	if (viewport_full)
+	{
+		glViewport (0, 0, (GLsizei) S.width, (GLsizei) S.height);
+	}
+	if (scissor_full)
+	{
+		glScissor (0, 0, (GLsizei) S.width, (GLsizei) S.height);
+	}
+}
+
+void pglGetScreenSize (unsigned *width, unsigned *height)
+{
+	screen_update ();
+	*width = S.width;
+	*height = S.height;
+}
+
 void pglSwapBuffers (void)
 {
 	pgpu_frame_end (0);
+	screen_update ();
 }
 
 /* ---- enum mapping ------------------------------------------------------------------ */

@@ -233,6 +233,12 @@ void game_init (GLuint prog, float width, float height)
 	upload ();
 }
 
+void game_resize (float width, float height)
+{
+	(void) width;				/* the grid fills any screen */
+	(void) height;
+}
+
 void game_frame (float t, float dt)
 {
 	(void) t;

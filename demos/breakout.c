@@ -19,6 +19,7 @@
 #include "pgpu.h"
 #include "hud.h"
 #include "pgpu_perf.h"
+#include "screen.h"
 #include "mat4.h"
 #include "blocks_program.h"
 #include "glow_program.h"
@@ -459,6 +460,8 @@ static void game_update (float dt, float t)
 
 /* ---- the HUD ------------------------------------------------------------------------ */
 
+static GLint vp[4];			/* the screen (screen_update) */
+
 /* the game at the top left, the perf panel (half size) at the top right */
 static void hud_update (bool new_perf, const perf_t *perf)
 {
@@ -484,7 +487,7 @@ static void hud_update (bool new_perf, const perf_t *perf)
 		hud_rect (6 + 8 * HUD_CHAR_W + 2 + i * 14, 24, 10, 10,
 			  i < G.lives ? HUD_RGBA (110, 230, 255, 255) : HUD_RGBA (60, 60, 70, 255));
 	}
-	hud_perf (320 - hud_perf_width (0.5f) - 2, 2, 0.5f, perf);
+	hud_perf (vp[2] - hud_perf_width (0.5f) - 2, 2, 0.5f, perf);
 
 	const char *message = NULL;
 	char level_text[16];
@@ -508,8 +511,9 @@ static void hud_update (bool new_perf, const perf_t *perf)
 	if (message)
 	{
 		float w = strlen (message) * HUD_CHAR_W;
-		hud_rect (160 - w / 2 - 10, 132, w + 18, 24, HUD_RGBA (0, 0, 20, 160));
-		hud_text (160 - w / 2, 137, message, HUD_RGBA (255, 255, 255, 255));
+		float cx = vp[2] / 2, y = vp[3] * 0.55f;
+		hud_rect (cx - w / 2 - 10, y, w + 18, 24, HUD_RGBA (0, 0, 20, 160));
+		hud_text (cx - w / 2, y + 5, message, HUD_RGBA (255, 255, 255, 255));
 	}
 	hud_end ();
 }
@@ -605,9 +609,6 @@ int main (void)
 	glBufferData (GL_ARRAY_BUFFER, MAX_PARTICLES * sizeof (point_t), NULL, GL_DYNAMIC_DRAW);
 
 	float projection[16];
-	GLint vp[4];
-	glGetIntegerv (GL_VIEWPORT, vp);
-	mat4_perspective (projection, 40.0f, (float) vp[2] / vp[3], 1.0f, 120.0f);
 
 	glClearColor (0.01f, 0.01f, 0.05f, 1.0f);
 	glDisable (GL_DITHER);
@@ -632,6 +633,11 @@ int main (void)
 		dt = dt > 1.0f / 30 ? 1.0f / 30 : dt;
 		last = now;
 
+		if (screen_update ("breakout", vp))
+		{
+			mat4_perspective (projection, 40.0f, (float) vp[2] / vp[3], 1.0f, 120.0f);
+			new_perf = true;		/* the HUD again, for the new size */
+		}
 		game_update (dt, t);
 		particles_update (dt);
 		hud_update (new_perf, &perf);

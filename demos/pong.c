@@ -80,6 +80,22 @@ void game_init (GLuint prog, float width, float height)
 	serve (rand () & 1);
 }
 
+void game_resize (float width, float height)
+{
+	float kx = width / W, ky = height / H;
+	bx *= kx;
+	by *= ky;
+	for (int i = 0; i < TRAIL; i++)
+	{
+		trail[i][0] *= kx;
+		trail[i][1] *= ky;
+	}
+	paddle[0] *= ky;
+	paddle[1] *= ky;
+	W = width;
+	H = height;
+}
+
 static void play (float dt)
 {
 	/* the players */

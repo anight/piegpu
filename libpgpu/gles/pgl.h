@@ -67,8 +67,13 @@ bool pglInit (void);
    WIDTH x HEIGHT RGBA8888 surface with 24-bit depth and 8-bit stencil (a
    pbuffer: glReadPixels reads it, the panel is not drawn) */
 bool pglInitSurface (unsigned width, unsigned height);
-/* end the frame: the panel shows it (FRAME_END) */
+/* end the frame: the screen shows it (FRAME_END). Picks up a new screen size
+   (pglGetScreenSize) */
 void pglSwapBuffers (void);
+/* the screen's size now: the panel's, or on HDMI one chosen for the monitor
+   (it changes when a monitor is plugged in or out: pgpu_get_display). A
+   viewport and scissor box covering the whole screen follow it */
+void pglGetScreenSize (unsigned *width, unsigned *height);
 /* the last ERROR reply of the Zero (code, opcode, detail; docs/protocol.md 9),
    for finding out what a GL error from the Zero was about */
 void pglGetZeroError (uint32_t error[3]);

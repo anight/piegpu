@@ -129,6 +129,25 @@ void game_init (GLuint prog, float width, float height)
 	new_game ();
 }
 
+void game_resize (float width, float height)
+{
+	float kx = width / W, ky = height / H;
+	for (int i = 0; i < MAX_ROCKS; i++)
+	{
+		rocks[i].x *= kx;
+		rocks[i].y *= ky;
+	}
+	for (int i = 0; i < MAX_SHOTS; i++)
+	{
+		shots[i].x *= kx;
+		shots[i].y *= ky;
+	}
+	sx *= kx;
+	sy *= ky;
+	W = width;
+	H = height;
+}
+
 static void fly (float dt)
 {
 	thrusting = false;

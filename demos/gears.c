@@ -18,6 +18,7 @@
 #include "pgpu.h"
 #include "hud.h"
 #include "pgpu_perf.h"
+#include "screen.h"
 #include "gears_program.h"
 
 #define PI	3.14159265f
@@ -236,12 +237,7 @@ int main (void)
 		glBufferData (GL_ARRAY_BUFFER, n_vertices * sizeof (vertex_t), vertices, GL_STATIC_DRAW);
 		gears[g].count = n_vertices;
 	}
-	float projection[16];
-	GLint vp[4];
-	glGetIntegerv (GL_VIEWPORT, vp);
-	float aspect = (float) vp[2] / vp[3];		/* the panel is wide: keep the height */
-	mat_frustum (projection, -aspect, aspect, -1.0f, 1.0f, 5.0f, 60.0f);
-	glUniformMatrix4fv (u_projection, 1, GL_FALSE, projection);
+	GLint vp[4] = {0};
 	const float light[3] = {0.408f, 0.408f, 0.816f};	/* (5, 5, 10) normalized */
 	glUniform3fv (u_light_dir, 1, light);
 
@@ -260,6 +256,14 @@ int main (void)
 	memset (&m, 0, sizeof m);
 	while (true)
 	{
+		if (screen_update ("gears", vp))
+		{
+			float projection[16];
+			float aspect = (float) vp[2] / vp[3];	/* the screen is wide: keep the height */
+			mat_frustum (projection, -aspect, aspect, -1.0f, 1.0f, 5.0f, 60.0f);
+			glUseProgram (prog);
+			glUniformMatrix4fv (u_projection, 1, GL_FALSE, projection);
+		}
 		float t = absolute_time_diff_us (start, get_absolute_time ()) / 1e6f;
 		float angle = 70.0f * t;			/* degrees, as glxgears */
 

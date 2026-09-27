@@ -70,6 +70,27 @@ typedef struct
 	uint32_t panel_wait_us;		/* for the panel DMA of the previous frame */
 } pgpu_status_t;
 
+/* the screen and the HDMI monitor (the DISPLAY reply, docs/protocol.md 9) */
+typedef struct
+{
+	uint8_t output;			/* PGPU_OUTPUT_PANEL or PGPU_OUTPUT_HDMI: where frames go */
+	bool hdmi_connected;		/* a monitor is plugged in */
+	bool panel_present;		/* the Zero has a panel (configured) */
+	bool edid;			/* the monitor's EDID was read: the monitor fields are set */
+	uint16_t width, height;		/* the screen (framebuffer 0) */
+	uint16_t monitor_width;		/* the monitor's preferred mode */
+	uint16_t monitor_height;
+	uint32_t monitor_refresh_mhz;	/* its refresh rate in millihertz */
+	uint16_t signal_width;		/* the HDMI mode the Zero sends (the firmware's) */
+	uint16_t signal_height;
+	char monitor_name[14];		/* from the EDID, may be empty */
+} pgpu_display_t;
+
+/* the last DISPLAY reply; returns how many have arrived (0: none yet, the
+   Zero sends one after each INFO and whenever something changes). Replies
+   never get lost to other waits: compare the count to see a change */
+uint32_t pgpu_get_display (pgpu_display_t *display);
+
 /* link */
 void pgpu_init (void);
 /* the side-band signals (the transport's; over USB they answer at once) */

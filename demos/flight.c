@@ -25,6 +25,7 @@
 #include "pgpu.h"
 #include "hud.h"
 #include "pgpu_perf.h"
+#include "screen.h"
 #include "mat4.h"
 #include "assets/mesh_biplane.h"
 #include "assets/tex_biplane.h"
@@ -227,9 +228,7 @@ int main (void)
 	while (!pglInit () && ++tries < 5)		/* the first reply can be missed */
 	{
 	}
-	GLint vp[4];
-	glGetIntegerv (GL_VIEWPORT, vp);
-	float aspect = (float) vp[2] / vp[3];
+	GLint vp[4] = {0};			/* the screen (screen_update) */
 
 	/* textures: the noise (unit 0), the aircraft's paint (unit 1), all mipmapped */
 	static uint8_t noise[NOISE_SIZE * NOISE_SIZE];
@@ -270,7 +269,7 @@ int main (void)
 	GLint s_horizon = glGetUniformLocation (sky, "u_horizon");
 	GLint s_sun = glGetUniformLocation (sky, "u_sun");
 	glUseProgram (sky);
-	glUniform1f (glGetUniformLocation (sky, "u_aspect"), aspect);
+	GLint s_aspect = glGetUniformLocation (sky, "u_aspect");
 	glUniform3fv (glGetUniformLocation (sky, "u_haze"), 1, haze);
 	glUniform3fv (glGetUniformLocation (sky, "u_zenith"), 1, zenith);
 
@@ -378,7 +377,6 @@ int main (void)
 	}
 
 	float projection[16];
-	mat4_perspective (projection, FOVY, aspect, 0.5f, 1000.0f);
 	glDisable (GL_DITHER);
 	glDisable (GL_CULL_FACE);			/* the mesh has a few two-sided parts */
 	if (!hud_init ())
@@ -399,6 +397,13 @@ int main (void)
 
 	while (true)
 	{
+		if (screen_update ("flight", vp))
+		{
+			float aspect = (float) vp[2] / vp[3];
+			mat4_perspective (projection, FOVY, aspect, 0.5f, 1000.0f);
+			glUseProgram (sky);
+			glUniform1f (s_aspect, aspect);
+		}
 		absolute_time_t now = get_absolute_time ();
 		float t = absolute_time_diff_us (start, now) / 1e6f;
 		float dt = absolute_time_diff_us (last, now) / 1e6f;
