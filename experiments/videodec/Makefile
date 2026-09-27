@@ -18,7 +18,8 @@ MMAL = $(UL)/core/mmal_format.o $(UL)/core/mmal_port.o $(UL)/core/mmal_port_cloc
        $(UL)/vc/mmal_vc_client.o $(UL)/vc/mmal_vc_api.o $(UL)/vc/mmal_vc_msgnames.o \
        $(UL)/vc/mmal_vc_opaque_alloc.o $(UL)/vc/mmal_vc_shm.o
 
-OBJS = main.o kernel.o stream.o compat/circle_vcos.o ../../devtools/devlink.o $(MMAL)
+OBJS = main.o kernel.o stream.o compat/circle_vcos.o ../../devtools/devlink.o \
+       ../../gpu/display/panel_output.o ../../drivers/st7789dma.o $(MMAL)
 
 LIBS = $(CIRCLEHOME)/addon/vc4/interface/vcos/libvcos.a \
        $(CIRCLEHOME)/addon/vc4/vchiq/libvchiq.a \
@@ -30,7 +31,18 @@ LIBS = $(CIRCLEHOME)/addon/vc4/interface/vcos/libvcos.a \
        $(CIRCLEHOME)/lib/sched/libsched.a \
        $(CIRCLEHOME)/lib/libcircle.a
 
-EXTRAINCLUDE = -I compat -I ../../third_party/userland -I ../../third_party/userland/interface/mmal -I ../../devtools
+EXTRAINCLUDE = -I ../../gpu/display -I ../../drivers -I compat -I ../../third_party/userland -I ../../third_party/userland/interface/mmal -I ../../devtools
+# the stream linked in: VIDEO=720 (default) or 1080
+VIDEO ?= 720
+ifeq ($(VIDEO),1080)
+STREAM = test1080.h264
+DEFINE += -DVIDEO_WIDTH=1920 -DVIDEO_HEIGHT=1080
+else
+STREAM = test720.h264
+DEFINE += -DVIDEO_WIDTH=1280 -DVIDEO_HEIGHT=720
+endif
+DEFINE += -DSTREAM_FILE=\"$(STREAM)\"
+
 CFLAGS += -include compat/mmal_circle.h -Wno-format -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers
 
 include $(CIRCLEHOME)/Rules.mk
@@ -40,12 +52,15 @@ $(UL)/vc/.circle-fixed:
 	sed -i 's/(unsigned int handle)/(MMAL_OPAQUE_IMAGE_HANDLE_T handle)/' $(UL)/vc/mmal_vc_opaque_alloc.c
 	touch $@
 
-# the test stream: ffmpeg's test pattern (a seconds counter), 10 s of 720p30,
+# the test streams: ffmpeg's test pattern (a seconds counter), 10 s at 30 fps,
 # High profile with B-frames
-stream.o: test720.h264
+stream.o: $(STREAM)
 test720.h264:
 	ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc=size=1280x720:rate=30 -t 10 \
 		-c:v libx264 -profile:v high -level 4.0 -pix_fmt yuv420p -bf 2 -g 60 -b:v 2M -f h264 -y $@
+test1080.h264:
+	ffmpeg -hide_banner -loglevel error -f lavfi -i testsrc=size=1920x1080:rate=30 -t 10 \
+		-c:v libx264 -profile:v high -level 4.1 -pix_fmt yuv420p -bf 2 -g 60 -b:v 4M -f h264 -y $@
 
 EXTRACLEAN = compat/*.o compat/*.d
 

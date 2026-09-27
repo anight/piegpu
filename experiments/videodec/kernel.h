@@ -13,6 +13,7 @@
 #include <circle/types.h>
 #include <vc4/vchiq/vchiqdevice.h>
 #include <devlink.h>
+#include <panel_output.h>
 
 enum TShutdownMode
 {
@@ -33,6 +34,7 @@ public:
 
 private:
 	void Decode (void);
+	void Play (boolean bRGBA);
 	void DumpLuma (const u8 *pY, unsigned nStride, unsigned nWidth, unsigned nHeight);
 
 private:
@@ -49,6 +51,7 @@ private:
 	CDevLink		m_DevLink;
 
 	CVCHIQDevice		m_VCHIQ;
+	CPanelOutput		m_Panel;
 };
 
 #endif
