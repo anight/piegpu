@@ -50,6 +50,18 @@ public:
 	u32 GenerateMipmap (u32 nId);
 	u32 Delete (u32 nId);
 
+	/// \brief A video texture: RGBA, nWidth x nHeight, no storage of its own;
+	///	   its pixels are a video frame's (SetExternal), raster rows
+	/// \param nWidth a power of two, 32 or more (raster rows), nHeight a multiple of 16
+	u32 CreateExternal (u32 nId, unsigned nWidth, unsigned nHeight);
+	/// \brief The frame a video texture shows from now on (4 KB aligned,
+	///	   nWidth x nHeight RGBA, R in byte 0); nullptr: black
+	void SetExternal (u32 nId, const void *pPixels);
+	boolean IsExternal (u32 nId) const
+	{
+		return nId >= 1 && nId <= MaxTextures && m_Textures[nId].bValid && m_Textures[nId].bExternal;
+	}
+
 	/// \brief Get the TMU config and mark the texture used by this frame
 	/// \return FALSE if there is no such texture or it isn't complete
 	boolean Use (u32 nId, TConfig *pConfig);
@@ -115,6 +127,8 @@ private:
 		u32 nDefined[6];		// levels with data, per face
 		TStorage Storage;
 		boolean bUsed;			// by a draw of the current frame
+		boolean bExternal;		// a video texture: pExternal, raster RGBA
+		const void *pExternal;
 		u32 nMinFilter, nMagFilter, nWrapS, nWrapT;
 	};
 
@@ -122,6 +136,7 @@ private:
 	u8 *PixelAddress (TTexture *pTexture, unsigned nFace, unsigned nLevel, unsigned x, unsigned y);
 	u32 *TexelAddress (TTexture *pTexture, unsigned nFace, unsigned nLevel, unsigned x, unsigned y);
 	boolean Complete (const TTexture *pTexture) const;
+	void UseExternal (const TTexture &T, TConfig *pConfig);
 	static boolean HasAlpha (u32 nFormat);
 	boolean Alloc (TTexture *pTexture, TStorage *pStorage);
 	void Free (TStorage *pStorage);

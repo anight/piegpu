@@ -173,6 +173,7 @@ CCommands::CCommands (CRenderer *pRenderer, CLink *pLink)
 :	m_pRenderer (pRenderer),
 	m_pLink (pLink),
 	m_Geometry (pRenderer, &m_Textures),
+	m_Video (&m_Textures),
 	m_nBufferBytes (0),
 	m_nRetiredBuffers (0),
 	m_nProgram (0),
@@ -207,6 +208,8 @@ CCommands::~CCommands (void)
 
 void CCommands::Reset (void)
 {
+	m_pRenderer->DiscardFrame ();		// nothing may use the streams' frames now
+	m_Video.CloseAll ();
 	for (unsigned i = 1; i <= MaxBuffers; i++)
 	{
 		BufferDelete (i);
@@ -340,6 +343,20 @@ void CCommands::SetDisplay (const u32 *pPayload, unsigned nWords, boolean bSend)
 	}
 }
 
+void CCommands::UpdateVideo (void)
+{
+	m_Video.Update ();
+
+	u32 Status[CVideo::StatusWords];
+	for (unsigned i = 1; i <= CVideo::MaxStreams; i++)
+	{
+		if (m_Video.GetStatus (i, Status, TRUE))
+		{
+			Reply (PGPU_REPLY_VIDEO_STATUS, Status, CVideo::StatusWords);
+		}
+	}
+}
+
 boolean CCommands::IsBetweenFrames (void) const
 {
 	return    !m_bPanelDrawn
@@ -387,6 +404,8 @@ void CCommands::Execute (u32 nHeader, const u32 *pPayload)
 		{PGPU_OP_TEXTURE_BIND_UNIT, 2}, {PGPU_OP_VERTEX_ATTRIB, 5},
 		{PGPU_OP_ATTRIB_ARRAY, 6}, {PGPU_OP_ATTRIBS_ENABLE, 1},
 		{PGPU_OP_PROGRAM_DRAW_INLINE, VARIABLE},
+		{PGPU_OP_VIDEO_OPEN, VARIABLE}, {PGPU_OP_VIDEO_DATA, VARIABLE}, {PGPU_OP_VIDEO_CONTROL, 4},
+		{PGPU_OP_VIDEO_GET_STATUS, 1},
 	};
 
 	boolean bKnown = FALSE;
@@ -629,6 +648,46 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 	case PGPU_OP_TEXTURE_PARAMS:
 		*pDetail = p[0];
 		return m_Textures.Params (p[0], p[1], p[2], p[3], p[4]);
+
+	// video (docs/protocol.md 7.12)
+
+	case PGPU_OP_VIDEO_OPEN:
+		*pDetail = p[0];
+		FlushIfTarget (p[2]);
+		FlushJob (FALSE);		// draws so far may use a stream's frame it frees
+		if (nLength < PGPU_VIDEO_OPEN_WORDS || p[6] > (nLength - PGPU_VIDEO_OPEN_WORDS) * 4)
+		{
+			return PGPU_ERR_LENGTH;
+		}
+		return m_Video.Open (p[0], p[1], p[2], p[3] & 0xFFFF, p[3] >> 16, p[4] & 0xFFFF, p[4] >> 16,
+				     p[5], (const u8 *) (p + PGPU_VIDEO_OPEN_WORDS), p[6]);
+
+	case PGPU_OP_VIDEO_DATA:
+		*pDetail = p[0];
+		if (nLength < PGPU_VIDEO_DATA_HEADER || p[4] > (nLength - PGPU_VIDEO_DATA_HEADER) * 4)
+		{
+			return PGPU_ERR_LENGTH;
+		}
+		return m_Video.Data (p[0], p[1], (s64) ((u64) p[3] << 32 | p[2]), p[5],
+				     (const u8 *) (p + PGPU_VIDEO_DATA_HEADER), p[4]);
+
+	case PGPU_OP_VIDEO_CONTROL:
+		*pDetail = p[0];
+		if (p[1] == PGPU_VIDEO_CLOSE)
+		{
+			FlushJob (FALSE);	// draws so far may use the stream's frame
+		}
+		return m_Video.Control (p[0], p[1], (s64) ((u64) p[3] << 32 | p[2]));
+
+	case PGPU_OP_VIDEO_GET_STATUS: {
+		*pDetail = p[0];
+		u32 Status[CVideo::StatusWords];
+		if (!m_Video.GetStatus (p[0], Status, FALSE))
+		{
+			return PGPU_ERR_ID;
+		}
+		Reply (PGPU_REPLY_VIDEO_STATUS, Status, CVideo::StatusWords);
+		} break;
 
 	case PGPU_OP_TEXTURE_DELETE:
 		*pDetail = p[0];
@@ -1404,6 +1463,7 @@ void CCommands::EndFrame (u32 nFlags)
 	}
 	m_pRenderer->Present (&m_FrameStats);
 	m_bPanelDrawn = FALSE;
+	m_Video.FrameEnd ();			// the frame has rendered: new video frames
 	if (nBound)
 	{
 		m_nFramebuffer = nBound;

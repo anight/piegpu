@@ -1,18 +1,39 @@
 CIRCLEHOME = ../circle
 
 OBJS = main.o kernel.o commands.o geometry.o textures.o programs.o renderer.o \
-       link/i2s_link.o link/usb_link.o display/panel_output.o display/hdmi_output.o display/hdmi_monitor.o \
-       ../drivers/v3d.o ../drivers/st7789dma.o ../devtools/devlink.o
+       link/i2s_link.o link/usb_link.o display/panel_output.o display/hdmi_output.o display/hdmi_monitor.o video/video.o \
+       ../drivers/v3d.o ../drivers/st7789dma.o ../devtools/devlink.o \
+       video/compat/circle_vcos.o video/compat/circle_micros.o $(MMAL)
 
-LIBS = $(CIRCLEHOME)/lib/usb/libusb.a \
+# MMAL (video/userland, BSD-3): the client of the VideoCore's video components
+UL = video/userland/interface/mmal
+MMAL = $(UL)/core/mmal_format.o $(UL)/core/mmal_port.o $(UL)/core/mmal_port_clock.o \
+       $(UL)/core/mmal_component.o $(UL)/core/mmal_buffer.o $(UL)/core/mmal_queue.o \
+       $(UL)/core/mmal_pool.o $(UL)/core/mmal_events.o $(UL)/core/mmal_logging.o \
+       $(UL)/core/mmal_clock.o \
+       $(UL)/util/mmal_util.o $(UL)/util/mmal_connection.o $(UL)/util/mmal_list.o \
+       $(UL)/util/mmal_util_params.o $(UL)/util/mmal_util_rational.o \
+       $(UL)/vc/mmal_vc_client.o $(UL)/vc/mmal_vc_api.o $(UL)/vc/mmal_vc_msgnames.o \
+       $(UL)/vc/mmal_vc_opaque_alloc.o $(UL)/vc/mmal_vc_shm.o
+
+LIBS = $(CIRCLEHOME)/addon/vc4/interface/vcos/libvcos.a \
+       $(CIRCLEHOME)/addon/vc4/vchiq/libvchiq.a \
+       $(CIRCLEHOME)/addon/linux/liblinuxemu.a \
+       $(CIRCLEHOME)/lib/usb/libusb.a \
        $(CIRCLEHOME)/lib/usb/gadget/libusbgadget.a \
        $(CIRCLEHOME)/lib/input/libinput.a \
        $(CIRCLEHOME)/lib/fs/libfs.a \
+       $(CIRCLEHOME)/lib/sched/libsched.a \
        $(CIRCLEHOME)/lib/libcircle.a
 
-EXTRAINCLUDE = -I ../drivers -I ../devtools -I ../protocol
+EXTRAINCLUDE = -I ../drivers -I ../devtools -I ../protocol \
+	       -I video/compat -I video/userland -I video/userland/interface/mmal
 
-EXTRACLEAN = shaders.h
+# the MMAL sources (C): what they need beyond Circle's vcos, and their warnings
+CFLAGS += -include video/compat/mmal_circle.h -Wno-format -Wno-unused-parameter \
+	  -Wno-sign-compare -Wno-missing-field-initializers -Wno-unused-but-set-variable
+
+EXTRACLEAN = shaders.h $(MMAL) $(MMAL:.o=.d) video/compat/*.o video/compat/*.d
 
 include $(CIRCLEHOME)/Rules.mk
 

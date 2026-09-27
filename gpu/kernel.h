@@ -9,8 +9,10 @@
 #include <circle/interrupt.h>
 #include <circle/timer.h>
 #include <circle/logger.h>
+#include <circle/sched/scheduler.h>
 #include <circle/types.h>
 #include <devlink.h>
+#include <vc4/vchiq/vchiqdevice.h>
 #include <v3d.h>
 #include "link/i2s_link.h"
 #include "link/usb_link.h"
@@ -57,7 +59,9 @@ private:
 	CInterruptSystem	m_Interrupt;
 	CTimer			m_Timer;
 	CLogger			m_Logger;
+	CScheduler		m_Scheduler;		// VCHIQ's tasks (video) run when the main loop yields
 	CDevLink		m_DevLink;
+	CVCHIQDevice		m_VCHIQ;		// the VideoCore's services (video)
 
 	// the outputs (docs/protocol.md 14): output=auto|panel|hdmi, panel=none,
 	// hdmi_pixels=N in cmdline.txt

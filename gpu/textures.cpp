@@ -32,8 +32,10 @@ static const unsigned BytesPerPixel[FORMATS] = {4, 2, 2, 2, 1, 1, 2, 0, 3};
 #define TEX_TYPE_RGBA8888	0		// tiled
 #define TEX_TYPE_RGBX8888	1		// tiled, alpha reads as 1
 #define TEX_TYPE_ETC1		8
+#define TEX_TYPE_RGBA32R	16		// raster RGBA8888: bits 3:0 in P0, bit 4 in P1
 #define P0_TYPE__SHIFT		4
 #define P0_CMMODE		(1 << 9)	// cube map
+#define P1_TYPE4		(1U << 31)
 #define P1_HEIGHT__SHIFT	20
 #define P1_ETCFLIP		(1 << 19)	// as Mesa sets it for ETC1
 #define P1_WIDTH__SHIFT		8
@@ -306,6 +308,50 @@ u32 CTextures::Create (u32 nId, unsigned nWidth, unsigned nHeight, u32 nFormat, 
 	return 0;
 }
 
+u32 CTextures::CreateExternal (u32 nId, unsigned nWidth, unsigned nHeight)
+{
+	if (nId < 1 || nId > MaxTextures)
+	{
+		return PGPU_ERR_ID;
+	}
+	// the TMU reads raster rows at a power-of-two stride (measured: a 320-wide
+	// texture came out garbled, 512 right), the ISP writes 16-row blocks
+	if (   nWidth < 32 || nWidth > MaxSize || !IsPowerOfTwo (nWidth)
+	    || nHeight < 16 || nHeight > MaxSize || nHeight % 16)
+	{
+		return PGPU_ERR_LIMIT;
+	}
+
+	if (m_Textures[nId].bValid)
+	{
+		Delete (nId);
+	}
+
+	TTexture &T = m_Textures[nId];
+	memset (&T, 0, sizeof T);
+	T.nWidth = nWidth;
+	T.nHeight = nHeight;
+	T.nFormat = FORMAT_RGBA8888;
+	T.nLevels = 1;
+	T.nDefined[0] = 1;
+	T.nMinFilter = PGPU_LINEAR;
+	T.nMagFilter = PGPU_LINEAR;
+	T.nWrapS = T.nWrapT = PGPU_CLAMP_TO_EDGE;
+	T.bExternal = TRUE;
+	T.bValid = TRUE;
+
+	return 0;
+}
+
+void CTextures::SetExternal (u32 nId, const void *pPixels)
+{
+	if (IsExternal (nId))
+	{
+		assert (!((uintptr) pPixels & 4095));
+		m_Textures[nId].pExternal = pPixels;
+	}
+}
+
 u32 CTextures::Data (u32 nId, unsigned nLevel, unsigned nFace, unsigned x, unsigned y,
 		     unsigned nWidth, unsigned nHeight, const u32 *pData, unsigned nWords)
 {
@@ -315,6 +361,10 @@ u32 CTextures::Data (u32 nId, unsigned nLevel, unsigned nFace, unsigned x, unsig
 	}
 
 	TTexture &T = m_Textures[nId];
+	if (T.bExternal)
+	{
+		return PGPU_ERR_ENUM;		// a video texture (GL: INVALID_OPERATION)
+	}
 	if (nLevel >= T.nLevels || nFace >= (T.bCube ? 6U : 1U))
 	{
 		return PGPU_ERR_LIMIT;
@@ -445,9 +495,9 @@ u32 CTextures::GenerateMipmap (u32 nId)
 	}
 
 	TTexture &T = m_Textures[nId];
-	if (T.nFormat == FORMAT_ETC1)
+	if (T.nFormat == FORMAT_ETC1 || T.bExternal)
 	{
-		return PGPU_ERR_ENUM;		// compressed (GL: INVALID_OPERATION)
+		return PGPU_ERR_ENUM;		// compressed, video (GL: INVALID_OPERATION)
 	}
 	if (T.nLevels == 1)
 	{
@@ -573,6 +623,11 @@ boolean CTextures::Use (u32 nId, TConfig *pConfig)
 	}
 
 	TTexture &T = m_Textures[nId];
+	if (T.bExternal)
+	{
+		UseExternal (T, pConfig);
+		return TRUE;
+	}
 	if (!Complete (&T))
 	{
 		return FALSE;
@@ -606,6 +661,32 @@ boolean CTextures::Use (u32 nId, TConfig *pConfig)
 	pConfig->bAlphaFormat = T.nFormat == FORMAT_A8;
 
 	return TRUE;
+}
+
+// a video texture: its frame as raster RGBA (one level: a mipmap filter samples
+// level 0 as the filter's first part says), or black without a frame
+void CTextures::UseExternal (const TTexture &T, TConfig *pConfig)
+{
+	if (!T.pExternal)
+	{
+		UseFallback (pConfig);
+		return;
+	}
+
+	boolean bNearest =    T.nMinFilter == PGPU_NEAREST || T.nMinFilter == PGPU_NEAREST_MIPMAP_NEAREST
+			   || T.nMinFilter == PGPU_NEAREST_MIPMAP_LINEAR;
+	boolean bPOT = IsPowerOfTwo (T.nWidth) && IsPowerOfTwo (T.nHeight);
+	pConfig->P0 = CV3D::BusAddress (T.pExternal) | (TEX_TYPE_RGBA32R & 15) << P0_TYPE__SHIFT;
+	pConfig->P1 =   P1_TYPE4
+		      | (T.nHeight & 2047) << P1_HEIGHT__SHIFT
+		      | (T.nWidth & 2047) << P1_WIDTH__SHIFT
+		      | (T.nMagFilter == PGPU_NEAREST ? 1 : 0) << P1_MAGFILT__SHIFT
+		      | (bNearest ? 1 : 0) << P1_MINFILT__SHIFT
+		      | (bPOT ? T.nWrapT : PGPU_CLAMP_TO_EDGE) << P1_WRAP_T__SHIFT
+		      | (bPOT ? T.nWrapS : PGPU_CLAMP_TO_EDGE) << P1_WRAP_S__SHIFT;
+	pConfig->P2 = P2_PTYPE_CUBE_MAP_STRIDE;
+	pConfig->bCube = FALSE;
+	pConfig->bAlphaFormat = FALSE;
 }
 
 boolean CTextures::HasAlpha (u32 nFormat)
@@ -644,7 +725,8 @@ boolean CTextures::GetRenderTarget (u32 nId, unsigned nFace, u32 *pBus, unsigned
 				    unsigned *pHeight, boolean *pTFormat)
 {
 	if (   nId < 1 || nId > MaxTextures || !m_Textures[nId].bValid
-	    || nFace >= (m_Textures[nId].bCube ? 6U : 1U) || m_Textures[nId].nFormat == FORMAT_ETC1)
+	    || nFace >= (m_Textures[nId].bCube ? 6U : 1U) || m_Textures[nId].nFormat == FORMAT_ETC1
+	    || m_Textures[nId].bExternal)
 	{
 		return FALSE;
 	}
@@ -670,7 +752,7 @@ void CTextures::Invalidate (u32 nId)
 u32 CTextures::ReadRGBA (u32 nId, unsigned nFace, unsigned x, unsigned y)
 {
 	TTexture &T = m_Textures[nId];
-	if (!T.bValid || x >= T.nWidth || y >= T.nHeight || T.nFormat == FORMAT_ETC1)
+	if (!T.bValid || x >= T.nWidth || y >= T.nHeight || T.nFormat == FORMAT_ETC1 || T.bExternal)
 	{
 		return 0;
 	}
@@ -686,9 +768,9 @@ u32 CTextures::WriteRGBA (u32 nId, unsigned nLevel, unsigned nFace, unsigned x, 
 		return PGPU_ERR_OBJECT;
 	}
 	TTexture &T = m_Textures[nId];
-	if (T.nFormat == FORMAT_ETC1)
+	if (T.nFormat == FORMAT_ETC1 || T.bExternal)
 	{
-		return PGPU_ERR_ENUM;		// compressed (GL: INVALID_OPERATION)
+		return PGPU_ERR_ENUM;		// compressed, video (GL: INVALID_OPERATION)
 	}
 	if (   nLevel >= T.nLevels || nFace >= (T.bCube ? 6U : 1U)
 	    || x + nWidth > T.Levels[nLevel].nWidth || y + nHeight > T.Levels[nLevel].nHeight)

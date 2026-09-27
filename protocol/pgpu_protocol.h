@@ -108,6 +108,12 @@ enum pgpu_opcode
 	PGPU_OP_ATTRIBS_ENABLE	= 0x89,
 	PGPU_OP_PROGRAM_DRAW_INLINE = 0x8A,
 
+	/* video (section 7.12) */
+	PGPU_OP_VIDEO_OPEN	= 0xC0,
+	PGPU_OP_VIDEO_DATA	= 0xC1,
+	PGPU_OP_VIDEO_CONTROL	= 0xC2,
+	PGPU_OP_VIDEO_GET_STATUS = 0xC3,
+
 	/* debug */
 	PGPU_OP_DEBUG_SCREENSHOT = 0xF0		/* dump the last presented frame to the Zero's USB log */
 };
@@ -120,6 +126,7 @@ enum pgpu_reply
 	PGPU_REPLY_PONG		= 0x03,
 	PGPU_REPLY_STATUS	= 0x04,
 	PGPU_REPLY_DISPLAY	= 0x05,		/* the screen and the HDMI monitor */
+	PGPU_REPLY_VIDEO_STATUS	= 0x06,		/* a video stream (section 7.12) */
 	PGPU_REPLY_FRAME_DONE	= 0x11,
 	PGPU_REPLY_PIXELS	= 0x16,
 	PGPU_REPLY_CREDIT	= 0x7E,		/* USB stream only: bytes received so far */
@@ -134,6 +141,31 @@ enum pgpu_reply
 #define PGPU_DISPLAY_PANEL_PRESENT	(1u << 9)	/* a panel is configured */
 #define PGPU_DISPLAY_EDID		(1u << 10)	/* the monitor's EDID was read */
 #define PGPU_DISPLAY_WORDS		9
+
+/* video (section 7.12) */
+#define PGPU_VIDEO_STREAMS		2	/* stream ids 1 .. 2 */
+#define PGPU_VIDEO_H264			1	/* VIDEO_OPEN codec */
+#define PGPU_VIDEO_ANNEXB		0	/* VIDEO_OPEN format: start codes, SPS/PPS in the stream */
+#define PGPU_VIDEO_AVCC			1	/* NAL units with length prefixes (MP4), config: avcC */
+#define PGPU_VIDEO_OPEN_WORDS		7	/* before the config */
+/* VIDEO_DATA flags */
+#define PGPU_VIDEO_FIRST		(1u << 0)	/* the first chunk of a sample */
+#define PGPU_VIDEO_LAST			(1u << 1)	/* its last chunk */
+#define PGPU_VIDEO_KEYFRAME		(1u << 2)
+#define PGPU_VIDEO_CONFIG		(1u << 3)	/* codec configuration (SPS, PPS) */
+#define PGPU_VIDEO_EOS			(1u << 4)	/* end of the stream (no data) */
+#define PGPU_VIDEO_DATA_HEADER		6		/* words before the data */
+/* VIDEO_CONTROL operations */
+#define PGPU_VIDEO_PLAY			1	/* arg: the time to show now (-1: go on) */
+#define PGPU_VIDEO_PAUSE		2
+#define PGPU_VIDEO_CLOSE		3
+/* VIDEO_STATUS flags */
+#define PGPU_VIDEO_OPEN_FLAG		(1u << 0)
+#define PGPU_VIDEO_PLAYING		(1u << 1)
+#define PGPU_VIDEO_ENDED		(1u << 2)	/* the last frame has been decoded */
+#define PGPU_VIDEO_ERROR		(1u << 3)
+#define PGPU_VIDEO_STATUS_WORDS		12
+#define PGPU_VIDEO_TIME_NONE		((int64_t) 0x8000000000000000ull)	/* no time */
 
 enum pgpu_error
 {

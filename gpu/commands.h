@@ -13,6 +13,7 @@
 #include "geometry.h"
 #include "link/link.h"
 #include "programs.h"
+#include "video/video.h"
 #include <circle/types.h>
 
 struct TCommandStats
@@ -68,6 +69,11 @@ public:
 
 	/// \brief The renderer's screen has changed (another size or output)
 	void ScreenChanged (void);
+
+	/// \brief Connect to the VideoCore's video components (after VCHIQ)
+	boolean InitializeVideo (void)			{ return m_Video.Initialize (); }
+	/// \brief Call often: the video streams' decoding and their status replies
+	void UpdateVideo (void);
 
 	/// \brief The link replies go to (the kernel's active one)
 	void SetLink (CLink *pLink)			{ m_pLink = pLink; }
@@ -158,6 +164,7 @@ private:
 	CRenderer *m_pRenderer;
 	CLink *m_pLink;
 	CTextures m_Textures;
+	CVideo m_Video;			// video streams into textures
 	CGeometry m_Geometry;
 
 	TGLState m_State;

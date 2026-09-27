@@ -15,6 +15,7 @@
 #include <circle/memory.h>
 
 #define MAX_PACKETS_PER_LOOP	64
+#define MAX_US_PER_LOOP		1000	// then VCHIQ's tasks (video) get their turn
 
 LOGMODULE ("gpu");
 
@@ -22,6 +23,7 @@ CKernel::CKernel (void)
 :	m_Timer (&m_Interrupt),
 	m_Logger (m_Options.GetLogLevel (), &m_Timer),
 	m_DevLink (&m_Interrupt),
+	m_VCHIQ (CMemorySystem::Get (), &m_Interrupt),
 	m_OutputMode (OutputAuto),
 	m_bPanelPresent (TRUE),
 	m_nHDMIPixels (CRenderer::MaxPixels),
@@ -54,6 +56,7 @@ boolean CKernel::Initialize (void)
 	       && m_Interrupt.Initialize ()
 	       && m_Timer.Initialize ()
 	       && m_DevLink.Initialize ()
+	       && m_VCHIQ.Initialize ()
 	       && (!(m_bPanelPresent || m_OutputMode == OutputPanel) || m_Panel.Initialize ())
 	       && (m_OutputMode == OutputPanel || m_HDMI.Initialize ());
 }
@@ -203,6 +206,7 @@ TShutdownMode CKernel::Run (void)
 		LOGPANIC ("V3D init failed");
 	}
 	m_Commands.Reset ();
+	m_Commands.InitializeVideo ();
 
 	for (unsigned i = 0; i < Links; i++)
 	{
@@ -221,6 +225,7 @@ TShutdownMode CKernel::Run (void)
 	unsigned nBusyUs = 0;			// receiving and executing packets
 	while (1)
 	{
+		m_Scheduler.Yield ();			// VCHIQ's tasks
 		m_DevLink.Update ();
 		if (m_DevLink.GetChar () == 's')		// from the host: screenshot
 		{
@@ -252,7 +257,9 @@ TShutdownMode CKernel::Run (void)
 		const u32 *pPayload;
 		unsigned nLoopStart = CTimer::GetClockTicks (), i;
 		for (i = 0;
-		     i < MAX_PACKETS_PER_LOOP && (pPayload = pLink->GetPacket (&nHeader)) != nullptr;
+		        i < MAX_PACKETS_PER_LOOP
+		     && CTimer::GetClockTicks () - nLoopStart < MAX_US_PER_LOOP
+		     && (pPayload = pLink->GetPacket (&nHeader)) != nullptr;
 		     i++)
 		{
 			if (PGPU_HEADER_OP (nHeader) == PGPU_OP_DEBUG_SCREENSHOT)
@@ -272,6 +279,8 @@ TShutdownMode CKernel::Run (void)
 		{
 			nBusyUs += CTimer::GetClockTicks () - nLoopStart;
 		}
+
+		m_Commands.UpdateVideo ();
 
 		// the monitor plugged in or out: a new screen from the next frame
 		if (m_Monitor.Update ())
