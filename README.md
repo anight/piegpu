@@ -3,13 +3,14 @@
 An OpenGL ES 2.0 GPU for microcontrollers: a Raspberry Pi Zero runs bare metal
 (Circle) and renders with its VideoCore IV V3D. The host (a Raspberry Pi
 Pico 2 W, an ESP32-P4, or a PC for tests) sends GL commands over a link. The
-frames go to an ST7789 panel or to HDMI. The protocol is in
-[docs/protocol.md](docs/protocol.md).
+frames go to an ST7789 panel or to HDMI. Video (H.264, e.g. from an MP4) is
+decoded by the VideoCore into textures that any draw can use. The protocol is
+in [docs/protocol.md](docs/protocol.md).
 
 | Directory | What |
 |---|---|
-| `gpu/` | the Zero's firmware: links (`link/`), outputs (`display/`), renderer |
-| `libpgpu/` | the host library: protocol encoding, pgl (the GL ES API), HUD, self tests |
+| `gpu/` | the Zero's firmware: links (`link/`), outputs (`display/`), renderer, video (`video/`) |
+| `libpgpu/` | the host library: protocol encoding, pgl (the GL ES API), MP4 reader, HUD, self tests |
 | `transports/` | links for the host library: `pico-i2s`, `esp32p4-i2s`, `pc-usb` |
 | `hosts/` | builds per host board: `pico`, `esp32p4`, `pc` |
 | `demos/` | the demos, for every host |

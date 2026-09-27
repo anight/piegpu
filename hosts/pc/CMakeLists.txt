@@ -36,3 +36,7 @@ pgpu_glsl_program(TARGET gltest_host NAME builtin DIR ${ROOT}/libpgpu/test
 # shaders compiled at run time (tools/glslc)
 add_executable(compile_test compile_test.c)
 target_link_libraries(compile_test pgl)
+
+# video: an MP4's H.264 track played by the Zero into a texture (videoplay FILE.mp4)
+add_executable(videoplay videoplay.c)
+target_link_libraries(videoplay pgl)

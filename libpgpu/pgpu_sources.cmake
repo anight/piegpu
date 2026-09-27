@@ -9,7 +9,7 @@ set(PGPU_LIB ${CMAKE_CURRENT_LIST_DIR})
 set(PGPU_GLSLC ${PGPU_ROOT}/tools/glslc)
 set(PGPU_GLSL_OUT ${CMAKE_BINARY_DIR}/glsl)	# the generated NAME_program.h
 
-set(PGPU_SOURCES ${PGPU_LIB}/pgpu.c ${PGPU_LIB}/gles/pgl.c)
+set(PGPU_SOURCES ${PGPU_LIB}/pgpu.c ${PGPU_LIB}/pgpu_mp4.c ${PGPU_LIB}/gles/pgl.c)
 set(PGPU_NOCOMPILER_SOURCES ${PGPU_LIB}/gles/pgl_compiler_none.c)
 set(PGPU_HUD_SOURCES ${PGPU_LIB}/hud/hud.c ${PGPU_LIB}/hud/perf.c)
 set(PGPU_INCLUDE_DIRS ${PGPU_LIB} ${PGPU_LIB}/gles ${PGPU_LIB}/hud ${PGPU_ROOT}/protocol)

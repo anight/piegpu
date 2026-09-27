@@ -43,6 +43,69 @@ static uint32_t reply_head, reply_tail;	/* tail written by the parser */
 static uint32_t error_queue[ERROR_QUEUE][3];
 static uint32_t error_head, error_tail;
 
+/* VIDEO_STATUS replies: the latest one a stream, under a sequence count (as
+   DISPLAY); the bytes sent, for pgpu_video_room () */
+static uint32_t video_words[PGPU_VIDEO_STREAMS + 1][PGPU_VIDEO_STATUS_WORDS];
+static uint32_t video_seq[PGPU_VIDEO_STREAMS + 1];
+static uint32_t video_bytes_sent[PGPU_VIDEO_STREAMS + 1];
+static uint32_t video_samples_sent[PGPU_VIDEO_STREAMS + 1];
+
+uint32_t pgpu_video_get_status (uint32_t stream, pgpu_video_status_t *status)
+{
+	pgpu_link_poll ();			/* replies that have come */
+	memset (status, 0, sizeof *status);
+	status->shown_pts = PGPU_VIDEO_TIME_NONE;
+	if (stream < 1 || stream > PGPU_VIDEO_STREAMS)
+	{
+		return 0;
+	}
+
+	uint32_t w[PGPU_VIDEO_STATUS_WORDS], seq;
+	do
+	{
+		while ((seq = LOAD (video_seq[stream])) & 1)
+		{
+		}
+		for (int i = 0; i < PGPU_VIDEO_STATUS_WORDS; i++)
+		{
+			w[i] = __atomic_load_n (&video_words[stream][i], __ATOMIC_RELAXED);
+		}
+		__atomic_thread_fence (__ATOMIC_ACQUIRE);
+	}
+	while (__atomic_load_n (&video_seq[stream], __ATOMIC_RELAXED) != seq);
+	if (!seq)
+	{
+		return 0;
+	}
+
+	status->flags = w[1];
+	status->bytes_done = w[2];
+	status->ring_bytes = w[3];
+	status->decoded = w[4];
+	status->shown = w[5];
+	status->dropped = w[6];
+	status->shown_pts = (int64_t) ((uint64_t) w[8] << 32 | w[7]);
+	status->waiting = w[9];
+	status->samples_done = w[10];
+	status->max_samples = w[11];
+	return seq / 2;
+}
+
+uint32_t pgpu_video_room (uint32_t stream)
+{
+	pgpu_video_status_t st;
+	if (!pgpu_video_get_status (stream, &st) || !(st.flags & PGPU_VIDEO_OPEN_FLAG))
+	{
+		return 0;
+	}
+	if (video_samples_sent[stream] - st.samples_done >= st.max_samples)
+	{
+		return 0;
+	}
+	uint32_t in_flight = video_bytes_sent[stream] - st.bytes_done;
+	return in_flight < st.ring_bytes ? st.ring_bytes - in_flight : 0;
+}
+
 /* DISPLAY replies: the latest one, under a sequence count (odd while the
    parser writes it) */
 static uint32_t display_words[PGPU_DISPLAY_WORDS];
@@ -242,6 +305,19 @@ void pgpu_deliver_reply (uint8_t opcode, const uint32_t *payload, uint32_t lengt
 			memcpy (error_queue[tail], payload, sizeof error_queue[tail]);
 			STORE (error_tail, (tail + 1) % ERROR_QUEUE);
 		}
+		return;
+	}
+	if (   opcode == PGPU_REPLY_VIDEO_STATUS && length >= PGPU_VIDEO_STATUS_WORDS
+	    && payload[0] >= 1 && payload[0] <= PGPU_VIDEO_STREAMS)
+	{
+		uint32_t stream = payload[0], seq = video_seq[stream];
+		STORE (video_seq[stream], seq + 1);
+		__atomic_thread_fence (__ATOMIC_RELEASE);
+		for (int i = 0; i < PGPU_VIDEO_STATUS_WORDS; i++)
+		{
+			__atomic_store_n (&video_words[stream][i], payload[i], __ATOMIC_RELAXED);
+		}
+		STORE (video_seq[stream], seq + 2);
 		return;
 	}
 	if (opcode == PGPU_REPLY_DISPLAY && length >= PGPU_DISPLAY_WORDS)
@@ -1099,3 +1175,114 @@ void pgpu_copy_tex_image (uint32_t texture, uint32_t level, uint32_t face, uint3
 	p[5] = height;
 	pgpu_end ();
 }
+
+/* ---- video (docs/protocol.md 7.12) ----------------------------------------------- */
+
+void pgpu_video_open (uint32_t stream, uint32_t texture, uint32_t width, uint32_t height,
+		      uint32_t coded_width, uint32_t coded_height, const void *avcc, uint32_t avcc_bytes)
+{
+	if (!avcc)
+	{
+		avcc_bytes = 0;
+	}
+	uint32_t words = (avcc_bytes + 3) / 4;
+	uint32_t *p = pgpu_begin (PGPU_OP_VIDEO_OPEN, PGPU_VIDEO_OPEN_WORDS + words);
+	if (!p)
+	{
+		return;
+	}
+	p[0] = stream;
+	p[1] = PGPU_VIDEO_H264;
+	p[2] = texture;
+	p[3] = width | height << 16;
+	p[4] = coded_width | coded_height << 16;
+	p[5] = avcc ? PGPU_VIDEO_AVCC : PGPU_VIDEO_ANNEXB;
+	p[6] = avcc_bytes;
+	if (words)
+	{
+		p[PGPU_VIDEO_OPEN_WORDS + words - 1] = 0;
+		memcpy (p + PGPU_VIDEO_OPEN_WORDS, avcc, avcc_bytes);
+	}
+	pgpu_end ();
+	if (stream >= 1 && stream <= PGPU_VIDEO_STREAMS)
+	{
+		/* the Zero counts from 0 again; until its first status (the old
+		   stream's gone) there's no room */
+		video_bytes_sent[stream] = 0;
+		video_samples_sent[stream] = 0;
+		STORE (video_seq[stream], 0);
+	}
+}
+
+#define VIDEO_CHUNK	((PGPU_STAGING_WORDS - 16 - PGPU_VIDEO_DATA_HEADER) * 4)
+
+/* a sample in VIDEO_DATA packets, each packet's data from read (memory or a
+   file: straight into the packet) */
+static bool video_sample (uint32_t stream, uint32_t flags, int64_t pts, uint32_t bytes,
+			  pgpu_read_t read, void *ctx, uint64_t offset)
+{
+	uint32_t done = 0;
+	bool ok = true;
+	do
+	{
+		uint32_t n = bytes - done < VIDEO_CHUNK ? bytes - done : VIDEO_CHUNK;
+		uint32_t *p = pgpu_begin (PGPU_OP_VIDEO_DATA, PGPU_VIDEO_DATA_HEADER + (n + 3) / 4);
+		p[0] = stream;
+		p[1] =   (flags & ~(PGPU_VIDEO_FIRST | PGPU_VIDEO_LAST))
+		       | (done == 0 ? PGPU_VIDEO_FIRST : 0)
+		       | (done + n == bytes ? PGPU_VIDEO_LAST : 0);
+		p[2] = (uint32_t) pts;
+		p[3] = (uint32_t) ((uint64_t) pts >> 32);
+		p[4] = n;
+		p[5] = bytes;					/* the whole sample's */
+		if (n)
+		{
+			p[PGPU_VIDEO_DATA_HEADER + (n + 3) / 4 - 1] = 0;	/* the last word's padding */
+			ok = read (ctx, offset + done, p + PGPU_VIDEO_DATA_HEADER, n);
+		}
+		if (!ok)
+		{
+			p[4] = 0;				/* this chunk empty, the sample unfinished */
+			p[1] &= ~PGPU_VIDEO_LAST;
+		}
+		pgpu_end ();
+		done += n;
+	}
+	while (ok && done < bytes);
+
+	if (ok && stream >= 1 && stream <= PGPU_VIDEO_STREAMS)
+	{
+		video_bytes_sent[stream] += bytes;
+		video_samples_sent[stream]++;
+	}
+	return ok;
+}
+
+static bool memory_read (void *ctx, uint64_t offset, void *buffer, uint32_t bytes)
+{
+	memcpy (buffer, (const uint8_t *) ctx + offset, bytes);
+	return true;
+}
+
+void pgpu_video_sample (uint32_t stream, uint32_t flags, int64_t pts, const void *data, uint32_t bytes)
+{
+	video_sample (stream, flags, pts, bytes, memory_read, (void *) data, 0);
+}
+
+bool pgpu_video_sample_read (uint32_t stream, uint32_t flags, int64_t pts, uint32_t bytes,
+			     pgpu_read_t read, void *ctx, uint64_t offset)
+{
+	return video_sample (stream, flags, pts, bytes, read, ctx, offset);
+}
+
+void pgpu_video_control (uint32_t stream, uint32_t op, int64_t arg)
+{
+	uint32_t *p = pgpu_begin (PGPU_OP_VIDEO_CONTROL, 4);
+	p[0] = stream;
+	p[1] = op;
+	p[2] = (uint32_t) arg;
+	p[3] = (uint32_t) ((uint64_t) arg >> 32);
+	pgpu_end ();
+}
+
+void pgpu_video_request_status (uint32_t stream)	{ cmd1 (PGPU_OP_VIDEO_GET_STATUS, stream); }

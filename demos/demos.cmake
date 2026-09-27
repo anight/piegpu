@@ -7,6 +7,9 @@
 #   gears breakout flight
 #   toy-NAME            Shadertoy-style: shaders/toy_NAME.frag; a game has
 #                       NAME.c (pong, snake, asteroids)
+#   video               an MP4 played by the Zero's decoder into a texture:
+#                       PGPU_VIDEO_MP4 (default: a 720p test pattern made with
+#                       ffmpeg), linked in
 #
 # The Jet demos (demos/jet) are C++ with their own runtime: hosts/pico only.
 include(${CMAKE_CURRENT_LIST_DIR}/../libpgpu/pgpu_sources.cmake)
@@ -14,7 +17,7 @@ include(${CMAKE_CURRENT_LIST_DIR}/../libpgpu/pgpu_sources.cmake)
 set(PGPU_DEMOS ${CMAKE_CURRENT_LIST_DIR})
 set(PGPU_DEMO_SHADERS ${PGPU_DEMOS}/shaders)
 set(PGPU_DEMO_APPS selftest gears breakout flight
-	toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids)
+	toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids video)
 
 if(NOT COMMAND pgpu_demo)
 function(pgpu_demo target app)
@@ -65,6 +68,22 @@ function(pgpu_demo target app)
 			TOY_INFO=toy_${name}_info TOY_CAPTION="${caption}")
 		pgpu_glsl_program(TARGET ${target} NAME toy_${name} VS ${PGPU_DEMO_SHADERS}/toy.vert
 			DIR ${PGPU_DEMO_SHADERS} ARGS -a a_pos:float:2 -v triangles)
+
+	elseif(app STREQUAL "video")		# an MP4 into a video texture (video.c)
+		set(mp4 "${PGPU_VIDEO_MP4}")
+		if(NOT mp4)
+			set(mp4 ${CMAKE_BINARY_DIR}/video-test.mp4)
+			add_custom_command(OUTPUT ${mp4}
+				COMMAND ffmpeg -hide_banner -loglevel error -f lavfi
+					-i testsrc=size=1280x720:rate=30 -t 10 -c:v libx264 -profile:v high
+					-level 4.0 -pix_fmt yuv420p -bf 2 -g 60 -b:v 2M -y ${mp4}
+				COMMENT "Making the test video (ffmpeg)")
+		endif()
+		set(PGPU_VIDEO_MP4 ${mp4})
+		configure_file(${PGPU_DEMOS}/video_mp4.S.in ${CMAKE_CURRENT_BINARY_DIR}/video_mp4.S @ONLY)
+		set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/video_mp4.S PROPERTIES OBJECT_DEPENDS ${mp4})
+		target_sources(${target} PRIVATE ${PGPU_DEMOS}/video.c ${CMAKE_CURRENT_BINARY_DIR}/video_mp4.S)
+		program(video -a a_pos:float:2 -v triangles)
 
 	else()
 		message(FATAL_ERROR "pgpu_demo: no app ${app} (one of: ${PGPU_DEMO_APPS})")

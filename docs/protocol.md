@@ -444,6 +444,44 @@ program wasn't compiled for it, the draw is reported as `ERROR` 10.
 | line width | 1 |
 | generic attributes | arrays disabled, current values (0, 0, 0, 1) |
 
+### 7.12 Video
+
+Video streams are decoded by the Zero's VideoCore into **video textures**:
+ordinary 2D textures (sampled by any program or the fixed function, on any
+geometry) whose pixels are the frame of the stream that's due. The host sends
+the compressed samples, with their presentation times; the Zero decodes,
+scales and converts them in the VideoCore (its H.264 decoder and ISP), keeps
+the stream's clock and, at the end of each frame (`FRAME_END`), gives the
+texture the newest decoded frame whose time has come. So every draw of a
+frame sees the same video frame, and the video's frame rate is independent of
+the GL frame rate.
+
+| Op | Name | Payload | Meaning |
+|---|---|---|---|
+| `0xC0` | VIDEO_OPEN | `u32 stream` (1 or 2), `u32 codec` (1 = H.264), `id texture`, `u16 width, u16 height`, `u16 coded_width, u16 coded_height`, `u32 format`, `u32 config_bytes`, `u8 config[config_bytes]` (padded to words) | The texture becomes (again) a video texture: RGBA, width × height (width a power of two, 32 … 2048; height a multiple of 16), one level, clamped (repeat and mirror work at power-of-two sizes), linear; black until the first frame. The stream is (re)opened for H.264 of the coded size, scaled to the texture (the whole picture: aspect is the drawing's business). Format 0 Annex B: samples with start codes, SPS and PPS in the stream (a CONFIG sample); format 1 AVCC: samples as MP4 stores them (NAL units with length prefixes), config the MP4's avcC (SPS and PPS, the length size). An open stream is closed first. |
+| `0xC1` | VIDEO_DATA | `u32 stream`, `u32 flags`, `s64 pts` (2 words, low first; microseconds), `u32 bytes` (in this packet), `u32 sample_bytes` (the whole sample's), `u8 data[bytes]` (padded to words) | A chunk of a **sample**: one access unit in decode order, in the stream's format. Flags: bit 0 FIRST chunk, bit 1 LAST chunk, bit 2 KEYFRAME, bit 3 CONFIG (SPS and PPS), bit 4 EOS (the stream's end; may have no data). A sample's chunks come in order, nothing of the stream between them; the pts and `sample_bytes` of the FIRST chunk count. A sample is taken whole or not at all (`LIMIT` for a sample that doesn't fit: its other chunks are then ignored). |
+| `0xC2` | VIDEO_CONTROL | `u32 stream`, `u32 op`, `s64 arg` | Op 1 PLAY: the clock runs from `arg` now (`0x8000000000000000`: from where it stands). Op 2 PAUSE: the clock stops (the texture keeps its frame). Op 3 CLOSE: the stream ends, the texture stays, black. |
+| `0xC3` | VIDEO_GET_STATUS | `u32 stream` | Replies `VIDEO_STATUS` (§9). |
+
+- **The clock:** without `PLAY` it starts when the first frame is shown, from
+  that frame's pts. Frames whose time has passed are dropped for the newest
+  due one; frames before their time wait (8 at most; then the decoder waits).
+  If the next frame lies more than a second ahead of the clock and of the
+  frame on screen (a gap: samples the host skipped or lost), the clock jumps
+  to it, so the video never stops for a gap.
+- **Flow control:** the Zero holds 4 MB and 256 samples of a stream not yet
+  taken by its decoder. `VIDEO_STATUS` (every 100 ms while the stream is open,
+  and on request) says how many bytes and samples the decoder has taken since
+  the open; the host sends a sample only if it fits in what's left
+  (`pgpu_video_room`, §13). The video's data then never holds up the GL
+  commands behind it.
+- **Looping and seeking:** a stream is one clock: to loop, send the samples
+  again with the times going on (the file's duration added); to jump, close
+  and open again.
+- Each stream has its own decoder and ISP in the VideoCore; the two streams
+  can play at once (720p and smaller; one 1080p30 stream has headroom,
+  measured: 43 fps).
+
 ---
 
 ## 8. Opcode map
@@ -461,7 +499,8 @@ program wasn't compiled for it, the draw is reported as `ERROR` 10.
 | `0x60`–`0x7F` | reserved for fixed-function additions |
 | `0x80`–`0x8F` | programs (§7.10) |
 | `0x90`–`0xBF` | reserved for program additions |
-| `0xC0`–`0xEF` | reserved |
+| `0xC0`–`0xC7` | video (§7.12) |
+| `0xC8`–`0xEF` | reserved |
 | `0xF0`–`0xFF` | debug and vendor |
 
 Debug commands (v1 Zero implementation, not needed by applications):
@@ -483,6 +522,7 @@ A reply to a request uses the request's opcode (`GET_INFO` → `INFO`, `PING` �
 | `0x03` | PONG | `u32 cookie` | `PING` |
 | `0x04` | STATUS | `u32 frames`, `u32 crc_errors`, `u32 command_errors`, `u32 ring_free_bytes`, `u32 last_frame_us`, then the last measuring window (about a second): `u32 window_us`, `u32 window_frames`, `u32 v3d_busy_us` (binning and rendering), `u32 arm_busy_us` (receiving and executing commands, without the waits for the V3D and the panel), `u32 panel_wait_us` (for the panel DMA of the previous frame). Older Zeros send the first 5 words | `GET_STATUS` |
 | `0x05` | DISPLAY | `u32 output_flags`, `u16 width, u16 height`, `u16 monitor_width, u16 monitor_height`, `u32 monitor_refresh_mhz`, `u16 signal_width, u16 signal_height`, `u8 monitor_name[16]` (see below) | After each `INFO`, and whenever the screen or the HDMI monitor changes (§6.4) |
+| `0x06` | VIDEO_STATUS | `u32 stream`, `u32 flags` (bit 0 open, bit 1 playing, bit 2 ended: the EOS came out of the decoder, bit 3 error: a VideoCore component reported one), `u32 bytes_done`, `u32 ring_bytes`, `u32 decoded`, `u32 shown`, `u32 dropped` (frames), `s64 shown_pts` (2 words; `0x8000000000000000`: none), `u32 waiting` (decoded frames before their time), `u32 samples_done`, `u32 max_samples` | Every 100 ms while a stream is open, and `VIDEO_GET_STATUS`. `bytes_done` and `samples_done` count what the decoder has taken since `VIDEO_OPEN` (mod 2^32): the host may have `ring_bytes` and `max_samples` more in flight (§7.12) |
 | `0x11` | FRAME_DONE | `u32 frame_number`, `u32 render_us`, `u32 draws`, `u32 triangles` | After a frame whose `FRAME_END` had flag bit 0 set is handed to the panel |
 | `0x16` | PIXELS | `u32 offset`, `color pixels[1 … 61]` | `READ_PIXELS`: the pixels from `offset` (in pixels, rows bottom up), in as many replies as needed |
 | `0x7E` | CREDIT | `u32 bytes` | USB stream only (§13.3): the stream bytes the Zero has taken so far, since the session started |
@@ -606,6 +646,8 @@ In the fixed-function pipeline SRC_ALPHA_SATURATE is approximated by SRC_ALPHA.
 | vertices per draw | 65536 |
 | packet payload | 16384 words (64 KB) |
 | command ring on the Zero | 1 MB |
+| video streams | 2; a stream: 4 MB and 256 samples not yet decoded, 8 decoded frames waiting |
+| video textures | width a power of two, 32 … 2048; height a multiple of 16, … 2048 |
 
 The Pico should read the actual values from `INFO` rather than hard-code them.
 
@@ -670,6 +712,35 @@ The host library (`libpgpu/`, board independent) has two layers:
   (for `glGet*`, `glIsEnabled`, object names) and encodes it into commands.
   `gltest.c` (self test 8) exercises it using only `gl*` calls, on the Pico and
   on a PC.
+- **Video** (§7.12): `pglVideoTexture (texture, stream, width, height,
+  coded_width, coded_height, avcc, avcc_bytes)` makes a GL texture name a
+  video texture (`VIDEO_OPEN`; pgl then knows it as a complete RGBA texture,
+  linear, clamped). `pgpu_video_room` says how big a sample may be now (from
+  the last `VIDEO_STATUS`, which the library keeps per stream like `DISPLAY`,
+  and what it has sent since); `pgpu_video_control` and
+  `pgpu_video_get_status` the rest.
+- **The data path from a file:** a file is read through a callback
+  (`pgpu_read_t`: bytes at an offset), so it needn't be in memory: on an SD
+  card the filesystem reads its sectors as needed.
+  - `libpgpu/pgpu_mp4.{h,c}` reads an MP4's H.264 track through it: the boxes
+    by their headers (the `moov` may follow the media data), the sample
+    tables through 256-byte windows (about 1.5 KB of state however long the
+    file; tables read in order, so each window once): each sample's offset,
+    size, times (the edit list applied) and keyframe flag, and the avcC.
+    Checked against ffprobe on five files (moov at the end and first, an
+    interleaved AAC track, no B-frames, 2880 samples): every offset, size and
+    keyframe the same, times within 1 µs, read in 512-byte sectors (8 … 26
+    sectors to open a file).
+  - `pgpu_video_sample_read` sends a sample in `VIDEO_DATA` packets, reading
+    each packet's data through the callback straight into the packet (the
+    samples go as they are: format AVCC). So the only copy on the host is the
+    filesystem's, from its sector buffer (or the card's DMA) into the
+    packet; no buffer for a sample. A read that fails leaves the sample
+    unfinished; the Zero drops it at the next sample's first chunk.
+  - `demos/video.c` plays an MP4 linked into the host's image (memory as the
+    file, `pgpu_mp4_open_memory`); `hosts/pc/videoplay` one from a file on
+    the PC, through a reader that does as an SD filesystem does (whole
+    sectors, a one-sector cache).
 
 ### 13.1 How pgl maps GL to the wire
 
@@ -828,6 +899,24 @@ gpu app's devlink), so programs on the PC drive the GPU without the Pico:
   a larger one, or one over `hdmi_pixels`, is divided by the smallest whole
   number that makes it fit (with `hdmi_pixels=230400`, 1920×1080 and 1280×720
   give 640×360, 1024×600 gives 512×300). The width is a multiple of 16.
+- **Video** (`gpu/video/`): MMAL (the Raspberry Pi userland's client,
+  BSD-3, vendored in `gpu/video/userland`) talks to the firmware's components
+  over Circle's VCHIQ. A stream is `vc.ril.video_decode` tunnelled to
+  `vc.ril.isp` inside the VideoCore; the ISP scales to the texture's size and
+  converts to RGBA, and its frames come into ARM memory (4 KB aligned buffers,
+  by the VideoCore's DMA: the ARM copies nothing). The texture then points at
+  the frame: raster RGBA (TMU type RGBA32R). The TMU reads raster rows at a
+  power-of-two stride (measured: a 320-wide texture came out garbled, 512
+  right), hence the width rule. MMAL's zero-copy would need the firmware's
+  VCSM service, which Circle lacks; it isn't needed.
+- **VCHIQ's tasks** run when the main loop yields (Circle's cooperative
+  scheduler): the loop yields after at most 1 ms of commands. Measured: with
+  64 packets a turn and a fast host (a PC over USB), the decoder stopped after
+  11 frames.
+- **Measured** (720p H.264 test pattern, High profile with B-frames, 512×288
+  texture on the panel, from the P4): 30 video frames a second with none
+  dropped, GL at 60 fps, the host's CPU 1–2%. Decoder to RGBA in ARM memory:
+  96 fps from 720p, 43 fps from 1080p (1024×576).
 - **Hot plug:** the HDMI hot-plug line is GPIO46 on the Zero (low while a
   monitor is connected), sampled every 20 ms; a change counts after 200 ms.
   The EDID is read over the DDC bus (BSC2, address 0x50, 100 kHz, about 12 ms),

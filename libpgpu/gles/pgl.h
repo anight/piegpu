@@ -70,6 +70,17 @@ bool pglInitSurface (unsigned width, unsigned height);
 /* end the frame: the screen shows it (FRAME_END). Picks up a new screen size
    (pglGetScreenSize) */
 void pglSwapBuffers (void);
+/* video: texture (a GL texture name) becomes a video texture of stream (1 or
+   2): RGBA, width x height (width a power of two, 32 or more; height a
+   multiple of 16), linear, clamped, one level; the Zero's decoder puts H.264
+   of coded_width x coded_height into it, scaled, and it shows the frame that's
+   due at each frame (docs/protocol.md 7.12). avcc: the samples are as MP4 has
+   them (pgpu_mp4's avcC); NULL: Annex B. Feed it with pgpu_video_sample or
+   pgpu_video_sample_read (pgpu.h); defining the texture again (glTexImage2D)
+   ends that. False on a bad name */
+bool pglVideoTexture (GLuint texture, unsigned stream, unsigned width, unsigned height,
+		      unsigned coded_width, unsigned coded_height, const void *avcc, unsigned avcc_bytes);
+
 /* the screen's size now: the panel's, or on HDMI one chosen for the monitor
    (it changes when a monitor is plugged in or out: pgpu_get_display). A
    viewport and scissor box covering the whole screen follow it */

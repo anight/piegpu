@@ -2247,6 +2247,41 @@ static void detach_from_bound_framebuffer (GLenum type, GLuint name)
 	}
 }
 
+bool pglVideoTexture (GLuint texture, unsigned stream, unsigned width, unsigned height,
+		      unsigned coded_width, unsigned coded_height, const void *avcc, unsigned avcc_bytes)
+{
+	unsigned name = texture ? slot_for (NAMES_TEXTURE, texture) : 0;
+	if (!name)
+	{
+		return false;
+	}
+	texture_t *t = &S.textures[name];
+	if (!t->used)
+	{
+		texture_take (name);
+	}
+	if (t->target == TEX_CUBE)
+	{
+		return false;
+	}
+	t->target = TEX_2D;
+	t->storage = true;
+	t->width = (uint16_t) width;
+	t->height = (uint16_t) height;
+	t->format = PGPU_RGBA8888;
+	t->gl_format = GL_RGBA;
+	t->gl_type = GL_UNSIGNED_BYTE;
+	t->generation++;
+	t->empty = false;
+	t->faces = 1;
+	t->bad_levels = 0;
+	t->generate_mipmap = false;
+	t->min_filter = t->mag_filter = GL_LINEAR;
+	t->wrap_s = t->wrap_t = GL_CLAMP_TO_EDGE;
+	pgpu_video_open (stream, name, width, height, coded_width, coded_height, avcc, avcc_bytes);
+	return true;
+}
+
 void glDeleteTextures (GLsizei n, const GLuint *textures)
 {
 	if (n < 0)

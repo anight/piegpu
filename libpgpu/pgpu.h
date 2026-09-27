@@ -91,6 +91,46 @@ typedef struct
    never get lost to other waits: compare the count to see a change */
 uint32_t pgpu_get_display (pgpu_display_t *display);
 
+/* video streams decoded by the Zero into textures (docs/protocol.md 7.12) */
+typedef struct
+{
+	uint32_t flags;			/* PGPU_VIDEO_OPEN_FLAG, _PLAYING, _ENDED, _ERROR */
+	uint32_t bytes_done;		/* sample bytes the decoder has taken, since the open */
+	uint32_t ring_bytes;		/* the Zero's buffer for the samples not taken yet */
+	uint32_t decoded, shown, dropped;	/* frames */
+	int64_t shown_pts;		/* the frame in the texture (PGPU_VIDEO_TIME_NONE: none) */
+	uint32_t waiting;		/* decoded frames waiting for their time */
+	uint32_t samples_done;		/* samples the decoder has taken, since the open */
+	uint32_t max_samples;		/* samples the Zero holds (not taken yet) */
+} pgpu_video_status_t;
+
+/* where data comes from: bytes at offset into buffer (a file on an SD card
+   through its filesystem, memory, ...); false if it can't */
+typedef bool (*pgpu_read_t) (void *ctx, uint64_t offset, void *buffer, uint32_t bytes);
+
+/* texture (Zero id) becomes an RGBA width x height video texture (width a
+   power of two, 32 or more; height a multiple of 16), fed by stream (1 or 2):
+   H.264 of coded_width x coded_height, scaled to the texture. avcc: the
+   samples are NAL units with length prefixes, as in MP4 (pgpu_mp4: its avcC);
+   NULL: Annex B (start codes, SPS and PPS in the stream) */
+void pgpu_video_open (uint32_t stream, uint32_t texture, uint32_t width, uint32_t height,
+		      uint32_t coded_width, uint32_t coded_height, const void *avcc, uint32_t avcc_bytes);
+/* a whole sample (an access unit; flags PGPU_VIDEO_KEYFRAME, _CONFIG, _EOS),
+   pts in microseconds; split into packets as needed. Send only what
+   pgpu_video_room () allows: the Zero rejects the rest */
+void pgpu_video_sample (uint32_t stream, uint32_t flags, int64_t pts, const void *data, uint32_t bytes);
+/* the same, the data read straight into the packets (bytes at offset through
+   read, a packet's payload at a time: no buffer for the sample); false if a
+   read failed (the Zero drops the part it has) */
+bool pgpu_video_sample_read (uint32_t stream, uint32_t flags, int64_t pts, uint32_t bytes,
+			     pgpu_read_t read, void *ctx, uint64_t offset);
+uint32_t pgpu_video_room (uint32_t stream);
+void pgpu_video_control (uint32_t stream, uint32_t op, int64_t arg);	/* PGPU_VIDEO_PLAY, ... */
+void pgpu_video_request_status (uint32_t stream);
+/* the last VIDEO_STATUS of a stream (the Zero sends one every 100 ms while it's
+   open); returns how many have come (0: none) */
+uint32_t pgpu_video_get_status (uint32_t stream, pgpu_video_status_t *status);
+
 /* link */
 void pgpu_init (void);
 /* the side-band signals (the transport's; over USB they answer at once) */

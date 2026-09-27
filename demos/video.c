@@ -1,0 +1,169 @@
+/*
+ * video.c - an MP4 played by the GPU: its H.264 track (pgpu_mp4) goes to the
+ * Zero's decoder sample by sample as it is in the file (pgpu_video_sample_read:
+ * from the file straight into the link's packets; a file on an SD card would
+ * be read the same way, with its own pgpu_read_t), the video is a texture
+ * (pglVideoTexture) drawn on a quad over the screen, letterboxed, with the HUD
+ * over it. The MP4 is linked in (demos.cmake: PGPU_VIDEO_MP4). It loops: the
+ * next round's times follow on, so the Zero's clock just runs.
+ *
+ * The samples go as far ahead as the Zero's buffer takes (pgpu_video_room),
+ * at most AHEAD_US of video ahead of the frame on screen.
+ */
+#include <stdio.h>
+#include <string.h>
+#include "pico/stdlib.h"
+#include "gles/pgl.h"
+#include "pgpu.h"
+#include "pgpu_mp4.h"
+#include "hud.h"
+#include "pgpu_perf.h"
+#include "screen.h"
+#include "video_program.h"
+
+#define STREAM		1
+#ifndef AHEAD_US
+#define AHEAD_US	1500000
+#endif
+
+extern const uint8_t video_mp4[], video_mp4_end[];
+
+
+int main (void)
+{
+	stdio_init_all ();
+	pgpu_init ();
+	printf ("\nvideo: waiting for the Zero (READY)...\n");
+	while (!pgpu_wait_ready (1000))
+	{
+	}
+	pgpu_set_reply_phase (1);
+	int tries = 0;
+	while (!pglInit () && ++tries < 5)		/* the first reply can be missed */
+	{
+	}
+
+	pgpu_mp4_t mp4;
+	if (!pgpu_mp4_open_memory (&mp4, video_mp4, (size_t) (video_mp4_end - video_mp4)))
+	{
+		printf ("video: the linked-in file isn't an MP4 with an H.264 track\n");
+		return 1;
+	}
+	printf ("video: %ux%u H.264, %u samples, %.2f s, %u KB\n", (unsigned) mp4.width,
+		(unsigned) mp4.height, (unsigned) mp4.samples,
+		mp4.duration_us / 1e6, (unsigned) ((video_mp4_end - video_mp4) / 1024));
+
+	GLuint prog = glCreateProgram ();
+	glProgramBinaryOES (prog, PGL_PROGRAM_BINARY_PGPU, &video_info, sizeof video_info);
+	GLint u_scale = glGetUniformLocation (prog, "u_scale");
+	GLint a_pos = glGetAttribLocation (prog, "a_pos");
+	glUseProgram (prog);
+	glUniform1i (glGetUniformLocation (prog, "u_video"), 0);
+	static const float quad[12] = {-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1};
+	GLuint buffer;
+	glGenBuffers (1, &buffer);
+	glBindBuffer (GL_ARRAY_BUFFER, buffer);
+	glBufferData (GL_ARRAY_BUFFER, sizeof quad, quad, GL_STATIC_DRAW);
+	GLuint texture;
+	glGenTextures (1, &texture);
+	glClearColor (0.0f, 0.0f, 0.0f, 1.0f);
+	glDisable (GL_DITHER);
+	if (!hud_init ())
+	{
+		printf ("video: the HUD program didn't link\n");
+	}
+
+	GLint vp[4] = {0};
+	unsigned tex_w = 0, tex_h = 0;
+	int64_t pts_base = 0;			/* the round's offset (looping) */
+	pgpu_mp4_sample_t sample;
+	bool have = pgpu_mp4_next (&mp4, &sample);
+	unsigned windows = 0, sent = 0;
+	perf_t m;
+	memset (&m, 0, sizeof m);
+	while (true)
+	{
+		/* the texture: a power-of-two width (the video texture's rule), the
+		   video's shape (height a multiple of 16); the quad letterboxed on the
+		   screen. Again when the screen changes: the stream starts over */
+		if (screen_update ("video", vp))
+		{
+			tex_w = 32;			/* a power of two, the screen's width or more */
+			while (tex_w < (unsigned) vp[2])
+			{
+				tex_w *= 2;
+			}
+			tex_h = (tex_w * mp4.height / mp4.width + 8) / 16 * 16;
+			float sy = (float) vp[2] * mp4.height / mp4.width / vp[3], sx = 1.0f;
+			if (sy > 1.0f)
+			{
+				sx = 1.0f / sy;
+				sy = 1.0f;
+			}
+			glUseProgram (prog);
+			glUniform2f (u_scale, sx, sy);
+			pglVideoTexture (texture, STREAM, tex_w, tex_h, mp4.width, mp4.height, mp4.avcc,
+					 mp4.avcc_size);
+			pgpu_mp4_rewind (&mp4);
+			have = pgpu_mp4_next (&mp4, &sample);
+			pts_base = 0;
+			printf ("video: texture %ux%u\n", tex_w, tex_h);
+		}
+
+		/* samples: as many as the Zero takes, up to AHEAD_US ahead */
+		pgpu_video_status_t st;
+		pgpu_video_get_status (STREAM, &st);
+		int64_t shown = st.shown_pts == PGPU_VIDEO_TIME_NONE ? 0 : st.shown_pts;
+		while (   have && pts_base + sample.pts_us - shown < AHEAD_US
+		       && pgpu_video_room (STREAM) >= sample.size)
+		{
+			if (!pgpu_video_sample_read (STREAM, sample.keyframe ? PGPU_VIDEO_KEYFRAME : 0,
+						     pts_base + sample.pts_us, sample.size, mp4.read, mp4.ctx,
+						     sample.offset))
+			{
+				printf ("video: can't read sample %u\n", (unsigned) mp4.next - 1);
+			}
+			sent++;
+			have = pgpu_mp4_next (&mp4, &sample);
+			if (!have && !mp4.error)	/* again, the times going on */
+			{
+				pts_base += mp4.duration_us;
+				pgpu_mp4_rewind (&mp4);
+				have = pgpu_mp4_next (&mp4, &sample);
+			}
+		}
+
+		glClear (GL_COLOR_BUFFER_BIT);
+		glUseProgram (prog);
+		glActiveTexture (GL_TEXTURE0);
+		glBindTexture (GL_TEXTURE_2D, texture);
+		glBindBuffer (GL_ARRAY_BUFFER, buffer);
+		glEnableVertexAttribArray (a_pos);
+		glVertexAttribPointer (a_pos, 2, GL_FLOAT, GL_FALSE, 0, (void *) 0);
+		glDrawArrays (GL_TRIANGLES, 0, 6);
+		hud_draw ();
+		pglSwapBuffers ();
+
+		absolute_time_t wait_start = get_absolute_time ();
+		pgpu_wait_frame (100);			/* pace on the screen (swap interval 1) */
+		if (perf_frame (absolute_time_diff_us (wait_start, get_absolute_time ()), &m))
+		{
+			hud_begin ();
+			hud_perf (vp[2] - hud_perf_width (0.5f) - 2, 2, 0.5f, &m);
+			hud_text_scaled (4, vp[3] - 12, "VIDEO", HUD_RGBA (255, 255, 255, 200), 0.5f);
+			hud_end ();
+			if (++windows % 5 == 0)
+			{
+				GLenum e = glGetError ();
+				printf ("video: %.1f fps, GPU %.0f%% CPU-G %.0f%% CPU-H %.0f%%; decoded %u shown %u "
+					"dropped %u, waiting %u, at %.2f s, %u samples sent, room %u KB, "
+					"flags %x, GL error 0x%x\n", m.fps, m.gpu * 100, m.cpu_g * 100,
+					m.cpu_h * 100, (unsigned) st.decoded, (unsigned) st.shown,
+					(unsigned) st.dropped, (unsigned) st.waiting, shown / 1e6, sent,
+					(unsigned) (pgpu_video_room (STREAM) / 1024), (unsigned) st.flags,
+					(unsigned) e);
+				sent = 0;
+			}
+		}
+	}
+}
