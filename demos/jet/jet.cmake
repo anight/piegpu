@@ -46,7 +46,7 @@ function(jet_demo target name)
 	set(sources ${scene_sources} ${jet_sources} ${JET_DIR}/gpu/JetGpu.cpp ${JET_DIR}/runtime/Runtime.cpp)
 	target_sources(${target} PRIVATE ${sources})
 	set_source_files_properties(${sources} PROPERTIES COMPILE_DEFINITIONS app_main=jet_app_main)
-	target_include_directories(${target} PRIVATE ${cfg} ${src} ${JET_DIR}/Jet ${JET_DIR}/gpu
+	target_include_directories(${target} PRIVATE ${cfg} ${src} ${JET_DIR}/.. ${JET_DIR}/Jet ${JET_DIR}/gpu
 		${JET_DIR}/runtime)
 	target_compile_features(${target} PRIVATE cxx_std_17)
 	# some scenes rely on <cstdio> arriving with the ESP-IDF headers (as picojet)

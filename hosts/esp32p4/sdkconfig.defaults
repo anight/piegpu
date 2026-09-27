@@ -10,3 +10,6 @@ CONFIG_COMPILER_OPTIMIZATION_PERF=y
 # targets v3.x unless told otherwise
 CONFIG_ESP32P4_SELECTS_REV_LESS_V3=y
 CONFIG_ESP32P4_REV_MIN_100=y
+# the module's 32 MB PSRAM in the heap: the Jet scenes need more than the
+# internal RAM that is left (jet-sprites-blending: bad_alloc without it)
+CONFIG_SPIRAM=y
