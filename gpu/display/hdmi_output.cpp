@@ -3,6 +3,7 @@
 //
 #include "hdmi_output.h"
 #include <circle/logger.h>
+#include <circle/timer.h>
 
 LOGMODULE ("hdmi");
 
@@ -101,6 +102,20 @@ void CHDMIOutput::Show (const void *pPixels, TDoneRoutine *pDone, void *pParam)
 const void *CHDMIOutput::GetShownFrame (void)
 {
 	return GetPage (m_nShown);
+}
+
+unsigned CHDMIOutput::MeasureRefresh (void)
+{
+	WaitIdle ();
+	m_pFrameBuffer->WaitForVerticalSync ();
+	unsigned nStart = CTimer::GetClockTicks ();
+	for (unsigned i = 0; i < 10; i++)
+	{
+		m_pFrameBuffer->WaitForVerticalSync ();
+	}
+	unsigned nUs = CTimer::GetClockTicks () - nStart;
+
+	return nUs ? (unsigned) (10000000000ULL / nUs) : 0;
 }
 
 // one frame a refresh: after a flip, wait for the vertical sync that shows it

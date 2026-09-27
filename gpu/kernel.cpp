@@ -143,18 +143,20 @@ void CKernel::ShowPanelNotice (void)
 		return;
 	}
 
+	// the HDMI signal: its size from the pixel valve, its rate measured
 	const THDMIState &M = m_Monitor.GetState ();
-	CString Monitor, Screen;
-	if (M.bEDID)
+	CString Line;
+	if (!M.bConnected)
 	{
-		Monitor.Format ("%s %ux%u", M.Name[0] ? M.Name : "monitor", M.nWidth, M.nHeight);
+		Line = "HDMI no monitor";
 	}
 	else
 	{
-		Monitor.Format (M.bConnected ? "monitor: no EDID yet" : "no monitor");
+		unsigned nRefresh = m_HDMI.MeasureRefresh ();
+		Line.Format ("HDMI %ux%u@%uHz", M.nSignalWidth, M.nSignalHeight, (nRefresh + 500) / 1000);
 	}
-	Screen.Format ("screen %ux%u", m_HDMI.GetWidth (), m_HDMI.GetHeight ());
-	ShowText (&m_Panel, "HDMI", Monitor, Screen);
+	ShowText (&m_Panel, Line, "", "");
+	LOGNOTE ("Panel: %s", (const char *) Line);
 }
 
 // the DISPLAY reply (docs/protocol.md 9)
@@ -377,7 +379,7 @@ void CKernel::ShowText (COutput *pOutput, const char *pTitle, const char *pLine1
 	}
 
 	unsigned nWidth = Graphics.GetWidth ();
-	unsigned y = Graphics.GetHeight () / 2 - 30;
+	unsigned y = Graphics.GetHeight () / 2 - (*pLine1 || *pLine2 ? 30 : 11);
 	Graphics.ClearScreen (COLOR2D (0, 0, 64));
 	Graphics.DrawText (nWidth / 2, y, COLOR2D (255, 255, 255), pTitle,
 			   C2DGraphics::AlignCenter, Font12x22);

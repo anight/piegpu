@@ -37,6 +37,10 @@ public:
 
 	const void *GetShownFrame (void);
 
+	/// \brief Measure the HDMI refresh rate (times a few vertical syncs: about 0.2 s)
+	/// \return Millihertz
+	unsigned MeasureRefresh (void);
+
 private:
 	u8 *GetPage (unsigned nPage) const;
 
