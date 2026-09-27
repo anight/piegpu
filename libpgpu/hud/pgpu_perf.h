@@ -11,7 +11,8 @@
 typedef struct
 {
 	float fps;
-	float pico, gpu, arm;			/* loads, 0..1 */
+	float gpu;				/* loads, 0..1: the V3D, */
+	float cpu_g, cpu_h;			/* the GPU board's CPU (the Zero's ARM), the host's CPU */
 	float render_ms, panel_ms;		/* V3D time and panel wait per frame */
 } perf_t;
 

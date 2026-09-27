@@ -739,9 +739,9 @@ int main (void)
 		if (new_perf && ++windows % 5 == 0)
 		{
 			GLenum e = glGetError ();
-			printf ("breakout: %.1f fps, load GPU %.0f%% ARM %.0f%% Pico %.0f%%, render %.2f ms, "
+			printf ("breakout: %.1f fps, load GPU %.0f%% CPU-G %.0f%% CPU-H %.0f%%, render %.2f ms, "
 				"level %d, score %d, lives %d, %d bricks, %u particles, GL error 0x%x\n",
-				perf.fps, perf.gpu * 100, perf.arm * 100, perf.pico * 100, perf.render_ms,
+				perf.fps, perf.gpu * 100, perf.cpu_g * 100, perf.cpu_h * 100, perf.render_ms,
 				G.level, G.score, G.lives, G.left, n_particles, (unsigned) e);
 		}
 	}

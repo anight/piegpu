@@ -543,9 +543,9 @@ int main (void)
 		if (new_perf && ++windows % 5 == 0)
 		{
 			GLenum e = glGetError ();
-			printf ("flight: %.1f fps, load GPU %.0f%% ARM %.0f%% Pico %.0f%%, render %.2f ms, "
+			printf ("flight: %.1f fps, load GPU %.0f%% CPU-G %.0f%% CPU-H %.0f%%, render %.2f ms, "
 				"heading %.0f, bank %.0f, GL error 0x%x\n", perf.fps, perf.gpu * 100,
-				perf.arm * 100, perf.pico * 100, perf.render_ms, heading * 180.0f / PI, bank,
+				perf.cpu_g * 100, perf.cpu_h * 100, perf.render_ms, heading * 180.0f / PI, bank,
 				(unsigned) e);
 		}
 	}

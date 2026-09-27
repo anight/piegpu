@@ -160,9 +160,9 @@ void start (Init init, Update update, Update afterRender, RenderEffects renderEf
 			if (++windows % 5 == 0)
 			{
 				GLenum e = glGetError ();
-				std::printf ("jet: %.1f fps, GPU %.0f%% ARM %.0f%% Pico %.0f%%, render %.2f ms, "
+				std::printf ("jet: %.1f fps, GPU %.0f%% CPU-G %.0f%% CPU-H %.0f%%, render %.2f ms, "
 					     "%d tris, %d draws, heap %u KB, GL error 0x%x\n", perf.fps,
-					     perf.gpu * 100, perf.arm * 100, perf.pico * 100, perf.render_ms,
+					     perf.gpu * 100, perf.cpu_g * 100, perf.cpu_h * 100, perf.render_ms,
 					     scene->lastFrameRasterizedTriangles, JetGpu::lastDraws (),
 					     (unsigned) (mallinfo ().uordblks / 1024), (unsigned) e);
 			}

@@ -303,9 +303,9 @@ int main (void)
 			if (++windows % 5 == 0)
 			{
 				GLenum e = glGetError ();
-				printf ("gears: %.1f fps, load GPU %.0f%% ARM %.0f%% Pico %.0f%%, "
+				printf ("gears: %.1f fps, load GPU %.0f%% CPU-G %.0f%% CPU-H %.0f%%, "
 					"render %.2f ms, panel wait %.2f ms, GL error 0x%x\n",
-					m.fps, m.gpu * 100, m.arm * 100, m.pico * 100,
+					m.fps, m.gpu * 100, m.cpu_g * 100, m.cpu_h * 100,
 					m.render_ms, m.panel_ms, (unsigned) e);
 			}
 		}

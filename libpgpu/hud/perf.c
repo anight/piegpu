@@ -37,12 +37,12 @@ bool perf_frame (uint32_t wait, perf_t *m)
 		return false;
 	}
 	m->fps = frames * 1e6f / window;
-	m->pico = 1.0f - (float) wait_us / window;
+	m->cpu_h = 1.0f - (float) wait_us / window;
 	if (status.window_us)
 	{
 		uint32_t n = status.window_frames ? status.window_frames : 1;
 		m->gpu = (float) status.v3d_busy_us / status.window_us;
-		m->arm = (float) status.arm_busy_us / status.window_us;
+		m->cpu_g = (float) status.arm_busy_us / status.window_us;
 		m->render_ms = status.v3d_busy_us / 1000.0f / n;
 		m->panel_ms = status.panel_wait_us / 1000.0f / n;
 	}
@@ -60,7 +60,7 @@ bool perf_frame (uint32_t wait, perf_t *m)
 
 #define LINE		17		/* at scale 1 */
 #define BAR_W		64
-#define TEXT_CHARS	9		/* "PICO 100%" */
+#define TEXT_CHARS	10		/* "CPU-G 100%" */
 
 float hud_perf_width (float scale)
 {
@@ -87,7 +87,7 @@ void hud_perf (float x, float y, float scale, const perf_t *m)
 
 	const struct { const char *label; float load; } loads[3] =
 	{
-		{"GPU ", m->gpu}, {"ARM ", m->arm}, {"PICO", m->pico},
+		{"GPU  ", m->gpu}, {"CPU-G", m->cpu_g}, {"CPU-H", m->cpu_h},
 	};
 	for (int i = 0; i < 3; i++)
 	{
