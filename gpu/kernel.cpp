@@ -45,7 +45,6 @@ boolean CKernel::Initialize (void)
 	const char *pOutput = m_Options.GetAppOptionString ("output", "auto");
 	m_OutputMode =   strcmp (pOutput, "panel") == 0 ? OutputPanel
 		       : strcmp (pOutput, "hdmi") == 0 ? OutputHDMI : OutputAuto;
-	m_bPanelPresent = strcmp (m_Options.GetAppOptionString ("panel", "yes"), "none") != 0;
 	m_nHDMIPixels = m_Options.GetAppOptionDecimal ("hdmi_pixels", m_nHDMIPixels);
 	if (m_nHDMIPixels < 320 * 240 || m_nHDMIPixels > CRenderer::MaxPixels)
 	{
@@ -56,9 +55,39 @@ boolean CKernel::Initialize (void)
 	       && m_Interrupt.Initialize ()
 	       && m_Timer.Initialize ()
 	       && m_DevLink.Initialize ()
+	       && DetectPanel ()
 	       && m_VCHIQ.Initialize ()
 	       && (!(m_bPanelPresent || m_OutputMode == OutputPanel) || m_Panel.Initialize ())
 	       && (m_OutputMode == OutputPanel || m_HDMI.Initialize ());
+}
+
+// panel=auto (the default): a panel if one answers over MISO; panel=yes: one
+// is there (MISO not wired); panel=none: there's none
+boolean CKernel::DetectPanel (void)
+{
+	const char *pPanel = m_Options.GetAppOptionString ("panel", "auto");
+	if (strcmp (pPanel, "auto") != 0)
+	{
+		m_bPanelPresent = strcmp (pPanel, "none") != 0;
+		LOGNOTE ("Panel: %s (panel=%s)", m_bPanelPresent ? "there" : "none", pPanel);
+		return TRUE;
+	}
+
+	CPanelOutput::TPanelInfo Info;
+	m_bPanelPresent = CPanelOutput::Detect (&Info);
+	if (m_bPanelPresent)
+	{
+		LOGNOTE ("Panel: ST7789, module ID %02X %02X %02X; status %08X, power mode %02X, "
+			 "MADCTL %02X, pixel format %02X, self-diagnostic %02X", Info.nID >> 16,
+			 (Info.nID >> 8) & 0xFF, Info.nID & 0xFF, Info.nStatus, Info.nPowerMode,
+			 Info.nMADCTL, Info.nPixelFormat, Info.nSelfDiagnostic);
+	}
+	else
+	{
+		LOGNOTE ("Panel: none answers on MISO (GPIO9)");
+	}
+
+	return TRUE;
 }
 
 // where frames go now, at which size

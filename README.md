@@ -56,8 +56,9 @@ and signals READY (room for a packet) and FRAME (a frame went to the screen).
   Zero that isn't running. On the RP2350 the internal pull-down alone isn't
   enough (erratum E9, docs/protocol.md §3.1).
 - The ESP32-P4 pins are on the dev kit's 40-pin header, which has the
-  Raspberry Pi layout. The bit clock is 25 MHz on a v1.x chip (the dev kit's)
-  and 40 MHz from chip revision v3.0 on (`transports/esp32p4-i2s`).
+  Raspberry Pi layout. The bit clock is 31.25 MHz on a v1.x chip (the dev
+  kit's; its most) and 40 MHz from chip revision v3.0 on
+  (`transports/esp32p4-i2s`).
 - On the Pico only physical pins 21–27 are used (GP16–GP21 and GND).
 
 ### Zero ↔ ST7789 panel
@@ -72,9 +73,10 @@ landscape as 320x240 (`gpu/display/panel_output`).
 | SDI (MOSI) | 19 (GPIO10, SPI0 MOSI) |
 | DC | 18 (GPIO24) |
 | RESET | 22 (GPIO25) |
+| SDO (MISO) | 21 (GPIO9, SPI0 MISO) |
 
-The panel's SDO (MISO) isn't used. Because nothing can be read back, the Zero
-can't detect the panel: without one, set `panel=none` (see below).
+At boot the Zero reads the panel's ID over SDO, so it knows whether a panel is
+there. Without the SDO wire it can't tell: set `panel=yes` (see below).
 
 ### Zero ↔ HDMI, and the PC
 
@@ -93,7 +95,9 @@ can't detect the panel: without one, set `panel=none` (see below).
 |---|---|
 | `output=auto` | the default: HDMI while a monitor is connected, else the panel |
 | `output=panel`, `output=hdmi` | always this output |
-| `panel=none` | no panel: without a monitor the screen stays on HDMI |
+| `panel=auto` | the default: a panel if one answers on SDO (MISO) at boot |
+| `panel=yes`, `panel=none` | a panel is there (SDO not wired) or none is; without a panel and a monitor the screen stays on HDMI |
 | `hdmi_pixels=N` | cap the screen on HDMI to N pixels (default: the monitor's native resolution, up to 1920x1200) |
 
 With `devtools/run.sh`, pass these as `CMDLINE="output=panel" devtools/run.sh gpu`.
+

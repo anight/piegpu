@@ -939,8 +939,9 @@ gpu app's devlink), so programs on the PC drive the GPU without the Pico:
   (`SetVirtualOffset`).
 - **Screen and HDMI** (`gpu/kernel.cpp`, `gpu/display/`): the kernel command
   line (`cmdline.txt`) sets `output=auto` (the default: HDMI while a monitor is
-  connected, else the panel), `output=panel` or `output=hdmi`; `panel=none`
-  says there is no panel (HDMI keeps the screen without a monitor then);
+  connected, else the panel), `output=panel` or `output=hdmi`; `panel=auto`
+  (the default) looks for a panel, `panel=yes` and `panel=none` say there is
+  one or none (without a panel HDMI keeps the screen without a monitor);
   `hdmi_pixels=N` caps the screen on HDMI. The HDMI screen is the monitor's
   preferred mode (native: 1024×600 for a 1024×600 monitor), up to 1920×1200;
   a larger one, or one over `hdmi_pixels`, is divided by the smallest whole
@@ -964,6 +965,16 @@ gpu app's devlink), so programs on the PC drive the GPU without the Pico:
   texture on the panel, from the P4): 30 video frames a second with none
   dropped, GL at 60 fps, the host's CPU 1–2%. Decoder to RGBA in ARM memory:
   96 fps from 720p, 43 fps from 1080p (1024×576).
+- **Panel detection** (`CPanelOutput::Detect`): at boot the panel is reset
+  and its registers read over MISO (GPIO9), bit-banged at about 500 kHz (the
+  ST7789 reads slowly; the driver's SPI runs at 75 MHz), then the pins go back
+  to SPI0. A panel answers RDDID (04h: a dummy bit, then its ID bytes) the
+  same with MISO pulled up and pulled down, and releases the line after them;
+  with nothing there the pull-up reads all ones and the pull-down all zeros.
+  Measured: 1000 of 1000 reads the same with each pull (ID 81 81 B3). The ID
+  bytes are the module maker's (IDSET, C1h, in the panel's NVM; the ST7789V
+  datasheet's default is 85 85 52), and no register tells the glass's size
+  (the controller's memory is 240×320 whatever is attached).
 - **Hot plug:** the HDMI hot-plug line is GPIO46 on the Zero (low while a
   monitor is connected), sampled every 20 ms; a change counts after 200 ms.
   The EDID is read over the DDC bus (BSC2, address 0x50, 100 kHz, about 12 ms),

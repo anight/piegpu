@@ -17,6 +17,20 @@ class CPanelOutput : public COutput
 public:
 	CPanelOutput (CInterruptSystem *pInterrupt);
 
+	// Is a panel there? Its registers over MISO (GPIO9), before Initialize:
+	// it's reset, and read at about 500 kHz (the ST7789 reads slowly)
+	struct TPanelInfo
+	{
+		boolean bPresent;
+		u32 nID;			// RDDID: the module maker's ID1, ID2, ID3
+		u32 nStatus;			// RDDST
+		u8 nPowerMode;			// RDDPM
+		u8 nMADCTL;			// RDDMADCTL
+		u8 nPixelFormat;		// RDDCOLMOD
+		u8 nSelfDiagnostic;		// RDDSDR
+	};
+	static boolean Detect (TPanelInfo *pInfo);
+
 	boolean Initialize (void)		{ return m_Display.Initialize (); }
 
 	CDisplay *GetDisplay (void)		{ return &m_Display; }

@@ -40,6 +40,7 @@ public:
 	TShutdownMode Run (void);
 
 private:
+	boolean DetectPanel (void);
 	void ChooseOutput (COutput **ppOutput, unsigned *pWidth, unsigned *pHeight);
 	void HDMISize (unsigned *pWidth, unsigned *pHeight);
 	void ApplyOutput (void);
