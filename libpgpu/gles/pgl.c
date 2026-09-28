@@ -2282,6 +2282,21 @@ bool pglVideoTexture (GLuint texture, unsigned stream, unsigned width, unsigned 
 	return true;
 }
 
+bool pglVideoResize (GLuint texture, unsigned stream, unsigned width, unsigned height)
+{
+	unsigned name = texture ? slot_of (NAMES_TEXTURE, texture) : 0;
+	if (!name || !S.textures[name].used || S.textures[name].target != TEX_2D)
+	{
+		return false;
+	}
+	texture_t *t = &S.textures[name];
+	t->width = (uint16_t) width;
+	t->height = (uint16_t) height;
+	t->generation++;
+	pgpu_video_resize (stream, width, height);
+	return true;
+}
+
 void glDeleteTextures (GLsizei n, const GLuint *textures)
 {
 	if (n < 0)

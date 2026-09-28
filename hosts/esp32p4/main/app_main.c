@@ -4,11 +4,15 @@
  * task's stack (sdkconfig.defaults). The link's reply parser runs on core 1.
  */
 #include <stdio.h>
+#include "sdcard.h"
 
 int pgpu_app_main (void);
 
 void app_main (void)
 {
 	printf ("pgpu: ESP32-P4 host\n");
+#ifdef PGPU_SDCARD
+	sdcard_mount (PGPU_SDCARD);		/* the app's files (PGPU_SDCARD: where) */
+#endif
 	pgpu_app_main ();
 }

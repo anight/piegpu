@@ -126,6 +126,9 @@ bool pgpu_video_sample_read (uint32_t stream, uint32_t flags, int64_t pts, uint3
 			     pgpu_read_t read, void *ctx, uint64_t offset);
 uint32_t pgpu_video_room (uint32_t stream);
 void pgpu_video_control (uint32_t stream, uint32_t op, int64_t arg);	/* PGPU_VIDEO_PLAY, ... */
+/* the stream's texture gets another size (same rules as the open); the
+   decoding and the clock go on */
+void pgpu_video_resize (uint32_t stream, uint32_t width, uint32_t height);
 void pgpu_video_request_status (uint32_t stream);
 /* the last VIDEO_STATUS of a stream (the Zero sends one every 100 ms while it's
    open); returns how many have come (0: none) */

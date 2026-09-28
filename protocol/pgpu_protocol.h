@@ -159,6 +159,7 @@ enum pgpu_reply
 #define PGPU_VIDEO_PLAY			1	/* arg: the time to show now (-1: go on) */
 #define PGPU_VIDEO_PAUSE		2
 #define PGPU_VIDEO_CLOSE		3
+#define PGPU_VIDEO_RESIZE		4	/* arg: width | height << 16: the texture's new size */
 /* VIDEO_STATUS flags */
 #define PGPU_VIDEO_OPEN_FLAG		(1u << 0)
 #define PGPU_VIDEO_PLAYING		(1u << 1)

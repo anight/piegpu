@@ -673,7 +673,7 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 
 	case PGPU_OP_VIDEO_CONTROL:
 		*pDetail = p[0];
-		if (p[1] == PGPU_VIDEO_CLOSE)
+		if (p[1] == PGPU_VIDEO_CLOSE || p[1] == PGPU_VIDEO_RESIZE)
 		{
 			FlushJob (FALSE);	// draws so far may use the stream's frame
 		}

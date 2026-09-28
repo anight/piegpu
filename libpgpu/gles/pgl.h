@@ -80,6 +80,9 @@ void pglSwapBuffers (void);
    ends that. False on a bad name */
 bool pglVideoTexture (GLuint texture, unsigned stream, unsigned width, unsigned height,
 		      unsigned coded_width, unsigned coded_height, const void *avcc, unsigned avcc_bytes);
+/* a video texture (of stream) gets another size; the video goes on (e.g. the
+   screen changed). False on a bad name */
+bool pglVideoResize (GLuint texture, unsigned stream, unsigned width, unsigned height);
 
 /* the screen's size now: the panel's, or on HDMI one chosen for the monitor
    (it changes when a monitor is plugged in or out: pgpu_get_display). A

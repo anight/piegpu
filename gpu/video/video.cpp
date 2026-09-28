@@ -341,6 +341,9 @@ u32 CVideo::Control (unsigned nStream, u32 nOp, s64 nArg)
 		Close (nStream);
 		break;
 
+	case PGPU_VIDEO_RESIZE:
+		return Resize (nStream, (u32) nArg & 0xFFFF, (u32) nArg >> 16);
+
 	default:
 		return PGPU_ERR_ENUM;
 	}
@@ -413,6 +416,60 @@ void CVideo::Close (unsigned nStream)
 	LOGNOTE ("Stream %u closed: %u frames decoded, %u shown, %u dropped", nStream,
 		 S.nDecoded, S.nShownFrames, S.nDropped);
 	memset (&S, 0, sizeof S);
+}
+
+// only the ISP's output changes: its port is disabled (the buffers it has
+// come back), the frames are let go, the port gets the new size and a pool
+// for it; the decoder, the samples and the clock go on
+u32 CVideo::Resize (unsigned nStream, unsigned nWidth, unsigned nHeight)
+{
+	TStream &S = m_Streams[nStream];
+	u32 nError = m_pTextures->CreateExternal (S.nTexture, nWidth, nHeight);	// (checks the size)
+	if (nError)
+	{
+		return nError;
+	}
+
+	MMAL_PORT_T *pOut = S.pISP->output[0];
+	mmal_port_disable (pOut);
+	for (unsigned i = 0; i < S.nFrames; i++)
+	{
+		ReleaseFrame (&S.Frames[i]);
+	}
+	S.nFrames = 0;
+	ReleaseFrame (&S.Shown);
+	MMAL_BUFFER_HEADER_T *pBuffer;
+	while ((pBuffer = mmal_queue_get (S.pDecoded)) != nullptr)
+	{
+		mmal_buffer_header_release (pBuffer);
+	}
+	mmal_pool_destroy (S.pPoolOut);
+	S.pPoolOut = nullptr;
+
+	pOut->format->es->video.width = nWidth;
+	pOut->format->es->video.height = nHeight;
+	pOut->format->es->video.crop.width = nWidth;
+	pOut->format->es->video.crop.height = nHeight;
+	MMAL_STATUS_T s = mmal_port_format_commit (pOut);
+	if (s == MMAL_SUCCESS)
+	{
+		pOut->buffer_num = OUTPUT_BUFFERS;
+		pOut->buffer_size = pOut->buffer_size_recommended;
+		S.pPoolOut = mmal_pool_create_with_allocator (pOut->buffer_num, pOut->buffer_size, &S,
+							      AllocFrame, FreeFrame);
+		s = S.pPoolOut ? mmal_port_enable (pOut, OutputCallback) : MMAL_ENOMEM;
+	}
+	if (s != MMAL_SUCCESS)
+	{
+		LOGWARN ("Stream %u: can't resize to %ux%u (%d)", nStream, nWidth, nHeight, (int) s);
+		Close (nStream);
+		return PGPU_ERR_MEMORY;
+	}
+	S.nWidth = nWidth;
+	S.nHeight = nHeight;
+	LOGNOTE ("Stream %u: texture %u now %ux%u", nStream, S.nTexture, nWidth, nHeight);
+
+	return 0;
 }
 
 void CVideo::CloseAll (void)

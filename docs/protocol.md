@@ -460,7 +460,7 @@ the GL frame rate.
 |---|---|---|---|
 | `0xC0` | VIDEO_OPEN | `u32 stream` (1 or 2), `u32 codec` (1 = H.264), `id texture`, `u16 width, u16 height`, `u16 coded_width, u16 coded_height`, `u32 format`, `u32 config_bytes`, `u8 config[config_bytes]` (padded to words) | The texture becomes (again) a video texture: RGBA, width × height (width a power of two, 32 … 2048; height a multiple of 16), one level, clamped (repeat and mirror work at power-of-two sizes), linear; black until the first frame. The stream is (re)opened for H.264 of the coded size, scaled to the texture (the whole picture: aspect is the drawing's business). Format 0 Annex B: samples with start codes, SPS and PPS in the stream (a CONFIG sample); format 1 AVCC: samples as MP4 stores them (NAL units with length prefixes), config the MP4's avcC (SPS and PPS, the length size). An open stream is closed first. |
 | `0xC1` | VIDEO_DATA | `u32 stream`, `u32 flags`, `s64 pts` (2 words, low first; microseconds), `u32 bytes` (in this packet), `u32 sample_bytes` (the whole sample's), `u8 data[bytes]` (padded to words) | A chunk of a **sample**: one access unit in decode order, in the stream's format. Flags: bit 0 FIRST chunk, bit 1 LAST chunk, bit 2 KEYFRAME, bit 3 CONFIG (SPS and PPS), bit 4 EOS (the stream's end; may have no data). A sample's chunks come in order, nothing of the stream between them; the pts and `sample_bytes` of the FIRST chunk count. A sample is taken whole or not at all (`LIMIT` for a sample that doesn't fit: its other chunks are then ignored). |
-| `0xC2` | VIDEO_CONTROL | `u32 stream`, `u32 op`, `s64 arg` | Op 1 PLAY: the clock runs from `arg` now (`0x8000000000000000`: from where it stands). Op 2 PAUSE: the clock stops (the texture keeps its frame). Op 3 CLOSE: the stream ends, the texture stays, black. |
+| `0xC2` | VIDEO_CONTROL | `u32 stream`, `u32 op`, `s64 arg` | Op 1 PLAY: the clock runs from `arg` now (`0x8000000000000000`: from where it stands). Op 2 PAUSE: the clock stops (the texture keeps its frame). Op 3 CLOSE: the stream ends, the texture stays, black. Op 4 RESIZE: the texture becomes `arg` bits 15:0 wide, 31:16 high (the rules of `VIDEO_OPEN`), the stream goes on: the frames decoded and waiting are dropped, the ISP scales to the new size from the next one (for a screen that changed: the video keeps its place). |
 | `0xC3` | VIDEO_GET_STATUS | `u32 stream` | Replies `VIDEO_STATUS` (§9). |
 
 - **The clock:** without `PLAY` it starts when the first frame is shown, from
@@ -477,7 +477,8 @@ the GL frame rate.
   commands behind it.
 - **Looping and seeking:** a stream is one clock: to loop, send the samples
   again with the times going on (the file's duration added); to jump, close
-  and open again.
+  and open again. To change the texture's size, `RESIZE` (not a new open: that
+  would start the stream again).
 - Each stream has its own decoder and ISP in the VideoCore; the two streams
   can play at once (720p and smaller; one 1080p30 stream has headroom,
   measured: 43 fps).
@@ -715,7 +716,8 @@ The host library (`libpgpu/`, board independent) has two layers:
 - **Video** (§7.12): `pglVideoTexture (texture, stream, width, height,
   coded_width, coded_height, avcc, avcc_bytes)` makes a GL texture name a
   video texture (`VIDEO_OPEN`; pgl then knows it as a complete RGBA texture,
-  linear, clamped). `pgpu_video_room` says how big a sample may be now (from
+  linear, clamped); `pglVideoResize (texture, stream, width, height)` changes
+  its size, the stream going on (`RESIZE`). `pgpu_video_room` says how big a sample may be now (from
   the last `VIDEO_STATUS`, which the library keeps per stream like `DISPLAY`,
   and what it has sent since); `pgpu_video_control` and
   `pgpu_video_get_status` the rest.
@@ -737,10 +739,25 @@ The host library (`libpgpu/`, board independent) has two layers:
     filesystem's, from its sector buffer (or the card's DMA) into the
     packet; no buffer for a sample. A read that fails leaves the sample
     unfinished; the Zero drops it at the next sample's first chunk.
-  - `demos/video.c` plays an MP4 linked into the host's image (memory as the
-    file, `pgpu_mp4_open_memory`); `hosts/pc/videoplay` one from a file on
-    the PC, through a reader that does as an SD filesystem does (whole
-    sectors, a one-sector cache).
+  - `demos/video.c` plays the file `PGPU_VIDEO_PATH` if the host has a
+    filesystem (POSIX `open`/`lseek`/`read`), else an MP4 linked into the
+    host's image (memory as the file, `pgpu_mp4_open_memory`). When the screen
+    changes (panel ↔ HDMI) it resizes the texture; the video keeps its place.
+    `hosts/pc/videoplay` plays a file on the PC, through a reader that does as
+    an SD filesystem does (whole sectors, a one-sector cache).
+  - **The ESP32-P4's microSD card** (`hosts/esp32p4/main/sdcard.c`, the video
+    app): SDMMC slot 0, 4 bits at 40 MHz (CLK GPIO43, CMD 44, D0–D3 39–42);
+    the card's supply is on-chip LDO channel 4 through a P-MOSFET that GPIO45
+    switches on (low). FAT32 at `/sdcard` (ESP-IDF 5.5's FatFs has exFAT
+    off), the file `/sdcard/video1.mp4` (CMake `PGPU_VIDEO_FILE`). Measured
+    on a 64 GB card: POSIX `read` into the packet 12.8 MB/s (16.4 MB/s into
+    DMA-capable memory); unbuffered stdio (`fread` with no buffer) managed
+    84 KB/s, buffered 2.1 MB/s. With stdio a 1920×800 24 fps film (1.9 GB,
+    102 minutes) played slowly with the P4's CPU at 100%; with POSIX reads
+    it plays at 24 fps, though stretches of a few seconds where the reads
+    slow down about tenfold drop frames (not yet understood). FatFs' fast seek (`CONFIG_FATFS_USE_FASTSEEK`) is on for
+    the seeks between the sample tables and the samples; alone it didn't
+    help stdio.
 
 ### 13.1 How pgl maps GL to the wire
 
@@ -889,7 +906,14 @@ gpu app's devlink), so programs on the PC drive the GPU without the Pico:
   320×240). On HDMI the V3D renders straight into the pages of a three-page
   firmware framebuffer: one on screen, one waiting for the vertical sync that
   shows it, one being drawn; no copy (a DMA copy cost 2.6 ms of CPU a frame at
-  512×300: CPU-G 20% instead of 6%).
+  512×300: CPU-G 20% instead of 6%). The vertical sync is the frame count of
+  the display scaler's channel for HDMI (HVS `DISPSTAT1`, bits 17:12; measured
+  60 a second), polled with a 100 ms timeout. The firmware's "wait for vsync"
+  call, used before, has no timeout; with it, the Zero hung once as a monitor
+  was switched on during a video (the log stopped, the watchdog reset it;
+  where it hung isn't known), and since the change it hasn't. The video demo
+  on 1024×600 went from 38–51 to 57–60 fps. A page flip is still a firmware call
+  (`SetVirtualOffset`).
 - **Screen and HDMI** (`gpu/kernel.cpp`, `gpu/display/`): the kernel command
   line (`cmdline.txt`) sets `output=auto` (the default: HDMI while a monitor is
   connected, else the panel), `output=panel` or `output=hdmi`; `panel=none`
@@ -921,8 +945,10 @@ gpu app's devlink), so programs on the PC drive the GPU without the Pico:
   monitor is connected), sampled every 20 ms; a change counts after 200 ms.
   The EDID is read over the DDC bus (BSC2, address 0x50, 100 kHz, about 12 ms),
   because the firmware's EDID property tag keeps answering with the EDID read
-  at boot after the monitor is gone. While a connected monitor doesn't answer,
-  the EDID is tried again every second.
+  at boot after the monitor is gone. At boot it's read at once; after a hot
+  plug from 2 s on (the firmware reads it too, over the same bus, and sets HDMI
+  up again); while a connected monitor doesn't answer, it's tried again every
+  second.
 - **HDMI mode:** the firmware chooses it at boot and doesn't change it later.
   `config.txt` has `hdmi_force_hotplug=1`, so that HDMI stays on (640×480)
   when the Zero boots without a monitor. By default the firmware prefers TV

@@ -18,3 +18,8 @@ CONFIG_SPIRAM=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+# FatFs: a seek in a file (the MP4's tables, then its media data, and back)
+# without walking the cluster chain from the start: an in-memory cluster map
+# (1024 words: up to about 500 fragments)
+CONFIG_FATFS_USE_FASTSEEK=y
+CONFIG_FATFS_FAST_SEEK_BUFFER_SIZE=1024

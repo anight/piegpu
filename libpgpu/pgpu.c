@@ -1285,4 +1285,9 @@ void pgpu_video_control (uint32_t stream, uint32_t op, int64_t arg)
 	pgpu_end ();
 }
 
+void pgpu_video_resize (uint32_t stream, uint32_t width, uint32_t height)
+{
+	pgpu_video_control (stream, PGPU_VIDEO_RESIZE, (int64_t) (width | height << 16));
+}
+
 void pgpu_video_request_status (uint32_t stream)	{ cmd1 (PGPU_OP_VIDEO_GET_STATUS, stream); }

@@ -51,6 +51,9 @@ public:
 		  const u8 *pData, unsigned nBytes);
 	u32 Control (unsigned nStream, u32 nOp, s64 nArg);
 	void Close (unsigned nStream);
+	/// \brief The texture gets another size; the decoding goes on (the frames
+	///	   decoded but not shown yet are dropped)
+	u32 Resize (unsigned nStream, unsigned nWidth, unsigned nHeight);
 	void CloseAll (void);			// RESET
 
 	/// \brief Call often: feeds the decoders, takes their frames
