@@ -28,7 +28,10 @@
  * MCLK by 2 (mclk_multiple 128) to BCLK. Chips from revision v3.0 on: the
  * 160 MHz PLL, so up to 40 MHz. Before v3.0 (the Waveshare board's is v1.0),
  * I2S can't use that PLL (i2s_ll_get_clk_src) and runs from the APLL, which
- * the driver sets to 2 x MCLK, at most 125 MHz: up to 31.25 MHz.
+ * the driver sets to 2 x MCLK, at most 125 MHz: up to 31.25 MHz, used.
+ * (ESP-IDF warns that MCLK/BCLK 2 is below the 4 it measured for the receiver
+ * of a full-duplex pair; linktest at 31.25 MHz for 10 minutes: 87.4M random
+ * words there and back, 0 wrong, 0 CRC errors either way.)
  *
  * Flow control: READY promises room for one maximum-size batch (16 KB). What
  * the TX ring and DMA still hold (at most 32 + 4 KB) is on its way on top of
@@ -51,7 +54,7 @@
 #if CONFIG_ESP32P4_SELECTS_REV_LESS_V3
 #define I2S_SOURCE		I2S_CLK_SRC_APLL
 #ifndef PGPU_P4_BCLK_HZ
-#define PGPU_P4_BCLK_HZ		25000000	/* APLL 100 MHz */
+#define PGPU_P4_BCLK_HZ		31250000	/* APLL 125 MHz (the most) */
 #endif
 #else
 #define I2S_SOURCE		I2S_CLK_SRC_PLL_160M

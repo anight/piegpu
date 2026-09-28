@@ -4,6 +4,7 @@
 # SDK (hosts/pico) or pico/stdlib.h from libpgpu/compat (hosts/esp32p4).
 #
 #   selftest            the link, the protocol and pgl (libpgpu/test)
+#   linktest            the link at full speed both ways, checked word by word
 #   gears breakout flight
 #   toy-NAME            Shadertoy-style: shaders/toy_NAME.frag; a game has
 #                       NAME.c (pong, snake, asteroids)
@@ -16,7 +17,7 @@ include(${CMAKE_CURRENT_LIST_DIR}/../libpgpu/pgpu_sources.cmake)
 
 set(PGPU_DEMOS ${CMAKE_CURRENT_LIST_DIR})
 set(PGPU_DEMO_SHADERS ${PGPU_DEMOS}/shaders)
-set(PGPU_DEMO_APPS selftest gears breakout flight
+set(PGPU_DEMO_APPS selftest linktest gears breakout flight
 	toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids video)
 
 if(NOT COMMAND pgpu_demo)
@@ -38,6 +39,9 @@ function(pgpu_demo target app)
 		pgpu_glsl_program(TARGET ${target} NAME gltest DIR ${PGPU_LIB}/test
 			ARGS -a a_pos:float:2 -a a_uv:float:2 -a a_color:ubyte_norm:4)
 		pgpu_glsl_program(TARGET ${target} NAME ctrl DIR ${PGPU_LIB}/test ARGS -a a_pos:float:2)
+
+	elseif(app STREQUAL "linktest")
+		target_sources(${target} PRIVATE ${PGPU_LIB}/test/linktest.c)
 
 	elseif(app STREQUAL "gears")		# three meshing gears, after glxgears
 		target_sources(${target} PRIVATE ${PGPU_DEMOS}/gears.c)

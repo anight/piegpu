@@ -739,6 +739,14 @@ The host library (`libpgpu/`, board independent) has two layers:
     filesystem's, from its sector buffer (or the card's DMA) into the
     packet; no buffer for a sample. A read that fails leaves the sample
     unfinished; the Zero drops it at the next sample's first chunk.
+    The reads are arranged for a filesystem's DMA: a sample's first packet
+    carries the bytes up to the file's next 512-byte sector boundary, the
+    others whole sectors, and idle words before a packet put its data on a
+    64-byte boundary (`PGPU_READ_ALIGN`: the ESP32-P4's cache line; the
+    staging buffers are aligned so too). So the filesystem reads whole sectors
+    by DMA straight into the packet. Unaligned, ESP-IDF's SD driver allocated
+    a DMA buffer the size of the read, read into it and copied it over, on
+    every read.
   - `demos/video.c` plays the file `PGPU_VIDEO_PATH` if the host has a
     filesystem (POSIX `open`/`lseek`/`read`), else an MP4 linked into the
     host's image (memory as the file, `pgpu_mp4_open_memory`). When the screen
@@ -754,10 +762,25 @@ The host library (`libpgpu/`, board independent) has two layers:
     DMA-capable memory); unbuffered stdio (`fread` with no buffer) managed
     84 KB/s, buffered 2.1 MB/s. With stdio a 1920×800 24 fps film (1.9 GB,
     102 minutes) played slowly with the P4's CPU at 100%; with POSIX reads
-    it plays at 24 fps, though stretches of a few seconds where the reads
-    slow down about tenfold drop frames (not yet understood). FatFs' fast seek (`CONFIG_FATFS_USE_FASTSEEK`) is on for
-    the seeks between the sample tables and the samples; alone it didn't
+    it plays at 24 fps. FatFs' fast seek (`CONFIG_FATFS_USE_FASTSEEK`) is on
+    for the seeks between the sample tables and the samples; alone it didn't
     help stdio.
+  - **The card sometimes stalls:** stretches of 5–10 s in which every read
+    takes about 25 ms, whatever its size (2–15 KB), dropping frames. Seen with
+    the unaligned reads (7 in 29 minutes) and with the aligned ones (one in
+    the first 17 minutes, at 1020 s into that film, file offsets 327–330 MB).
+    Not understood yet.
+  - **The link is the limit on the P4:** its chip (revision v1.0) runs I2S
+    from the APLL, at most 125 MHz, divided by 2 to MCLK and by 2 again to
+    BCLK: 31.25 MHz, 3.9 MB/s (25 MHz before). `linktest` (random buffer
+    uploads, and random textures uploaded and read back, compared word by
+    word): 25 MHz 3.1 MB/s down, 2.0 MB/s up; 31.25 MHz 3.9 MB/s down, 2.37
+    MB/s up, and in 10 minutes 87.4M words there and back with 0 wrong, 0
+    CRC errors either way. That film's peaks send about 2 MB/s of video
+    (2132 KB in one second), and GL frames wait behind it: its busiest
+    stretch (100–126 s) went 22–43 fps with 60 frames dropped at 25 MHz,
+    30–60 fps with 35 dropped at 31.25 MHz. The video frames no GL frame
+    showed count as dropped.
 
 ### 13.1 How pgl maps GL to the wire
 
