@@ -5,7 +5,10 @@
 // CBcmFrameBuffer), RGB565 of any size - the firmware scales it to the HDMI
 // mode - with three pages, which the renderer draws into directly
 // (GetBuffers): Show makes a page the one on screen from the next vertical
-// sync (SetVirtualOffset), WaitIdle waits for that sync. So frames go out at
+// sync (SetVirtualOffset), WaitIdle waits for that sync: it watches the
+// display scaler's frame count for HDMI (HVS channel 1), with a timeout (the
+// firmware's "wait for vsync" call has none, and there are no vertical syncs
+// while the firmware sets HDMI up again after a hot plug). So frames go out at
 // the monitor's rate, one a refresh, without tearing and without a copy: one
 // page is on screen, one waits for the sync, one is drawn.
 // SetSize allocates a new framebuffer (the firmware replaces the old one).
@@ -51,6 +54,11 @@ private:
 	static const unsigned Pages = 3;
 	unsigned m_nShown;			// the page on screen
 	boolean m_bFlipped;			// since the last vertical sync
+	unsigned m_nFlipFrame;			// the frame count at the flip
+	unsigned m_nSyncTimeouts;
+
+	static unsigned FrameCount (void);
+	boolean WaitFrame (unsigned nFrom, unsigned nTimeoutUs);
 };
 
 #endif

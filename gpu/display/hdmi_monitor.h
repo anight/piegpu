@@ -44,7 +44,7 @@ public:
 private:
 	boolean ReadHPD (void);
 	boolean ReadEDID (u8 *pBlock);
-	void Connected (void);
+	void Connected (boolean bNow);
 	boolean ParseEDID (const u8 *pBlock);
 	void ReadSignal (void);
 

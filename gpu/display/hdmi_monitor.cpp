@@ -16,6 +16,8 @@
 #define EDID_TRIES		3		// a monitor may answer late after plugging in
 #define EDID_RETRY_MS		100
 #define EDID_LATER_US		1000000		// then tried again every second
+#define EDID_SETTLE_US		2000000		// after a hot plug: the firmware reads it
+						// (the same BSC2) and sets HDMI up first
 
 // BSC2 (the HDMI DDC bus)
 #define BSC2_BASE		(ARM_IO_BASE + 0x805000)
@@ -59,7 +61,7 @@ void CHDMIMonitor::Initialize (void)
 	m_nLastSampleTicks = CTimer::GetClockTicks ();
 	if (m_bLastSample)
 	{
-		Connected ();
+		Connected (TRUE);
 	}
 	else
 	{
@@ -77,9 +79,10 @@ boolean CHDMIMonitor::Update (void)
 	}
 	m_nLastSampleTicks = nTicks;
 
-	// connected, but the EDID hasn't come: once a second
+	// connected, but the EDID hasn't come: once a second (signed: after a hot
+	// plug the last try is set in the future, see Connected)
 	if (   m_State.bConnected && !m_State.bEDID
-	    && nTicks - m_nLastEDIDTicks >= EDID_LATER_US)
+	    && (int) (nTicks - m_nLastEDIDTicks) >= EDID_LATER_US)
 	{
 		m_nLastEDIDTicks = nTicks;
 		u8 Block[128];
@@ -105,7 +108,7 @@ boolean CHDMIMonitor::Update (void)
 
 	if (bSample)
 	{
-		Connected ();
+		Connected (FALSE);
 	}
 	else
 	{
@@ -122,27 +125,31 @@ boolean CHDMIMonitor::ReadHPD (void)
 	return !(read32 (ARM_GPIO_GPLEV0 + HPD_PIN / 32 * 4) & 1 << (HPD_PIN % 32));
 }
 
-// a monitor has appeared: its EDID (a few tries, then again every second)
-void CHDMIMonitor::Connected (void)
+// a monitor has appeared: its EDID now (at boot: the firmware is done with
+// HDMI) or later (a hot plug: from EDID_SETTLE_US on, every second, see Update)
+void CHDMIMonitor::Connected (boolean bNow)
 {
 	memset (&m_State, 0, sizeof m_State);
 	m_State.bConnected = TRUE;
 
-	u8 Block[128];
-	for (unsigned i = 0; i < EDID_TRIES; i++)
+	if (bNow)
 	{
-		if (i)
+		u8 Block[128];
+		for (unsigned i = 0; i < EDID_TRIES; i++)
 		{
-			CTimer::SimpleMsDelay (EDID_RETRY_MS);
-		}
-		if (ReadEDID (Block) && ParseEDID (Block))
-		{
-			return;
+			if (i)
+			{
+				CTimer::SimpleMsDelay (EDID_RETRY_MS);
+			}
+			if (ReadEDID (Block) && ParseEDID (Block))
+			{
+				return;
+			}
 		}
 	}
 
-	LOGWARN ("Monitor connected, no EDID yet");
-	m_nLastEDIDTicks = CTimer::GetClockTicks ();
+	LOGNOTE ("Monitor connected, EDID later");
+	m_nLastEDIDTicks = CTimer::GetClockTicks () - EDID_LATER_US + EDID_SETTLE_US;
 }
 
 // the monitor's preferred mode (the first detailed timing) and name from EDID

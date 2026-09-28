@@ -4,6 +4,13 @@
 #include "hdmi_output.h"
 #include <circle/logger.h>
 #include <circle/timer.h>
+#include <circle/bcm2835.h>
+#include <circle/memio.h>
+
+// the display scaler (HVS) channel HDMI uses on the Zero: its status has the
+// frame count in bits 17:12 (6 bits); measured: 60 a second on HDMI
+#define HVS_DISPSTAT1		(ARM_IO_BASE + 0x400058)
+#define SYNC_TIMEOUT_US		100000
 
 LOGMODULE ("hdmi");
 
@@ -12,7 +19,9 @@ CHDMIOutput::CHDMIOutput (void)
 	m_nWidth (0),
 	m_nHeight (0),
 	m_nShown (0),
-	m_bFlipped (FALSE)
+	m_bFlipped (FALSE),
+	m_nFlipFrame (0),
+	m_nSyncTimeouts (0)
 {
 }
 
@@ -90,6 +99,7 @@ void CHDMIOutput::Show (const void *pPixels, TDoneRoutine *pDone, void *pParam)
 	}
 
 	m_pFrameBuffer->SetVirtualOffset (0, nPage * m_nHeight);
+	m_nFlipFrame = FrameCount ();		// the firmware has the offset: shown from the next sync
 	m_nShown = nPage;
 	m_bFlipped = TRUE;
 
@@ -104,26 +114,53 @@ const void *CHDMIOutput::GetShownFrame (void)
 	return GetPage (m_nShown);
 }
 
+unsigned CHDMIOutput::FrameCount (void)
+{
+	return (read32 (HVS_DISPSTAT1) >> 12) & 0x3F;
+}
+
+// until the frame count moves on from nFrom (a vertical sync); FALSE after the timeout
+boolean CHDMIOutput::WaitFrame (unsigned nFrom, unsigned nTimeoutUs)
+{
+	unsigned nStart = CTimer::GetClockTicks ();
+	while (FrameCount () == nFrom)
+	{
+		if (CTimer::GetClockTicks () - nStart > nTimeoutUs)
+		{
+			if (m_nSyncTimeouts++ % 60 == 0)
+			{
+				LOGWARN ("No vertical sync for %u ms (%u times)", nTimeoutUs / 1000,
+					 m_nSyncTimeouts);
+			}
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
 unsigned CHDMIOutput::MeasureRefresh (void)
 {
 	WaitIdle ();
-	m_pFrameBuffer->WaitForVerticalSync ();
+	WaitFrame (FrameCount (), SYNC_TIMEOUT_US);
 	unsigned nStart = CTimer::GetClockTicks ();
 	for (unsigned i = 0; i < 10; i++)
 	{
-		m_pFrameBuffer->WaitForVerticalSync ();
+		if (!WaitFrame (FrameCount (), SYNC_TIMEOUT_US))
+		{
+			return 0;
+		}
 	}
 	unsigned nUs = CTimer::GetClockTicks () - nStart;
 
 	return nUs ? (unsigned) (10000000000ULL / nUs) : 0;
 }
 
-// one frame a refresh: after a flip, wait for the vertical sync that shows it
+// one frame a refresh: after a flip, the vertical sync that shows it
 void CHDMIOutput::WaitIdle (void)
 {
 	if (m_bFlipped)
 	{
-		m_pFrameBuffer->WaitForVerticalSync ();
+		WaitFrame (m_nFlipFrame, SYNC_TIMEOUT_US);
 		m_bFlipped = FALSE;
 	}
 }
