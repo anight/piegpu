@@ -37,12 +37,16 @@ extern const uint8_t video_mp4[], video_mp4_end[];
 /* the file through POSIX calls (on the P4: its FatFs, reading straight into
    the packet; measured 12.8 MB/s so, where unbuffered stdio managed 84 KB/s
    and buffered 2.1 MB/s). Files up to 2 GB (lseek's off_t) */
+#define SLOW_READ_US	20000
 static unsigned read_calls, read_us;
+static unsigned read_direct;			/* whole sectors into aligned memory (DMA) */
 static uint64_t read_bytes;
 
 static bool file_read (void *ctx, uint64_t offset, void *buffer, uint32_t bytes)
 {
 	int fd = (int) (intptr_t) ctx;
+	uint32_t bytes0 = bytes;
+	read_direct += offset % 512 == 0 && bytes >= 512 && (uintptr_t) buffer % 64 == 0;
 	uint64_t t = time_us_64 ();
 	bool ok = lseek (fd, (off_t) offset, SEEK_SET) == (off_t) offset;
 	for (uint8_t *p = buffer; ok && bytes; )
@@ -53,8 +57,15 @@ static bool file_read (void *ctx, uint64_t offset, void *buffer, uint32_t bytes)
 		bytes -= ok ? (uint32_t) n : bytes;
 		read_bytes += ok ? (uint64_t) n : 0;
 	}
-	read_us += (unsigned) (time_us_64 () - t);
+	unsigned us = (unsigned) (time_us_64 () - t);
+	read_us += us;
 	read_calls++;
+	if (us >= SLOW_READ_US)				/* the card's (or FAT's) hiccups */
+	{
+		printf ("video: slow read: %u bytes at %llu (sector %llu + %u), %u ms\n", (unsigned) bytes0,
+			(unsigned long long) offset, (unsigned long long) (offset / 512),
+			(unsigned) (offset % 512), us / 1000);
+	}
 	return ok;
 }
 #endif
@@ -226,10 +237,11 @@ int main (void)
 					(unsigned) e);
 				sent = 0;
 #ifdef PGPU_VIDEO_PATH
-				printf ("video: file: %u reads, %u KB in %u ms (%u KB/s while reading); demux %u ms\n",
-					read_calls, (unsigned) (read_bytes / 1024), read_us / 1000,
+				printf ("video: file: %u reads (%u of whole sectors into aligned memory), %u KB in "
+					"%u ms (%u KB/s while reading); demux %u ms\n", read_calls, read_direct,
+					(unsigned) (read_bytes / 1024), read_us / 1000,
 					read_us ? (unsigned) (read_bytes * 1000 / read_us) : 0, demux_us / 1000);
-				read_calls = read_us = 0;
+				read_calls = read_us = read_direct = 0;
 				read_bytes = 0;
 #endif
 				demux_us = 0;

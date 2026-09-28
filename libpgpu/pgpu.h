@@ -105,8 +105,17 @@ typedef struct
 } pgpu_video_status_t;
 
 /* where data comes from: bytes at offset into buffer (a file on an SD card
-   through its filesystem, memory, ...); false if it can't */
+   through its filesystem, memory, ...); false if it can't.
+   pgpu_video_sample_read calls it so that a filesystem can read whole sectors
+   by DMA straight into the packet: the reads of a sample after its first
+   start at a PGPU_READ_SECTOR boundary of the file, into memory aligned to
+   PGPU_READ_ALIGN (idle words before the packet put it there) */
 typedef bool (*pgpu_read_t) (void *ctx, uint64_t offset, void *buffer, uint32_t bytes);
+
+#define PGPU_READ_SECTOR	512
+#ifndef PGPU_READ_ALIGN
+#define PGPU_READ_ALIGN		64		/* bytes: the ESP32-P4's cache line (its SDMMC DMA) */
+#endif
 
 /* texture (Zero id) becomes an RGBA width x height video texture (width a
    power of two, 32 or more; height a multiple of 16), fed by stream (1 or 2):

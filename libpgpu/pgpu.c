@@ -12,7 +12,8 @@
 #include <string.h>
 #include "pgpu_link.h"
 
-static uint32_t staging[2][PGPU_STAGING_WORDS];
+/* aligned: data read straight into a packet can be (pgpu_video_sample_read) */
+static uint32_t staging[2][PGPU_STAGING_WORDS] __attribute__ ((aligned (PGPU_READ_ALIGN)));
 static uint32_t current;		/* staging buffer being filled */
 static uint32_t fill;			/* words in it */
 static uint32_t open_packet;		/* index of the header of the open packet */
@@ -1214,19 +1215,49 @@ void pgpu_video_open (uint32_t stream, uint32_t texture, uint32_t width, uint32_
 	}
 }
 
-#define VIDEO_CHUNK	((PGPU_STAGING_WORDS - 16 - PGPU_VIDEO_DATA_HEADER) * 4)
+/* whole sectors: with the padding, the header and the CRC, a packet fits in a
+   staging buffer */
+#define VIDEO_CHUNK	((PGPU_STAGING_WORDS - PGPU_READ_ALIGN / 4 - 2 - PGPU_VIDEO_DATA_HEADER) * 4 \
+			 / PGPU_READ_SECTOR * PGPU_READ_SECTOR)
+
+/* pgpu_begin, with idle words before the packet so that its payload word `at`
+   is PGPU_READ_ALIGN aligned */
+static uint32_t *begin_aligned (uint8_t opcode, uint32_t payload_words, uint32_t at)
+{
+	const uint32_t align = PGPU_READ_ALIGN / 4;
+	uint32_t pad = (align - (fill + 1 + at) % align) % align;
+	if (fill + pad + payload_words + 2 > PGPU_STAGING_WORDS)
+	{
+		pgpu_flush ();
+		pad = (align - (1 + at) % align) % align;
+	}
+	while (pad--)
+	{
+		staging[current][fill++] = PGPU_IDLE_WORD;
+	}
+	return pgpu_begin (opcode, payload_words);
+}
 
 /* a sample in VIDEO_DATA packets, each packet's data from read (memory or a
-   file: straight into the packet) */
+   file: straight into the packet). With aligned: the first packet up to the
+   file's next sector boundary (if the sample has a whole sector), then whole
+   sectors into aligned packet data (see pgpu_read_t) */
 static bool video_sample (uint32_t stream, uint32_t flags, int64_t pts, uint32_t bytes,
-			  pgpu_read_t read, void *ctx, uint64_t offset)
+			  pgpu_read_t read, void *ctx, uint64_t offset, bool aligned)
 {
 	uint32_t done = 0;
 	bool ok = true;
 	do
 	{
 		uint32_t n = bytes - done < VIDEO_CHUNK ? bytes - done : VIDEO_CHUNK;
-		uint32_t *p = pgpu_begin (PGPU_OP_VIDEO_DATA, PGPU_VIDEO_DATA_HEADER + (n + 3) / 4);
+		uint32_t head = (uint32_t) (-offset % PGPU_READ_SECTOR);
+		if (aligned && done == 0 && head && head + PGPU_READ_SECTOR <= bytes)
+		{
+			n = head;			/* the partial sector alone */
+		}
+		uint32_t words = PGPU_VIDEO_DATA_HEADER + (n + 3) / 4;
+		uint32_t *p = aligned ? begin_aligned (PGPU_OP_VIDEO_DATA, words, PGPU_VIDEO_DATA_HEADER)
+				      : pgpu_begin (PGPU_OP_VIDEO_DATA, words);
 		p[0] = stream;
 		p[1] =   (flags & ~(PGPU_VIDEO_FIRST | PGPU_VIDEO_LAST))
 		       | (done == 0 ? PGPU_VIDEO_FIRST : 0)
@@ -1266,13 +1297,13 @@ static bool memory_read (void *ctx, uint64_t offset, void *buffer, uint32_t byte
 
 void pgpu_video_sample (uint32_t stream, uint32_t flags, int64_t pts, const void *data, uint32_t bytes)
 {
-	video_sample (stream, flags, pts, bytes, memory_read, (void *) data, 0);
+	video_sample (stream, flags, pts, bytes, memory_read, (void *) data, 0, false);
 }
 
 bool pgpu_video_sample_read (uint32_t stream, uint32_t flags, int64_t pts, uint32_t bytes,
 			     pgpu_read_t read, void *ctx, uint64_t offset)
 {
-	return video_sample (stream, flags, pts, bytes, read, ctx, offset);
+	return video_sample (stream, flags, pts, bytes, read, ctx, offset, true);
 }
 
 void pgpu_video_control (uint32_t stream, uint32_t op, int64_t arg)
