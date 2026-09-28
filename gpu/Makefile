@@ -1,7 +1,7 @@
 CIRCLEHOME = ../circle
 
 OBJS = main.o kernel.o commands.o geometry.o textures.o programs.o renderer.o \
-       link/i2s_link.o link/usb_link.o display/panel_output.o display/hdmi_output.o display/hdmi_monitor.o video/video.o \
+       link/i2s_link.o link/usb_link.o display/panel_output.o display/hdmi_output.o display/hdmi_monitor.o video/video.o install/installer.o \
        ../drivers/v3d.o ../drivers/st7789dma.o ../devtools/devlink.o \
        video/compat/circle_vcos.o video/compat/circle_micros.o $(MMAL)
 
@@ -16,7 +16,9 @@ MMAL = $(UL)/core/mmal_format.o $(UL)/core/mmal_port.o $(UL)/core/mmal_port_cloc
        $(UL)/vc/mmal_vc_client.o $(UL)/vc/mmal_vc_api.o $(UL)/vc/mmal_vc_msgnames.o \
        $(UL)/vc/mmal_vc_opaque_alloc.o $(UL)/vc/mmal_vc_shm.o
 
-LIBS = $(CIRCLEHOME)/addon/vc4/interface/vcos/libvcos.a \
+LIBS = $(CIRCLEHOME)/addon/SDCard/libsdcard.a \
+       $(CIRCLEHOME)/addon/fatfs/libfatfs.a \
+       $(CIRCLEHOME)/addon/vc4/interface/vcos/libvcos.a \
        $(CIRCLEHOME)/addon/vc4/vchiq/libvchiq.a \
        $(CIRCLEHOME)/addon/linux/liblinuxemu.a \
        $(CIRCLEHOME)/lib/usb/libusb.a \
@@ -26,7 +28,7 @@ LIBS = $(CIRCLEHOME)/addon/vc4/interface/vcos/libvcos.a \
        $(CIRCLEHOME)/lib/sched/libsched.a \
        $(CIRCLEHOME)/lib/libcircle.a
 
-EXTRAINCLUDE = -I ../drivers -I ../devtools -I ../protocol \
+EXTRAINCLUDE = -I ../drivers -I ../devtools -I ../protocol -I $(CIRCLEHOME)/addon \
 	       -I video/compat -I video/userland -I video/userland/interface/mmal
 
 # the MMAL sources (C): what they need beyond Circle's vcos, and their warnings

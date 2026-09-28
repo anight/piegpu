@@ -16,6 +16,7 @@ in [docs/protocol.md](docs/protocol.md).
 | `demos/` | the demos, for every host |
 | `protocol/` | the wire format header, shared by both sides |
 | `devtools/` | boot the Zero over USB, logs, screenshots (`run.sh`) |
+| `web/installer/` | a page that installs pico-gpu on the Zero's SD card over USB |
 
 ## Wiring
 
@@ -101,3 +102,33 @@ there. Without the SDO wire it can't tell: set `panel=yes` (see below).
 
 With `devtools/run.sh`, pass these as `CMDLINE="output=panel" devtools/run.sh gpu`.
 
+## Installing on an SD card (`web/installer`)
+
+A static page puts pico-gpu on the microSD card in the Zero, over the Zero's
+USB port, with its settings (the screen, the panel, the HDMI mode). It needs
+Chrome or Edge on a desktop (WebUSB and Web Serial) and a secure origin
+(https, or `localhost`).
+
+```bash
+web/installer/make-firmware.sh
+```
+
+```bash
+python3 -m http.server 8765 --bind 127.0.0.1 --directory web/installer
+```
+
+Then open http://localhost:8765 and follow the steps:
+
+- **A blank or new card:** the Zero's boot ROM finds nothing to start and waits
+  for USB. "Start a blank Zero" boots pico-gpu from the page (WebUSB, the
+  rpiboot protocol: `rpiboot.js`). A card without a FAT file system can be
+  formatted there (one FAT32 partition).
+- **A card with pico-gpu:** "Connect to pico-gpu" (Web Serial). Install again,
+  or change the settings only.
+- **A card with another system:** take it out, start the Zero from the page,
+  and put the card in when the page asks.
+
+pico-gpu writes the files itself (`gpu/install`): each is checked by its CRC,
+then renamed into place. At the end the Zero restarts from the card, and the
+page shows where the screen went. Measured: 3.5 MB in 5.4 s; a 64 GB card
+formatted in 7.3 s.

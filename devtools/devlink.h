@@ -89,7 +89,7 @@ private:
 	unsigned m_nStreamOut;
 	u32 m_nStreamReceived;
 
-	static const unsigned RxBufferSize = 64;
+	static const unsigned RxBufferSize = 20 * 1024;	// a line of the installer (gpu/install)
 	char m_RxBuffer[RxBufferSize];
 	unsigned m_nRxIn;
 	unsigned m_nRxOut;

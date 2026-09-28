@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pico-gpu installer</title>
+<style>
+:root
+{
+	--bg: #f6f7f9; --panel: #ffffff; --text: #1b1e24; --muted: #5d6573; --line: #d9dde4;
+	--accent: #2f6fdb; --accent-text: #ffffff; --ok: #1f8a4c; --warn: #b26a00; --bad: #c62f2f;
+	--code: #f0f2f5;
+}
+@media (prefers-color-scheme: dark)
+{
+	:root
+	{
+		--bg: #15171b; --panel: #1e2127; --text: #e6e8ec; --muted: #9aa2b1; --line: #343944;
+		--accent: #5b93f0; --accent-text: #0d1117; --ok: #45c07a; --warn: #e0a040; --bad: #f06c6c;
+		--code: #16181d;
+	}
+}
+*
+{
+	box-sizing: border-box;
+}
+body
+{
+	margin: 0; background: var(--bg); color: var(--text);
+	font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main
+{
+	max-width: 760px; margin: 0 auto; padding: 24px 16px 64px;
+}
+h1
+{
+	font-size: 24px; margin: 0 0 4px;
+}
+h2
+{
+	font-size: 17px; margin: 0 0 12px; display: flex; gap: 10px; align-items: center;
+}
+h2 .step
+{
+	display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
+	background: var(--accent); color: var(--accent-text); font-size: 13px;
+}
+.sub
+{
+	color: var(--muted); margin: 0 0 20px;
+}
+section
+{
+	background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+	padding: 18px; margin: 0 0 16px;
+}
+p
+{
+	margin: 0 0 10px;
+}
+.hint
+{
+	color: var(--muted); font-size: 14px;
+}
+button
+{
+	font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text);
+	padding: 8px 14px; border-radius: 7px; cursor: pointer;
+}
+button.primary
+{
+	background: var(--accent); border-color: var(--accent); color: var(--accent-text);
+}
+button.danger
+{
+	border-color: var(--bad); color: var(--bad);
+}
+button:disabled
+{
+	opacity: 0.5; cursor: default;
+}
+.buttons
+{
+	display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0 0;
+}
+fieldset
+{
+	border: 0; padding: 0; margin: 0 0 16px;
+}
+legend
+{
+	font-weight: 600; margin: 0 0 6px; padding: 0;
+}
+label.choice
+{
+	display: flex; gap: 8px; align-items: baseline; padding: 4px 0;
+}
+label.choice span
+{
+	color: var(--muted); font-size: 14px;
+}
+select, input[type=number]
+{
+	font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px;
+	background: var(--panel); color: var(--text);
+}
+input[type=number]
+{
+	width: 90px;
+}
+.cvt
+{
+	display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0 0 24px;
+}
+details
+{
+	margin: 8px 0 0;
+}
+summary
+{
+	cursor: pointer; color: var(--muted);
+}
+pre
+{
+	background: var(--code); border: 1px solid var(--line); border-radius: 6px; padding: 10px;
+	overflow-x: auto; font: 13px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace; margin: 8px 0 0;
+	white-space: pre-wrap; word-break: break-all;
+}
+#log
+{
+	max-height: 280px; overflow-y: auto;
+}
+.status
+{
+	padding: 10px 12px; border-radius: 7px; border: 1px solid var(--line); margin: 12px 0 0;
+}
+.status.ok
+{
+	border-color: var(--ok); color: var(--ok);
+}
+.status.warn
+{
+	border-color: var(--warn); color: var(--warn);
+}
+.status.bad
+{
+	border-color: var(--bad); color: var(--bad);
+}
+.card-facts
+{
+	display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; margin: 0 0 6px;
+}
+.card-facts dt
+{
+	color: var(--muted);
+}
+.card-facts dd
+{
+	margin: 0;
+}
+progress
+{
+	width: 100%; height: 10px; margin: 10px 0 2px;
+}
+[hidden]
+{
+	display: none !important;
+}
+</style>
+</head>
+<body>
+<main>
+	<h1>pico-gpu installer</h1>
+	<p class="sub">Puts pico-gpu on the Raspberry Pi Zero's microSD card from this page, over the
+		Zero's USB port. <span id="version"></span></p>
+
+	<section id="unsupported" hidden>
+		<div class="status bad">This browser can't talk to USB devices. Use Chrome or Edge on a
+			desktop computer (they have WebUSB and Web Serial).</div>
+	</section>
+
+	<section>
+		<h2><span class="step">1</span>Connect the Zero</h2>
+		<p>Put a microSD card in the Zero, then connect the Zero's <b>USB</b> port (not PWR IN)
+			to this computer.</p>
+		<div class="buttons">
+			<button id="connect" class="primary">Connect to pico-gpu</button>
+			<button id="boot">Start a blank Zero</button>
+			<button id="continue" class="primary" hidden>Continue</button>
+		</div>
+		<p class="hint" style="margin-top: 12px">
+			<b>Connect to pico-gpu</b> if the card already has pico-gpu (the panel shows it).
+			<b>Start a blank Zero</b> if the card is new or empty: the Zero then waits for this
+			computer, and the page starts pico-gpu on it. If the card holds another system
+			(Raspberry Pi OS, say), take it out first and put it back when the page asks.</p>
+		<div id="connect-status" class="status" hidden></div>
+	</section>
+
+	<section id="card-section" hidden>
+		<h2><span class="step">2</span>The card</h2>
+		<dl class="card-facts" id="card-facts"></dl>
+		<div id="card-status" class="status" hidden></div>
+		<div class="buttons">
+			<button id="card-retry" hidden>I've put the card in</button>
+			<button id="format" class="danger" hidden>Erase and format the card</button>
+		</div>
+	</section>
+
+	<section>
+		<h2><span class="step">3</span>Settings</h2>
+		<p id="settings-source" class="hint">The defaults.</p>
+		<fieldset>
+			<legend>Screen</legend>
+			<label class="choice"><input type="radio" name="output" value="auto">
+				Auto <span>HDMI while a monitor is connected, else the panel</span></label>
+			<label class="choice"><input type="radio" name="output" value="panel">
+				Panel <span>always the panel</span></label>
+			<label class="choice"><input type="radio" name="output" value="hdmi">
+				HDMI <span>always HDMI</span></label>
+		</fieldset>
+		<fieldset>
+			<legend>Panel</legend>
+			<label class="choice"><input type="radio" name="panel" value="auto">
+				Detect <span>the Zero reads the panel's ID at start (its SDO wired to pin 21)</span></label>
+			<label class="choice"><input type="radio" name="panel" value="yes">
+				Always there <span>for a panel without the SDO wire</span></label>
+			<label class="choice"><input type="radio" name="panel" value="none">
+				None <span>no panel: the screen stays on HDMI</span></label>
+		</fieldset>
+		<fieldset>
+			<legend>HDMI</legend>
+			<label class="choice"><input type="radio" name="hdmiMode" value="firmware">
+				The firmware chooses the mode <span>(it prefers TV modes, such as 720x576 at 50 Hz)</span></label>
+			<label class="choice"><input type="radio" name="hdmiMode" value="monitor">
+				The monitor's preferred computer mode</label>
+			<label class="choice"><input type="radio" name="hdmiMode" value="custom">
+				This mode:</label>
+			<div class="cvt">
+				<input type="number" id="cvtWidth" min="320" max="1920" step="2" aria-label="width"> x
+				<input type="number" id="cvtHeight" min="200" max="1200" step="2" aria-label="height"> at
+				<input type="number" id="cvtRate" min="24" max="75" aria-label="refresh rate"> Hz
+			</div>
+			<p style="margin-top: 10px">
+				<label>Screen size
+				<select id="hdmiPixels">
+					<option value="0">the monitor's own (up to 1920x1200)</option>
+					<option value="921600">at most 1280x720</option>
+					<option value="230400">at most 640x360 (faster)</option>
+				</select></label>
+			</p>
+		</fieldset>
+		<details>
+			<summary>The files these settings make</summary>
+			<pre id="preview-cmdline"></pre>
+			<pre id="preview-config"></pre>
+		</details>
+	</section>
+
+	<section>
+		<h2><span class="step">4</span>Install</h2>
+		<div class="buttons">
+			<button id="install" class="primary" disabled>Install pico-gpu</button>
+			<button id="save-settings" disabled>Save the settings only</button>
+		</div>
+		<progress id="progress" max="1" value="0" hidden></progress>
+		<div id="install-status" class="status" hidden></div>
+	</section>
+
+	<section>
+		<details id="log-details">
+			<summary>The Zero's log</summary>
+			<pre id="log"></pre>
+		</details>
+	</section>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

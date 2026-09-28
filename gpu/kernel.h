@@ -21,6 +21,7 @@
 #include "display/hdmi_monitor.h"
 #include "renderer.h"
 #include "commands.h"
+#include "install/installer.h"
 
 enum TShutdownMode
 {
@@ -40,6 +41,7 @@ public:
 	TShutdownMode Run (void);
 
 private:
+	void HostInput (void);
 	boolean DetectPanel (void);
 	void ChooseOutput (COutput **ppOutput, unsigned *pWidth, unsigned *pHeight);
 	void HDMISize (unsigned *pWidth, unsigned *pHeight);
@@ -62,6 +64,9 @@ private:
 	CLogger			m_Logger;
 	CScheduler		m_Scheduler;		// VCHIQ's tasks (video) run when the main loop yields
 	CDevLink		m_DevLink;
+	CInstaller		m_Installer;
+	char			m_HostLine[CInstaller::MaxLine + 1];	// a line from the host (HostInput)
+	unsigned		m_nHostLine;
 	CVCHIQDevice		m_VCHIQ;		// the VideoCore's services (video)
 
 	// the outputs (docs/protocol.md 14): output=auto|panel|hdmi, panel=none,

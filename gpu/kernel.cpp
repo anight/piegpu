@@ -23,6 +23,8 @@ CKernel::CKernel (void)
 :	m_Timer (&m_Interrupt),
 	m_Logger (m_Options.GetLogLevel (), &m_Timer),
 	m_DevLink (&m_Interrupt),
+	m_Installer (&m_Interrupt, &m_Timer, &m_DevLink),
+	m_nHostLine (0),
 	m_VCHIQ (CMemorySystem::Get (), &m_Interrupt),
 	m_OutputMode (OutputAuto),
 	m_bPanelPresent (TRUE),
@@ -59,6 +61,33 @@ boolean CKernel::Initialize (void)
 	       && m_VCHIQ.Initialize ()
 	       && (!(m_bPanelPresent || m_OutputMode == OutputPanel) || m_Panel.Initialize ())
 	       && (m_OutputMode == OutputPanel || m_HDMI.Initialize ());
+}
+
+// text from the host (the USB serial link): "s" alone asks for a screenshot,
+// lines that start with "PGI " go to the installer (gpu/install)
+void CKernel::HostInput (void)
+{
+	int c;
+	while ((c = m_DevLink.GetChar ()) >= 0)
+	{
+		if (c == '\r' || c == '\n')
+		{
+			m_HostLine[m_nHostLine] = '\0';
+			if (strncmp (m_HostLine, "PGI ", 4) == 0)
+			{
+				m_Installer.Command (m_HostLine);
+			}
+			m_nHostLine = 0;
+		}
+		else if (c == 's' && m_nHostLine == 0)
+		{
+			DumpScreenshot ();
+		}
+		else if (m_nHostLine < CInstaller::MaxLine)
+		{
+			m_HostLine[m_nHostLine++] = (char) c;
+		}
+	}
 }
 
 // panel=auto (the default): a panel if one answers over MISO; panel=yes: one
@@ -256,10 +285,7 @@ TShutdownMode CKernel::Run (void)
 	{
 		m_Scheduler.Yield ();			// VCHIQ's tasks
 		m_DevLink.Update ();
-		if (m_DevLink.GetChar () == 's')		// from the host: screenshot
-		{
-			DumpScreenshot ();
-		}
+		HostInput ();
 
 		// commands from the first active link (a PC over USB once it has
 		// switched to its binary stream, else the Pico); the others' input

@@ -85,7 +85,7 @@ void CDevLink::Update (void)
 			Receive (Buffer, nResult);
 		}
 	}
-	while (m_bStream && nResult > 0);
+	while (nResult > 0);			// all of it: the gadget's queue is 8 KB
 
 	if (   m_bHostActive
 	    && !m_bReplayDone
