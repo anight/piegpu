@@ -33,7 +33,10 @@
 class CDevLink
 {
 public:
-	CDevLink (CInterruptSystem *pInterrupt);
+	/// \param pGadget The USB device to use (a composite one that has a CDC
+	/// serial port: its CUSBSerialDevice becomes "utty1"), or nullptr for a
+	/// plain CDC serial gadget (DEVLINK_USB_VENDOR_ID, _PRODUCT_ID)
+	CDevLink (CInterruptSystem *pInterrupt, CDWUSBGadget *pGadget = nullptr);
 	~CDevLink (void);
 
 	/// \brief Starts the watchdog and the USB gadget
@@ -70,7 +73,7 @@ private:
 	static void DeviceRemovedHandler (CDevice *pDevice, void *pContext);
 
 private:
-	CUSBCDCGadget m_Gadget;
+	CDWUSBGadget *m_pGadget;
 	CBcmWatchdog m_Watchdog;
 
 	CUSBSerialDevice * volatile m_pSerial;

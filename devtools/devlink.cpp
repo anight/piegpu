@@ -10,8 +10,9 @@
 
 LOGMODULE ("devlink");
 
-CDevLink::CDevLink (CInterruptSystem *pInterrupt)
-:	m_Gadget (pInterrupt, DEVLINK_USB_VENDOR_ID, DEVLINK_USB_PRODUCT_ID),
+CDevLink::CDevLink (CInterruptSystem *pInterrupt, CDWUSBGadget *pGadget)
+:	m_pGadget (pGadget ? pGadget : new CUSBCDCGadget (pInterrupt, DEVLINK_USB_VENDOR_ID,
+							      DEVLINK_USB_PRODUCT_ID)),
 	m_pSerial (nullptr),
 	m_pPrevLogTarget (nullptr),
 	m_bHostActive (FALSE),
@@ -39,14 +40,14 @@ boolean CDevLink::Initialize (void)
 
 	m_pStream = new u8[StreamSize];
 
-	return m_pStream && m_Gadget.Initialize ();
+	return m_pStream && m_pGadget->Initialize ();
 }
 
 void CDevLink::Update (void)
 {
 	m_Watchdog.Start (DEVLINK_WATCHDOG_SECONDS);	// re-trigger
 
-	if (   m_Gadget.UpdatePlugAndPlay ()
+	if (   m_pGadget->UpdatePlugAndPlay ()
 	    && !m_pSerial)
 	{
 		m_pSerial = static_cast<CUSBSerialDevice *> (

@@ -3,7 +3,10 @@
 // answers (#PGI ...). File data goes as base64 lines of 4.5 KB, each answered
 // (the Zero's text path has no flow control).
 
-export const SERIAL_FILTERS = [{usbVendorId: 0x1209, usbProductId: 0x0001}];	// devtools/devlink.h
+// the gpu app (devtools/pgpugadget.h: serial port + monitor), and older ones
+// (devtools/devlink.h: Circle's CDC gadget)
+export const SERIAL_FILTERS = [{usbVendorId: 0x1d50, usbProductId: 0x614d},
+			       {usbVendorId: 0x1209, usbProductId: 0x0001}];
 
 const DATA_CHUNK = 4608;			// a 6 KB line: the Zero's USB serial queue is 8 KB
 

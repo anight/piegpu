@@ -12,6 +12,7 @@
 #include <circle/sched/scheduler.h>
 #include <circle/types.h>
 #include <devlink.h>
+#include <pgpugadget.h>
 #include <vc4/vchiq/vchiqdevice.h>
 #include <v3d.h>
 #include "link/i2s_link.h"
@@ -19,6 +20,8 @@
 #include "display/panel_output.h"
 #include "display/hdmi_output.h"
 #include "display/hdmi_monitor.h"
+#include "display/gud_display.h"
+#include "display/offscreen_output.h"
 #include "renderer.h"
 #include "commands.h"
 #include "install/installer.h"
@@ -63,6 +66,7 @@ private:
 	CTimer			m_Timer;
 	CLogger			m_Logger;
 	CScheduler		m_Scheduler;		// VCHIQ's tasks (video) run when the main loop yields
+	CPicoGPUGadget		m_Gadget;		// USB: serial port + monitor (GUD)
 	CDevLink		m_DevLink;
 	CInstaller		m_Installer;
 	char			m_HostLine[CInstaller::MaxLine + 1];	// a line from the host (HostInput)
@@ -78,6 +82,9 @@ private:
 	CPanelOutput		m_Panel;
 	CHDMIOutput		m_HDMI;
 	CHDMIMonitor		m_Monitor;
+	COutput			*m_pScreen;		// the panel or HDMI: where the picture is
+	CGUDDisplay		m_GUD;			// a PC's desktop on the screen (a USB monitor)
+	COffscreenOutput	m_Offscreen;		// the GL frames' while the desktop shows
 	boolean			m_bOutputPending;	// to be chosen again between frames
 	CV3D			m_V3D;
 	CI2SLink		m_I2SLink;		// commands from the Pico

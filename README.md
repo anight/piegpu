@@ -132,3 +132,29 @@ pico-gpu writes the files itself (`gpu/install`): each is checked by its CRC,
 then renamed into place. At the end the Zero restarts from the card, and the
 page shows where the screen went. Measured: 3.5 MB in 5.4 s; a 64 GB card
 formatted in 7.3 s.
+
+## The Zero as a USB monitor for Linux
+
+Over its USB port the Zero is also a monitor for a Linux PC, with no driver
+to install: GUD, the kernel's Generic USB Display (`gud`). The Zero is one
+USB device, `1d50:614d` (the ID GUD's driver binds to), with the serial port
+as before and a display. While the PC has the display on, its desktop takes
+the Zero's screen (the panel, or HDMI), and a GL host's frames are rendered
+off screen until the PC turns it off (`gpu/display/gud_display`).
+
+- The PC sees one connector with one mode, the Zero's screen size, and an
+  EDID: GNOME calls it "PGU pico-gpu".
+- `devtools/gudtest.c` drives it through DRM without a desktop: a test
+  pattern and two rates. Measured at 320x240: 110 full frames a second
+  (17 MB/s), 60 small updates a second.
+- GNOME 50.1: it draws no pointer on this monitor while another one has a
+  hardware cursor (newer mutter decides per monitor).
+  `MUTTER_DEBUG_DISABLE_HW_CURSORS=1` for GNOME Shell gives software cursors
+  everywhere, e.g. in a drop-in for its unit:
+  `~/.config/systemd/user/org.gnome.Shell@ubuntu.service.d/*.conf` with
+  `[Service]` and `Environment=MUTTER_DEBUG_DISABLE_HW_CURSORS=1`.
+- Don't unplug or reboot the Zero while GNOME uses it as a monitor: GNOME
+  Shell 50.1 crashed once when it came back within seconds (it keeps the old
+  device, and the new one had the same `/dev/dri` name). For a desktop that
+  must leave it alone, tag it in udev: `SUBSYSTEM=="drm", KERNEL=="card*",
+  ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="614d", TAG+="mutter-device-ignore"`.

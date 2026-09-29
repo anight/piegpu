@@ -1,0 +1,31 @@
+# Local change to Circle Step51.1 (c776b3c6): the CDC gadget's endpoints take
+# any DWC2 gadget, so that a composite gadget (devtools/pgpugadget: serial
+# port + GUD display) can use them. Apply with:
+#   cd circle && git apply ../patches/circle-cdc-endpoint-gadget.patch
+
+diff --git a/include/circle/usb/gadget/usbcdcgadgetendpoint.h b/include/circle/usb/gadget/usbcdcgadgetendpoint.h
+index 9f3f3805..d335c678 100644
+--- a/include/circle/usb/gadget/usbcdcgadgetendpoint.h
++++ b/include/circle/usb/gadget/usbcdcgadgetendpoint.h
+@@ -35,7 +35,7 @@ class CUSBSerialDevice;
+ class CUSBCDCGadgetEndpoint : public CDWUSBGadgetEndpoint /// Endpoint of the USB serial CDC gadget
+ {
+ public:
+-	CUSBCDCGadgetEndpoint (const TUSBEndpointDescriptor *pDesc, CUSBCDCGadget *pGadget);
++	CUSBCDCGadgetEndpoint (const TUSBEndpointDescriptor *pDesc, CDWUSBGadget *pGadget);
+ 	~CUSBCDCGadgetEndpoint (void);
+ 
+ 	void AttachInterface (CUSBSerialDevice *pInterface);
+diff --git a/lib/usb/gadget/usbcdcgadgetendpoint.cpp b/lib/usb/gadget/usbcdcgadgetendpoint.cpp
+index 813198b6..45e7bba1 100644
+--- a/lib/usb/gadget/usbcdcgadgetendpoint.cpp
++++ b/lib/usb/gadget/usbcdcgadgetendpoint.cpp
+@@ -25,7 +25,7 @@
+ #include <assert.h>
+ 
+ CUSBCDCGadgetEndpoint::CUSBCDCGadgetEndpoint (const TUSBEndpointDescriptor *pDesc,
+-						CUSBCDCGadget *pGadget)
++						CDWUSBGadget *pGadget)
+ :	CDWUSBGadgetEndpoint (pDesc, pGadget),
+ 	m_pInterface (nullptr),
+ 	m_nStatus (0),

@@ -21,7 +21,8 @@ for i in $(seq 1 300); do
 	for d in /sys/class/tty/ttyACM*; do
 		[ -e "$d" ] || continue
 		u=$(readlink -f "$d/device/..")
-		if [ "$(cat "$u/idVendor"):$(cat "$u/idProduct")" = 1209:0001 ] && [ -w "/dev/$(basename "$d")" ]; then
+		case "$(cat "$u/idVendor"):$(cat "$u/idProduct")" in 1d50:614d|1209:0001) ;; *) continue;; esac
+		if [ -w "/dev/$(basename "$d")" ]; then
 			TTY=/dev/$(basename "$d")
 		fi
 	done

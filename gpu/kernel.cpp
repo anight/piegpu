@@ -22,7 +22,8 @@ LOGMODULE ("gpu");
 CKernel::CKernel (void)
 :	m_Timer (&m_Interrupt),
 	m_Logger (m_Options.GetLogLevel (), &m_Timer),
-	m_DevLink (&m_Interrupt),
+	m_Gadget (&m_Interrupt),
+	m_DevLink (&m_Interrupt, &m_Gadget),
 	m_Installer (&m_Interrupt, &m_Timer, &m_DevLink),
 	m_nHostLine (0),
 	m_VCHIQ (CMemorySystem::Get (), &m_Interrupt),
@@ -30,6 +31,8 @@ CKernel::CKernel (void)
 	m_bPanelPresent (TRUE),
 	m_nHDMIPixels (CRenderer::MaxPixels),
 	m_Panel (&m_Interrupt),
+	m_pScreen (nullptr),
+	m_GUD (&m_Gadget),
 	m_bOutputPending (FALSE),
 	m_USBLink (&m_DevLink),
 	m_Renderer (&m_V3D),
@@ -56,6 +59,7 @@ boolean CKernel::Initialize (void)
 	return    m_Logger.Initialize (&m_Null)
 	       && m_Interrupt.Initialize ()
 	       && m_Timer.Initialize ()
+	       && m_GUD.Initialize ()			// (before the gadget starts)
 	       && m_DevLink.Initialize ()
 	       && DetectPanel ()
 	       && m_VCHIQ.Initialize ()
@@ -164,31 +168,61 @@ void CKernel::HDMISize (unsigned *pWidth, unsigned *pHeight)
 	*pHeight = (nHeight / nDivisor) & ~1;
 }
 
-// between frames: the output and screen size for the monitor's state now
+// between frames: the output and screen size for the monitor's state now,
+// and the GL frames on it, or off screen while a PC's desktop shows there
 void CKernel::ApplyOutput (void)
 {
 	m_bOutputPending = FALSE;
 
-	COutput *pOutput, *pOld = m_Renderer.GetOutput ();
+	COutput *pScreen;
 	unsigned nWidth, nHeight;
-	ChooseOutput (&pOutput, &nWidth, &nHeight);
-	if (   pOutput != pOld
-	    || nWidth != m_Renderer.GetWidth ()
-	    || nHeight != m_Renderer.GetHeight ())
+	ChooseOutput (&pScreen, &nWidth, &nHeight);
+	m_GUD.SetScreen (nWidth, nHeight);
+	boolean bDesktop = m_GUD.IsActive ();
+	COutput *pTarget = bDesktop ? &m_Offscreen : pScreen;
+	boolean bScreen =    pScreen != m_pScreen
+			  || nWidth != m_Renderer.GetWidth ()
+			  || nHeight != m_Renderer.GetHeight ();
+	if (!bScreen && pTarget == m_Renderer.GetOutput ())
 	{
-		if (!m_Renderer.SetOutput (pOutput, nWidth, nHeight))
+		if (pScreen == &m_HDMI)
 		{
-			LOGERR ("Can't show %ux%u on %s", nWidth, nHeight, pOutput == &m_HDMI ? "HDMI" : "the panel");
+			ShowPanelNotice ();		// (the monitor's EDID came)
 		}
-		else
+		SendDisplay ();
+		return;
+	}
+
+	boolean bWasDesktop = m_Renderer.GetOutput () == &m_Offscreen;
+	if (bDesktop)
+	{
+		m_Renderer.GetOutput ()->WaitIdle ();
+		if (!pScreen->SetSize (nWidth, nHeight))
 		{
-			m_Commands.ScreenChanged ();
-			LOGNOTE ("Screen: %ux%u on %s", nWidth, nHeight, pOutput == &m_HDMI ? "HDMI" : "the panel");
+			LOGERR ("Can't show %ux%u on %s", nWidth, nHeight, pScreen == &m_HDMI ? "HDMI" : "the panel");
+			return;
 		}
+	}
+	if (!m_Renderer.SetOutput (pTarget, nWidth, nHeight))
+	{
+		LOGERR ("Can't show %ux%u on %s", nWidth, nHeight, pScreen == &m_HDMI ? "HDMI" : "the panel");
+		return;
+	}
+	m_pScreen = pScreen;
+	m_Commands.ScreenChanged ();
+	LOGNOTE ("Screen: %ux%u on %s%s", nWidth, nHeight, pScreen == &m_HDMI ? "HDMI" : "the panel",
+		 bDesktop ? ", the PC's desktop" : "");
+	if (bDesktop)
+	{
+		m_GUD.Start (pScreen);
+	}
+	else if (bWasDesktop)
+	{
+		ShowSplash (pScreen);			// (the desktop's gone: until the next frame)
 	}
 
 	// the panel says where the screen is (again when the monitor's EDID comes)
-	if (m_Renderer.GetOutput () == &m_HDMI)
+	if (pScreen == &m_HDMI)
 	{
 		ShowPanelNotice ();
 	}
@@ -226,7 +260,7 @@ void CKernel::SendDisplay (boolean bSend)
 	const THDMIState &M = m_Monitor.GetState ();
 	u32 Display[PGPU_DISPLAY_WORDS];
 	memset (Display, 0, sizeof Display);
-	Display[0] =   (m_Renderer.GetOutput () == &m_HDMI ? PGPU_OUTPUT_HDMI : PGPU_OUTPUT_PANEL)
+	Display[0] =   (m_pScreen == &m_HDMI ? PGPU_OUTPUT_HDMI : PGPU_OUTPUT_PANEL)
 		     | (M.bConnected ? PGPU_DISPLAY_HDMI_CONNECTED : 0)
 		     | (m_bPanelPresent ? PGPU_DISPLAY_PANEL_PRESENT : 0)
 		     | (M.bEDID ? PGPU_DISPLAY_EDID : 0);
@@ -252,6 +286,8 @@ TShutdownMode CKernel::Run (void)
 		LOGPANIC ("No %ux%u screen", nWidth, nHeight);
 	}
 	LOGNOTE ("Screen: %ux%u on %s", nWidth, nHeight, pOutput == &m_HDMI ? "HDMI" : "the panel");
+	m_pScreen = pOutput;
+	m_GUD.SetScreen (nWidth, nHeight);
 	ShowSplash (pOutput);
 	if (pOutput == &m_HDMI)
 	{
@@ -339,6 +375,11 @@ TShutdownMode CKernel::Run (void)
 
 		// the monitor plugged in or out: a new screen from the next frame
 		if (m_Monitor.Update ())
+		{
+			m_bOutputPending = TRUE;
+		}
+		// a PC's desktop on or off
+		if (m_GUD.Update (m_pScreen))
 		{
 			m_bOutputPending = TRUE;
 		}

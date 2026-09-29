@@ -17,12 +17,16 @@
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <glob.h>
 #include <string.h>
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
-#define DEFAULT_TTY	"/dev/serial/by-id/usb-Circle_CDC_Gadget-if00"
+/* the gpu app's serial port (devtools/pgpugadget: "pico-gpu", the board's
+   serial number), or an older one's (Circle's CDC gadget) */
+#define DEFAULT_TTY	"/dev/serial/by-id/usb-pico-gpu_pico-gpu_*-if00"
+#define OLD_TTY		"/dev/serial/by-id/usb-Circle_CDC_Gadget-if00"
 #define STREAM_MAGIC	"pico-gpu-stream"
 #define STREAM_ACK	"\n#STREAM\n"
 
@@ -71,7 +75,12 @@ static void write_all (const void *data, size_t n)
 
 void pgpu_link_init (void)
 {
-	const char *tty = getenv ("PGPU_TTY") ? getenv ("PGPU_TTY") : DEFAULT_TTY;
+	const char *tty = getenv ("PGPU_TTY");
+	glob_t g;
+	if (!tty)
+	{
+		tty = glob (DEFAULT_TTY, 0, NULL, &g) == 0 ? g.gl_pathv[0] : OLD_TTY;
+	}
 	fd = open (tty, O_RDWR | O_NOCTTY);
 	if (fd < 0)
 	{
