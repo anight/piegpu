@@ -21,8 +21,8 @@
 #include <circle/device.h>
 #include <circle/types.h>
 
-#define DEVLINK_REBOOT_MAGIC		"pico-gpu-reboot"
-#define DEVLINK_STREAM_MAGIC		"pico-gpu-stream"
+#define DEVLINK_REBOOT_MAGIC		"pigpu-reboot"
+#define DEVLINK_STREAM_MAGIC		"pigpu-stream"
 #define DEVLINK_STREAM_ACK		"\n#STREAM\n"
 #define DEVLINK_WATCHDOG_SECONDS	10	// max. time between Update() calls
 

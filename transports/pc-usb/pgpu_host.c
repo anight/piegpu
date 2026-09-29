@@ -41,11 +41,11 @@
 #include <libusb.h>
 #endif
 
-/* the gpu app's serial port (devtools/pgpugadget: "pico-gpu", the board's
+/* the gpu app's serial port (devtools/pgpugadget: "pigpu", the board's
    serial number), or an older one's (Circle's CDC gadget) */
-#define DEFAULT_TTY	"/dev/serial/by-id/usb-pico-gpu_pico-gpu_*-if00"
+#define DEFAULT_TTY	"/dev/serial/by-id/usb-pigpu_pigpu_*-if00"
 #define OLD_TTY		"/dev/serial/by-id/usb-Circle_CDC_Gadget-if00"
-#define STREAM_MAGIC	"pico-gpu-stream"
+#define STREAM_MAGIC	"pigpu-stream"
 #define STREAM_ACK	"\n#STREAM\n"
 
 static int fd = -1;

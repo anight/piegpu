@@ -17,7 +17,7 @@
 // transfer size and packet count fields)
 #define MAX_CHUNK				(64 * 1024)
 
-const TUSBDeviceDescriptor CPicoGPUGadget::s_DeviceDescriptor =
+const TUSBDeviceDescriptor CPiGPUGadget::s_DeviceDescriptor =
 {
 	sizeof (TUSBDeviceDescriptor),
 	DESCRIPTOR_DEVICE,
@@ -31,7 +31,7 @@ const TUSBDeviceDescriptor CPicoGPUGadget::s_DeviceDescriptor =
 	1				// bNumConfigurations
 };
 
-const CPicoGPUGadget::TConfigurationDescriptor CPicoGPUGadget::s_ConfigurationDescriptor =
+const CPiGPUGadget::TConfigurationDescriptor CPiGPUGadget::s_ConfigurationDescriptor =
 {
 	{
 		sizeof (TUSBConfigurationDescriptor),
@@ -113,17 +113,17 @@ const CPicoGPUGadget::TConfigurationDescriptor CPicoGPUGadget::s_ConfigurationDe
 	}
 };
 
-const char *const CPicoGPUGadget::s_StringDescriptor[] =
+const char *const CPiGPUGadget::s_StringDescriptor[] =
 {
 	"\x04\x03\x09\x04",		// language ID: English (US)
-	"pico-gpu",
-	"pico-gpu",
+	"pigpu",
+	"pigpu",
 	nullptr,			// the serial number: the board's
-	"pico-gpu display",
-	"pico-gpu GL"
+	"pigpu display",
+	"pigpu GL"
 };
 
-CPicoGPUGadget::CPicoGPUGadget (CInterruptSystem *pInterrupt)
+CPiGPUGadget::CPiGPUGadget (CInterruptSystem *pInterrupt)
 :	CDWUSBGadget (pInterrupt, HighSpeed),
 	m_pFunction (nullptr),
 	m_pStream (nullptr),
@@ -150,12 +150,12 @@ CPicoGPUGadget::CPicoGPUGadget (CInterruptSystem *pInterrupt)
 	}
 }
 
-CPicoGPUGadget::~CPicoGPUGadget (void)
+CPiGPUGadget::~CPiGPUGadget (void)
 {
 	assert (0);
 }
 
-const void *CPicoGPUGadget::GetDescriptor (u16 wValue, u16 wIndex, size_t *pLength)
+const void *CPiGPUGadget::GetDescriptor (u16 wValue, u16 wIndex, size_t *pLength)
 {
 	assert (pLength);
 	u8 uchIndex = wValue & 0xFF;
@@ -206,7 +206,7 @@ const void *CPicoGPUGadget::GetDescriptor (u16 wValue, u16 wIndex, size_t *pLeng
 	return nullptr;
 }
 
-const void *CPicoGPUGadget::ToStringDescriptor (const char *pString, size_t *pLength)
+const void *CPiGPUGadget::ToStringDescriptor (const char *pString, size_t *pLength)
 {
 	size_t nLength = 2;
 	for (u8 *p = m_StringDescriptorBuffer + 2; *pString; pString++)
@@ -223,7 +223,7 @@ const void *CPicoGPUGadget::ToStringDescriptor (const char *pString, size_t *pLe
 	return m_StringDescriptorBuffer;
 }
 
-int CPicoGPUGadget::OnClassOrVendorRequest (const TSetupData *pSetupData, u8 *pData)
+int CPiGPUGadget::OnClassOrVendorRequest (const TSetupData *pSetupData, u8 *pData)
 {
 	if (   (pSetupData->bmRequestType & 0x60) == 0x40			// vendor
 	    && (pSetupData->bmRequestType & 0x1F) == 0x01			// interface
@@ -241,7 +241,7 @@ int CPicoGPUGadget::OnClassOrVendorRequest (const TSetupData *pSetupData, u8 *pD
 	return CDWUSBGadget::OnClassOrVendorRequest (pSetupData, pData);	// (the serial port's)
 }
 
-void CPicoGPUGadget::AddEndpoints (void)
+void CPiGPUGadget::AddEndpoints (void)
 {
 	assert (!m_pSerialEP[0] && !m_pSerialEP[1] && !m_pFunctionEP);
 	m_pSerialEP[0] = new CUSBCDCGadgetEndpoint (&s_ConfigurationDescriptor.SerialOut, this);
@@ -254,7 +254,7 @@ void CPicoGPUGadget::AddEndpoints (void)
 	}
 }
 
-void CPicoGPUGadget::CreateDevice (void)
+void CPiGPUGadget::CreateDevice (void)
 {
 	assert (!m_pSerial);
 	m_pSerial = new CUSBSerialDevice;
@@ -262,7 +262,7 @@ void CPicoGPUGadget::CreateDevice (void)
 	m_pSerialEP[1]->AttachInterface (m_pSerial);
 }
 
-void CPicoGPUGadget::OnSuspend (void)
+void CPiGPUGadget::OnSuspend (void)
 {
 	if (m_pFunction)
 	{
@@ -290,12 +290,12 @@ void CPicoGPUGadget::OnSuspend (void)
 	}
 }
 
-boolean CPicoGPUGadget::ReceiveBulk (void *pBuffer, size_t nLength)
+boolean CPiGPUGadget::ReceiveBulk (void *pBuffer, size_t nLength)
 {
 	return m_pFunctionEP && m_pFunctionEP->Receive (pBuffer, nLength);
 }
 
-void CPicoGPUGadget::CancelBulk (void)
+void CPiGPUGadget::CancelBulk (void)
 {
 	if (m_pFunctionEP)
 	{
@@ -303,12 +303,12 @@ void CPicoGPUGadget::CancelBulk (void)
 	}
 }
 
-boolean CPicoGPUGadget::StreamReceive (void *pBuffer, size_t nLength)
+boolean CPiGPUGadget::StreamReceive (void *pBuffer, size_t nLength)
 {
 	return m_pStreamEP[0] && m_pStreamEP[0]->Begin (pBuffer, nLength);
 }
 
-boolean CPicoGPUGadget::StreamSend (const void *pBuffer, size_t nLength)
+boolean CPiGPUGadget::StreamSend (const void *pBuffer, size_t nLength)
 {
 	return m_pStreamEP[1] && m_pStreamEP[1]->Begin ((void *) pBuffer, nLength);
 }
@@ -319,8 +319,8 @@ boolean CPicoGPUGadget::StreamSend (const void *pBuffer, size_t nLength)
 // is a multiple of 512 (no zero-length packet follows). It's taken in chunks
 // of at most MAX_CHUNK, each a multiple of 512 except the last.
 
-CPicoGPUGadget::CBulkOutEndpoint::CBulkOutEndpoint (const TUSBEndpointDescriptor *pDesc,
-						     CPicoGPUGadget *pGadget)
+CPiGPUGadget::CBulkOutEndpoint::CBulkOutEndpoint (const TUSBEndpointDescriptor *pDesc,
+						     CPiGPUGadget *pGadget)
 :	CDWUSBGadgetEndpoint (pDesc, pGadget),
 	m_pGadget (pGadget),
 	m_pBuffer (nullptr),
@@ -331,7 +331,7 @@ CPicoGPUGadget::CBulkOutEndpoint::CBulkOutEndpoint (const TUSBEndpointDescriptor
 {
 }
 
-boolean CPicoGPUGadget::CBulkOutEndpoint::Receive (void *pBuffer, size_t nLength)
+boolean CPiGPUGadget::CBulkOutEndpoint::Receive (void *pBuffer, size_t nLength)
 {
 	if (m_bActive || !nLength)
 	{
@@ -347,7 +347,7 @@ boolean CPicoGPUGadget::CBulkOutEndpoint::Receive (void *pBuffer, size_t nLength
 	return TRUE;
 }
 
-void CPicoGPUGadget::CBulkOutEndpoint::Cancel (void)
+void CPiGPUGadget::CBulkOutEndpoint::Cancel (void)
 {
 	if (m_bActive)
 	{
@@ -356,12 +356,12 @@ void CPicoGPUGadget::CBulkOutEndpoint::Cancel (void)
 	}
 }
 
-void CPicoGPUGadget::CBulkOutEndpoint::OnDeactivate (void)
+void CPiGPUGadget::CBulkOutEndpoint::OnDeactivate (void)
 {
 	Cancel ();
 }
 
-void CPicoGPUGadget::CBulkOutEndpoint::OnTransferComplete (boolean bIn, size_t nLength)
+void CPiGPUGadget::CBulkOutEndpoint::OnTransferComplete (boolean bIn, size_t nLength)
 {
 	if (!m_bActive)
 	{
@@ -383,15 +383,15 @@ void CPicoGPUGadget::CBulkOutEndpoint::OnTransferComplete (boolean bIn, size_t n
 
 // ---- the GL stream's endpoints ----------------------------------------------------
 
-CPicoGPUGadget::CStreamEndpoint::CStreamEndpoint (const TUSBEndpointDescriptor *pDesc,
-						   CPicoGPUGadget *pGadget)
+CPiGPUGadget::CStreamEndpoint::CStreamEndpoint (const TUSBEndpointDescriptor *pDesc,
+						   CPiGPUGadget *pGadget)
 :	CDWUSBGadgetEndpoint (pDesc, pGadget),
 	m_pGadget (pGadget),
 	m_bActive (FALSE)
 {
 }
 
-boolean CPicoGPUGadget::CStreamEndpoint::Begin (void *pBuffer, size_t nLength)
+boolean CPiGPUGadget::CStreamEndpoint::Begin (void *pBuffer, size_t nLength)
 {
 	if (m_bActive || !nLength || nLength > MAX_CHUNK)
 	{
@@ -403,7 +403,7 @@ boolean CPicoGPUGadget::CStreamEndpoint::Begin (void *pBuffer, size_t nLength)
 	return TRUE;
 }
 
-void CPicoGPUGadget::CStreamEndpoint::OnDeactivate (void)
+void CPiGPUGadget::CStreamEndpoint::OnDeactivate (void)
 {
 	if (m_bActive)
 	{
@@ -416,7 +416,7 @@ void CPicoGPUGadget::CStreamEndpoint::OnDeactivate (void)
 	}
 }
 
-void CPicoGPUGadget::CStreamEndpoint::OnTransferComplete (boolean bIn, size_t nLength)
+void CPiGPUGadget::CStreamEndpoint::OnTransferComplete (boolean bIn, size_t nLength)
 {
 	if (!m_bActive)
 	{

@@ -5756,7 +5756,7 @@ const GLubyte *glGetString (GLenum name)
 {
 	switch (name)
 	{
-	case GL_VENDOR:				return (const GLubyte *) "pico-gpu";
+	case GL_VENDOR:				return (const GLubyte *) "pigpu";
 	case GL_RENDERER:			return (const GLubyte *) "VideoCore IV V3D (RPi, pgpu)";
 	case GL_VERSION:			return (const GLubyte *) "OpenGL ES 2.0 pgl";
 	case GL_SHADING_LANGUAGE_VERSION:	return (const GLubyte *) "OpenGL ES GLSL ES 1.00 (precompiled, tools/glslc)";

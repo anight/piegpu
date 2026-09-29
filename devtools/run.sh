@@ -30,7 +30,7 @@ CIRCLEBOOT=$ROOT/circle/boot
 BOOTDIR=$HERE/usbboot
 LOGDIR=$HERE/logs
 
-MAGIC=pico-gpu-reboot		# DEVLINK_REBOOT_MAGIC
+MAGIC=pigpu-reboot		# DEVLINK_REBOOT_MAGIC
 VIDPIDS="1d50:614d 1209:0001"	# the gpu app (devtools/pgpugadget.h), other apps (DEVLINK_USB_*)
 BOOTWAIT=30			# seconds to wait for the board to appear
 

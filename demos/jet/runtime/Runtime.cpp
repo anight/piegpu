@@ -1,5 +1,5 @@
 // Runtime.cpp - the JetExamples runtime contract (Esp32Jet::start, Runtime.hpp)
-// on the Pico GPU. As picojet's examples/runtime/Runtime.cpp, the example
+// on pigpu. As picojet's examples/runtime/Runtime.cpp, the example
 // scenes compile unmodified and the frame follows upstream's order - update,
 // render, effects, afterRender, present - but Jet's pixel work is done by the
 // V3D (jet/gpu/JetGpu.cpp): the Pico keeps no framebuffer.

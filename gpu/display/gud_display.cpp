@@ -52,10 +52,10 @@ LOGMODULE ("gud");
 #define CONNECT_DELAY_US			3000000
 
 // a 128-byte EDID 1.4 for the screen now: vendor "PGU" (an unassigned PNP
-// ID), product name "pico-gpu", the board's serial number, one detailed
+// ID), product name "pigpu", the board's serial number, one detailed
 // timing (the mode below). The size says 16x9 cm: an aspect ratio, not a
 // size (EDID 1.4 allows it); mutter then names the monitor by vendor and
-// product ("PGU pico-gpu", meta_monitor_make_display_name), where a real size
+// product ("PGU pigpu", meta_monitor_make_display_name), where a real size
 // would give "PGU 2.8\"" and none just "PGU".
 static void MakeEDID (u8 *p, unsigned w, unsigned h, const char *pSerial)
 {
@@ -103,7 +103,7 @@ static void MakeEDID (u8 *p, unsigned w, unsigned h, const char *pSerial)
 	{
 		pSerial++;
 	}
-	struct { u8 nTag; const char *pText; } Text[2] = {{0xFC, "pico-gpu"}, {0xFF, pSerial}};
+	struct { u8 nTag; const char *pText; } Text[2] = {{0xFC, "pigpu"}, {0xFF, pSerial}};
 	for (unsigned k = 0; k < 2; k++)	// display name, serial number
 	{
 		d = p + 72 + k * 18;
@@ -137,7 +137,7 @@ static void Put32 (u8 *p, u32 n)	{ Put16 (p, n); Put16 (p + 2, n >> 16); }
 static u16 Get16 (const u8 *p)		{ return p[0] | p[1] << 8; }
 static u32 Get32 (const u8 *p)		{ return Get16 (p) | (u32) Get16 (p + 2) << 16; }
 
-CGUDDisplay::CGUDDisplay (CPicoGPUGadget *pGadget)
+CGUDDisplay::CGUDDisplay (CPiGPUGadget *pGadget)
 :	m_pGadget (pGadget),
 	m_SpinLock (IRQ_LEVEL),
 	m_nScreenWidth (MinWidth),

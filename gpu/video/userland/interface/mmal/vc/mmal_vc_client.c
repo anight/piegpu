@@ -193,7 +193,7 @@ static MMAL_PORT_T *mmal_vc_port_by_number(MMAL_COMPONENT_T *component, uint32_t
    return NULL;
 }
 
-/* pico-gpu: a format-changed event's data as the VideoCore lays it out
+/* pigpu: a format-changed event's data as the VideoCore lays it out
  * (MMAL_EVENT_FORMAT_CHANGED_T with a 32-bit format pointer, the format on
  * the wire, its ES format, the extradata) into the host's layout, which
  * mmal_event_format_changed_get reads: in a 32-bit build the same, but for
@@ -498,7 +498,7 @@ static VCHIQ_STATUS_T mmal_vc_vchiq_callback(VCHIQ_REASON_T reason,
 
             vcos_assert(port);
             MMAL_BUFFER_HEADER_T *event = MMAL_VC_PTR(MMAL_BUFFER_HEADER_T, msg->delayed_buffer);
-            if (msg->cmd == MMAL_EVENT_FORMAT_CHANGED)   /* pico-gpu: into the host's layout */
+            if (msg->cmd == MMAL_EVENT_FORMAT_CHANGED)   /* pigpu: into the host's layout */
             {
                uint8_t *copy = vcos_malloc(event->length, "event");
                if (copy)

@@ -1,4 +1,4 @@
-# Jet on the Pico GPU
+# Jet on pigpu
 
 picojet's demos (`~/picojet`) running on the Pico with the RPi's V3D doing
 the pixel work: Jet still transforms, lights, culls and sorts on the Pico, and
@@ -22,7 +22,7 @@ where it would rasterise, the GPU draws instead. The Pico keeps no framebuffer.
 - `Jet/`: Jet (github.com/CubeCoders/Jet) at b412c8793098, as picojet has it:
   MIT, Copyright (c) 2026 CubeCoders Limited (`Jet/LICENSE`). `Renderer.cpp`
   is kept for reference and not built. `Scene.cpp` has three hooks, marked
-  "pico-gpu" under `JET_GPU`: the clear, the CRT effect and the sprite pass.
+  "pigpu" under `JET_GPU`: the clear, the CRT effect and the sprite pass.
 - `examples/`: nine JetExamples scenes as vendored by picojet (c09f5e566dd6),
   unchanged: MIT, CubeCoders (`examples/LICENSE`).
 - `runtime/`: `Runtime.hpp` is upstream's contract (plus a caption line);

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""run-deqp.py - run dEQP-GLES2 on the Pico GPU (pgl on the PC, the RPi over
+"""run-deqp.py - run dEQP-GLES2 on pigpu (pgl on the PC, the RPi over
 USB; tools/deqp/build-deqp.sh builds it).
 
 usage: run-deqp.py [-o OUT_DIR] [-x EXCLUDE]... [--resume] [--pbuffer] PATTERN...
@@ -12,11 +12,11 @@ line per case: name status) and prints a summary per group.
 """
 import argparse, collections, fnmatch, os, re, subprocess, sys, time
 
-# the RPi's serial port: the gpu app's (devtools/pgpugadget: "pico-gpu" and
+# the RPi's serial port: the gpu app's (devtools/pgpugadget: "pigpu" and
 # the board's serial number), or an older one's (Circle's CDC gadget); the
 # transport (transports/pc-usb) is told which by PGPU_TTY
 import glob
-TTY = (glob.glob('/dev/serial/by-id/usb-pico-gpu_pico-gpu_*-if00')
+TTY = (glob.glob('/dev/serial/by-id/usb-pigpu_pigpu_*-if00')
        or ['/dev/serial/by-id/usb-Circle_CDC_Gadget-if00'])[0]
 os.environ.setdefault('PGPU_TTY', TTY)
 STALL_SECONDS = 120		# no log output for this long: the case hangs

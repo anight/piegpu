@@ -5,7 +5,7 @@
 #include <circle/timer.h>
 #include <circle/util.h>
 
-CUSBBulkLink::CUSBBulkLink (CPicoGPUGadget *pGadget)
+CUSBBulkLink::CUSBBulkLink (CPiGPUGadget *pGadget)
 :	m_pGadget (pGadget),
 	m_SpinLock (IRQ_LEVEL),
 	m_bActive (FALSE),

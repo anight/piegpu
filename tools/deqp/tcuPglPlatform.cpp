@@ -1,5 +1,5 @@
 /*
- * tcuPglPlatform.cpp - the dEQP platform for pgl (pico-gpu): an OpenGL ES 2.0
+ * tcuPglPlatform.cpp - the dEQP platform for pgl (pigpu): an OpenGL ES 2.0
  * context whose calls go through pgl on the PC to the RPi (the commands of
  * docs/protocol.md over the RPi's USB, transports/pc-usb). The default
  * framebuffer is the panel (window): 320x240 RGB565, 24-bit depth, 8-bit
@@ -142,7 +142,7 @@ class ContextFactory : public glu::ContextFactory
 {
 public:
 	ContextFactory (void)
-	:	glu::ContextFactory ("pgl", "pico-gpu: pgl on the PC, the RPi over USB")
+	:	glu::ContextFactory ("pgl", "pigpu: pgl on the PC, the RPi over USB")
 	{
 	}
 

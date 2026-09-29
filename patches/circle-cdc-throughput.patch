@@ -63,7 +63,7 @@ index 45e7bba..906ab06 100644
  	m_bInActive = TRUE;
  
  	unsigned nBytesAvail = GetQueueBytesAvail ();
--	// pico-gpu: stay below wMaxPacketSize (512), so that every transfer ends
+-	// pigpu: stay below wMaxPacketSize (512), so that every transfer ends
 -	// with a short packet. A full-size last packet without a following ZLP
 -	// leaves the data pending in the host's (cdc_acm) read URB.
 -	if (nBytesAvail > MaxInMessageSize-1)
@@ -78,7 +78,7 @@ index 45e7bba..906ab06 100644
  	return nLength;
  }
  
-+// pico-gpu: every transfer ends with a short packet: a full-size last packet
++// pigpu: every transfer ends with a short packet: a full-size last packet
 +// without a following ZLP leaves the data pending in the host's (cdc_acm) read
 +// URB. So never a multiple of 64 bytes (the full-speed packet size; then not
 +// of 512 either).
@@ -104,7 +104,7 @@ index 45e7bba..906ab06 100644
  
  	assert (nCount > 0);
 -	while (nCount-- > 0)
-+	// pico-gpu: in blocks (up to the end of the ring, then from its start)
++	// pigpu: in blocks (up to the end of the ring, then from its start)
 +	unsigned nInPtr = m_nInPtr;
 +	while (nCount > 0)
  	{
@@ -131,7 +131,7 @@ index 45e7bba..906ab06 100644
  
  	assert (nCount > 0);
 -	while (nCount-- > 0)
-+	// pico-gpu: in blocks (up to the end of the ring, then from its start)
++	// pigpu: in blocks (up to the end of the ring, then from its start)
 +	unsigned nOutPtr = m_nOutPtr;
 +	while (nCount > 0)
  	{

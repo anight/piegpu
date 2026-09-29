@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""glslc - precompile a GLSL ES 1.00 program for the Pico GPU (docs/protocol.md 7.10).
+"""glslc - precompile a GLSL ES 1.00 program for pigpu (docs/protocol.md 7.10).
 
 Compiles a vertex and a fragment shader with Mesa's vc4 driver (the VideoCore
 IV compiler, run on the host through its no-hardware DRM shim, built by
@@ -233,7 +233,7 @@ def fs_ending(code, stream, generic):
 
 
 def main():
-    ap = argparse.ArgumentParser(description='Precompile a GLSL ES program for the Pico GPU')
+    ap = argparse.ArgumentParser(description='Precompile a GLSL ES program for pigpu')
     ap.add_argument('-n', '--name', default='program', help='C identifier prefix')
     ap.add_argument('--vs')
     ap.add_argument('--fs')

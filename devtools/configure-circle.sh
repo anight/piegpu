@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Configure Circle (not in git) for the pico-gpu apps on one board, then
+# Configure Circle (not in git) for the pigpu apps on one board, then
 # rebuild its libraries:
 #
 #   devtools/configure-circle.sh [zero|zero2]
@@ -10,7 +10,7 @@
 #           tree is made from ./circle (the same commit) and patches/ if it
 #           isn't there.
 #
-# These two are the boards pico-gpu supports for now; more RPi boards are to
+# These two are the boards pigpu supports for now; more RPi boards are to
 # come.
 #
 # Circle builds in its source tree, so each board has its own. Toolchains:

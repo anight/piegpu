@@ -1,4 +1,4 @@
-# Developing pico-gpu
+# Developing pigpu
 
 Notes on how the RPi side works inside, for changing it. How to build and
 use it is in the [README](README.md). Supported for now: the Raspberry Pi

@@ -850,7 +850,7 @@ pgl and pgpu also build for Linux (`hosts/pc`): the transport
 (`transports/pc-usb/pgpu_host.c`) sends the packets to the RPi over its USB serial link (the
 gpu app's devlink), so programs on the PC drive the GPU without the Pico:
 
-- **The stream:** the PC sends `pico-gpu-stream` (a new session each time);
+- **The stream:** the PC sends `pigpu-stream` (a new session each time);
   the RPi answers `#STREAM`, takes all following bytes as command packets
   (§4, byte aligned) and ignores the I2S input from then on. Replies come back
   on the same link; the log goes on as text, which the PC skips (packets are

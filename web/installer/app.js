@@ -1,5 +1,5 @@
 // app.js - the installer page: connects to the RPi (Web Serial to a running
-// pico-gpu, or WebUSB to start a blank RPi first: rpiboot.js), shows its
+// pigpu, or WebUSB to start a blank RPi first: rpiboot.js), shows its
 // card, and writes the firmware and the settings onto it (pgi.js).
 
 import {USB_FILTERS, bootStage, waitForBootDevice} from './rpiboot.js';
@@ -8,11 +8,11 @@ import {BOARDS, DEFAULTS, makeCmdline, makeConfig, parseSettings} from './settin
 import {GLStream, runDemo} from './gl.js';
 
 const $ = id => document.getElementById (id);
-const STORE = 'pico-gpu-installer-settings';
+const STORE = 'pigpu-installer-settings';
 
 let manifest = null;
 let firmware = {};			// board -> Map name -> Uint8Array (fetched once)
-let installer = null;			// the connection to pico-gpu
+let installer = null;			// the connection to pigpu
 let card = null;			// the last INFO
 let cardHost = null;			// host= in the card's cmdline.txt (null: not read)
 let busy = false;
@@ -128,7 +128,7 @@ async function loadManifest ()
 	}
 }
 
-// 'zero' or 'zero2': the board a running pico-gpu reports (INFO; an older one
+// 'zero' or 'zero2': the board a running pigpu reports (INFO; an older one
 // doesn't say: a Zero); null before one has answered. Only these two are
 // supported for now (BOARDS): another board counts as a Zero, and the board
 // facts say it isn't supported
@@ -197,7 +197,7 @@ async function bootFiles ()
 
 // ---- connecting -----------------------------------------------------------------
 
-// a connection to pico-gpu on this port (instead of any other)
+// a connection to pigpu on this port (instead of any other)
 async function attach (port, onLine = log)
 {
 	const old = installer;
@@ -222,24 +222,24 @@ async function attach (port, onLine = log)
 async function openInstaller (port)
 {
 	await attach (port);
-	status ('connect-status', 'Connected to pico-gpu.', 'ok');
+	status ('connect-status', 'Connected to pigpu.', 'ok');
 	try
 	{
 		await refreshCard (true);
 	}
 	catch (e)
 	{
-		// no answer: pico-gpu may be taking GL commands from the serial port
+		// no answer: pigpu may be taking GL commands from the serial port
 		// (a program ended without restarting it): restart it, ask again
 		if (!/^No answer/.test (e.message))
 		{
 			throw e;
 		}
-		status ('connect-status', 'pico-gpu doesn\'t answer (busy with GL commands?): restarting it…', 'warn');
+		status ('connect-status', 'pigpu doesn\'t answer (busy with GL commands?): restarting it…', 'warn');
 		const connection = installer;
 		await restartRPi (() => connection.restart ());
 		await refreshCard (true);
-		status ('connect-status', 'Connected to pico-gpu (restarted).', 'ok');
+		status ('connect-status', 'Connected to pigpu (restarted).', 'ok');
 	}
 }
 
@@ -259,7 +259,7 @@ function matchesSerial (port)
 	return SERIAL_FILTERS.some (f => f.usbVendorId === info.usbVendorId && f.usbProductId === info.usbProductId);
 }
 
-// a port of pico-gpu showing up (after starting it, or its reboot)
+// a port of pigpu showing up (after starting it, or its reboot)
 function waitForSerial (timeoutMs)
 {
 	return new Promise (resolve =>
@@ -283,7 +283,7 @@ function waitForSerial (timeoutMs)
 }
 
 // the page as rpiboot: the boot ROM, then bootcode.bin's file server, then
-// pico-gpu's serial port. Each new USB device may need the user's pick.
+// pigpu's serial port. Each new USB device may need the user's pick.
 async function bootBlank ()
 {
 	await run (async () =>
@@ -305,11 +305,11 @@ async function bootBlank ()
 				device = await pickAgain (() => navigator.usb.requestDevice ({filters: USB_FILTERS}));
 			}
 		}
-		status ('connect-status', 'pico-gpu is starting…');
+		status ('connect-status', 'pigpu is starting…');
 		let port = await waitForSerial (15000);
 		if (!port)
 		{
-			status ('connect-status', 'pico-gpu is running. Press Continue and pick it.', 'warn');
+			status ('connect-status', 'pigpu is running. Press Continue and pick it.', 'warn');
 			port = await pickAgain (() => navigator.serial.requestPort ({filters: SERIAL_FILTERS}));
 		}
 		await new Promise (r => setTimeout (r, 500));
@@ -367,7 +367,7 @@ async function refreshCard (loadSettings)
 	$('format').hidden = true;
 	add ('Type', card.board ? `${card.board}${card.ramMB ? `, ${card.ramMB} MB` : ''} (revision ${card.revision})`
 				  + (/Zero/.test (card.board) ? '' : ': not supported yet (for now: the Zero / Zero W and the Zero 2 W)')
-				: "unknown (this pico-gpu doesn't say: install to see it)");
+				: "unknown (this pigpu doesn't say: install to see it)");
 	if (!card.card)
 	{
 		add ('SD card', 'none found');
@@ -404,7 +404,7 @@ async function refreshCard (loadSettings)
 	updateButtons ();
 }
 
-// pico-gpu on the card: its build (version, time, configuration), or how much
+// pigpu on the card: its build (version, time, configuration), or how much
 // of it is there
 function describeInstalled ()
 {
@@ -476,8 +476,8 @@ async function install (settingsOnly)
 
 		status ('action-status', 'Written. Restarting the RPi from the card…');
 		const screen = await restartRPi (() => installer.reboot ());
-		status ('action-status', `Done: pico-gpu started from the card.${screen ? ' ' + screen + '.' : ''}`, 'ok');
-		status ('connect-status', 'Connected to pico-gpu.', 'ok');
+		status ('action-status', `Done: pigpu started from the card.${screen ? ' ' + screen + '.' : ''}`, 'ok');
+		status ('connect-status', 'Connected to pigpu.', 'ok');
 	}, 'action-status');
 	$('progress').hidden = true;
 }
@@ -581,7 +581,7 @@ async function runOnRPi (name, title, files)
 		await restartRPi (() => connection.restart ());
 		status ('action-status', code ? `${title} ended with an error (see the log); the RPi restarted.`
 				       : 'Stopped; the RPi restarted.', code ? 'bad' : 'ok');
-		status ('connect-status', 'Connected to pico-gpu.', 'ok');
+		status ('connect-status', 'Connected to pigpu.', 'ok');
 	}, 'action-status');
 }
 
@@ -687,13 +687,13 @@ function init ()
 	}
 }
 
-// a pico-gpu this page may use already (the user picked it before)
+// a pigpu this page may use already (the user picked it before)
 async function noteKnownPort ()
 {
 	const known = (await navigator.serial.getPorts ()).filter (p => matchesSerial (p));
 	if (known.length)
 	{
-		log ('(page) a pico-gpu the page knows is connected: press Connect');
+		log ('(page) a pigpu the page knows is connected: press Connect');
 	}
 }
 

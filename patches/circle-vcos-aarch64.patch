@@ -1,6 +1,6 @@
 # Local change to Circle Step51.1 (c776b3c6), for the Zero 2 W's 64-bit build: Circle's vcos
 # refuses AArch64 with no reason given; it compiles without a warning, and
-# pico-gpu's MMAL (gpu/video/userland: its messages 32-bit on any client) runs on
+# pigpu's MMAL (gpu/video/userland: its messages 32-bit on any client) runs on
 # it there (verified on a Zero 2 W: H.264 decoding, 0 dropped). Apply with:
 #   cd circle-zero2 && git apply ../patches/circle-vcos-aarch64.patch
 

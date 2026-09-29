@@ -1,7 +1,7 @@
 # dEQP target "pgl" (tools/deqp/build-deqp.sh links this directory into the
 # VK-GL-CTS tree as targets/pgl): GL ES 2.0 through pgl on the PC, which sends
-# the commands to the Pico GPU's RPi over USB.
-message("*** Using the pgl target (pico-gpu)")
+# the commands to pigpu's RPi over USB.
+message("*** Using the pgl target (pigpu)")
 
 set(DEQP_TARGET_NAME "pgl")
 set(DEQP_SUPPORT_GLES1 OFF)

@@ -23,7 +23,7 @@ index 813198b6..2008f97f 100644
  
  	unsigned nBytesAvail = GetQueueBytesAvail ();
 -	if (nBytesAvail > MaxInMessageSize)
-+	// pico-gpu: stay below wMaxPacketSize (512), so that every transfer ends
++	// pigpu: stay below wMaxPacketSize (512), so that every transfer ends
 +	// with a short packet. A full-size last packet without a following ZLP
 +	// leaves the data pending in the host's (cdc_acm) read URB.
 +	if (nBytesAvail > MaxInMessageSize-1)

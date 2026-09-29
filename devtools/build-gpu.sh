@@ -8,7 +8,7 @@
 #   zero    Pi Zero / Zero W, 32 bit: gpu/kernel.img (in place, as make -C gpu)
 #   zero2   Pi Zero 2 W, 64 bit: build/zero2/gpu/kernel8.img
 #
-# (The boards pico-gpu supports for now; more RPi boards are to come.)
+# (The boards pigpu supports for now; more RPi boards are to come.)
 #
 # Circle's builds put the objects next to the sources, so the Zero 2 W's is
 # made in a copy of them (build/zero2: gpu, drivers, devtools, protocol,

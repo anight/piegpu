@@ -1,4 +1,4 @@
-# pico-gpu
+# pigpu
 
 An OpenGL ES 2.0 GPU for microcontrollers: a Raspberry Pi (RPi) runs bare
 metal (Circle) and renders with its VideoCore IV V3D. The host sends GL
@@ -13,7 +13,7 @@ USB port the RPi also installs itself on its SD card (from a web page) and
 serves as a monitor for a Linux desktop.
 
 **Supported for now: the Raspberry Pi Zero / Zero W and the Zero 2 W.** More
-RPi boards are to come; "RPi" below means the board pico-gpu runs on, and a
+RPi boards are to come; "RPi" below means the board pigpu runs on, and a
 model is named where only that one was verified.
 
 The protocol is in [docs/protocol.md](docs/protocol.md). Notes on how the RPi
@@ -31,12 +31,12 @@ side works inside are in [DEVELOPMENT.md](DEVELOPMENT.md).
 | `devtools/` | Circle setup and builds per board, the RPi's USB device (serial port, GL interface, monitor), the run log, `run.sh` (boot an RPi over USB, logs, screenshots) |
 | `tools/` | `glslc` (GLSL compiler: Mesa's vc4, offline), `deqp` (the conformance tests) |
 | `patches/` | local changes to Circle (and Mesa, for `tools/glslc`) |
-| `web/installer/` | a page that installs pico-gpu on the RPi's SD card over USB and runs demos on it |
+| `web/installer/` | a page that installs pigpu on the RPi's SD card over USB and runs demos on it |
 | `experiments/` | the early probes and demos that led here (links, displays, V3D, video) |
 
 ## Boards and building
 
-pico-gpu supports two boards for now:
+pigpu supports two boards for now:
 
 - a Raspberry Pi Zero or Zero W: 32 bit, `kernel.img`, 1.2 ms to render a
   gears frame;
@@ -193,7 +193,7 @@ there. Without the SDO wire it can't tell: set `panel=yes` (see below).
   - GL commands and video from a PC program or a page (below);
   - the USB monitor (below).
 
-  Without a card that holds pico-gpu, many RPi boards can boot over USB from
+  Without a card that holds pigpu, many RPi boards can boot over USB from
   a PC with `rpiboot` (Raspberry Pi's usbboot lists them). Both supported
   boards do, from the installer page (below) or `rpiboot`:
   - `devtools/run.sh gpu` builds, boots and logs, with the Zero's 32-bit
@@ -280,10 +280,10 @@ cmake -S hosts/pc -B hosts/pc/build && make -C hosts/pc/build
 - Two ways over the cable (`transports/pc-usb/pgpu_host.c`): the RPi's GL
   interface (a vendor interface with a bulk endpoint each way, libusb), when
   the PC may open the device; else its serial port, found by name
-  (`/dev/serial/by-id/usb-pico-gpu_pico-gpu_*`; `PGPU_TTY` picks it and
+  (`/dev/serial/by-id/usb-pigpu_pigpu_*`; `PGPU_TTY` picks it and
   overrides the GL interface). Opening the device takes a udev rule:
   `SUBSYSTEM=="usb", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="614d", TAG+="uaccess"`
-  in `/etc/udev/rules.d/70-pico-gpu.rules`.
+  in `/etc/udev/rules.d/70-pigpu.rules`.
 - Each program starts with 64 KB of zeros and a PING: a program killed in
   the middle of a packet leaves nothing for the next one to trip on.
 
@@ -317,7 +317,7 @@ fail, 290 not supported). Of the 16, 11 fail with Mesa's vc4 too (the V3D),
 
 ## Installing on an SD card (`web/installer`)
 
-A static page puts pico-gpu on the microSD card in the RPi, over the RPi's
+A static page puts pigpu on the microSD card in the RPi, over the RPi's
 USB port, with its settings. The settings are the command line above
 (`cmdline.txt`) and `config.txt`:
 
@@ -340,12 +340,12 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory web/installer
 Then open http://localhost:8765 and follow the steps:
 
 - **A blank or new card:** the RPi's boot ROM finds nothing to start and waits
-  for USB. "Start a blank RPi" boots pico-gpu from the page (WebUSB, the
+  for USB. "Start a blank RPi" boots pigpu from the page (WebUSB, the
   rpiboot protocol: `rpiboot.js`; verified on both boards).
   - The page serves both builds, and a `config.txt` whose `[pi02]` lines would
     make a Zero 2 W ask for its 64-bit `kernel8.img` (a Zero asks for
     `kernel.img`).
-  - Once pico-gpu runs, it says which board it is, and Install writes that
+  - Once pigpu runs, it says which board it is, and Install writes that
     board's files only.
   - A card without a FAT file system can be formatted there (one FAT32
     partition).
@@ -357,13 +357,13 @@ Then open http://localhost:8765 and follow the steps:
   Writing the card on a PC works too (verified on a Zero 2 W): one FAT32
   partition (type 0x0c), the files of `web/installer/firmware/<board>`, a
   `config.txt` (`arm_64bit=1` for a Zero 2 W) and a `cmdline.txt`.
-- **A card with pico-gpu:** "Connect" (Web Serial). Install again,
-  or change the settings only. If pico-gpu doesn't answer (a program left it
+- **A card with pigpu:** "Connect" (Web Serial). Install again,
+  or change the settings only. If pigpu doesn't answer (a program left it
   taking GL commands), the page restarts it; "Reset" restarts it any time.
 - **A card with another system:** take it out, start the RPi from the page,
   and put the card in when the page asks.
 
-pico-gpu writes the files itself (`gpu/install`): each is checked by its CRC,
+pigpu writes the files itself (`gpu/install`): each is checked by its CRC,
 then renamed into place. At the end the RPi restarts from the card, and the
 page shows where the screen went. Measured: 3.5 MB in 5.4 s; a 64 GB card
 formatted in 7.3 s.
@@ -397,7 +397,7 @@ panel, or HDMI). A GL host's frames are rendered off screen until the PC turns
 the display off (`gpu/display/gud_display`).
 
 - The PC sees one connector with one mode, the RPi's screen size, and an
-  EDID: GNOME calls it "PGU pico-gpu".
+  EDID: GNOME calls it "PGU pigpu".
 - `devtools/gudtest.c` drives it through DRM without a desktop: a test
   pattern and two rates. Measured at 320x240: 110 full frames a second
   (17 MB/s), 60 small updates a second.

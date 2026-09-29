@@ -1,6 +1,6 @@
 #include "Scene.hpp"
 #if JET_GPU
-#include "JetGpu.hpp"      // pico-gpu: the V3D draws what Jet queues
+#include "JetGpu.hpp"      // pigpu: the V3D draws what Jet queues
 #endif
 #include "TrigLUT.hpp"
 #include "Renderer.hpp"
@@ -411,7 +411,7 @@ static void jet_fill_u32x16(uint32_t* dest, uint32_t val, int n32) {
 
 void PERF_CRITICAL Scene::clearBuffers() {
 #if JET_GPU
-    // pico-gpu: the GPU clears (colour or per-row gradient); no framebuffer here
+    // pigpu: the GPU clears (colour or per-row gradient); no framebuffer here
     if (clearRenderBuffer)
         JetGpu::clear(renderer && renderer->wireframeMode ? nullptr : backgroundGradientColors,
                       renderer && renderer->wireframeMode ? 0 : backcolor, screenHeight);
@@ -952,7 +952,7 @@ void Scene::render(RasterExecutor executor) {
     #if POSTFX_CRT
     if (crtEnabled)
     #if JET_GPU
-        JetGpu::crt(crtIntensity);      // pico-gpu: scanlines as an overlay
+        JetGpu::crt(crtIntensity);      // pigpu: scanlines as an overlay
     #else
         postFX->applyCRT(framebuffer, crtIntensity, renderer->interlacedMode,
                          renderEvenLines); // true selects odd physical rows
@@ -1033,7 +1033,7 @@ void Scene::drawSprites() {
 
 #if JET_GPU
         (void)tex; (void)dx0; (void)dy0; (void)dx1; (void)dy1;
-        JetGpu::sprite(*sp, (uint8_t)combined);  // pico-gpu: a textured or solid quad
+        JetGpu::sprite(*sp, (uint8_t)combined);  // pigpu: a textured or solid quad
         continue;
 #endif
         if (tex) {
