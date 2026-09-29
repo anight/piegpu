@@ -1,15 +1,16 @@
-# Pico → Zero GPU command protocol, version 1
+# Pico → RPi GPU command protocol, version 1
 
 This document specifies the link between the **Pico 2 W** (the host, which runs
-the application) and the **Raspberry Pi Zero** (the GPU, which renders with the
-VideoCore IV V3D and drives the ST7789 panel).
+the application) and the **Raspberry Pi** (RPi: the GPU, which renders with the
+VideoCore IV V3D and drives the ST7789 panel). Supported for now: the
+Raspberry Pi Zero / Zero W and the Zero 2 W.
 
 Version 1 has two pipelines, which can be mixed within a frame:
 - a **fixed-function pipeline in the style of OpenGL ES 1.1** (option A), run by
   built-in QPU programs;
 - **programs in the style of OpenGL ES 2.0** (option B, §7.10): GLSL ES 1.00
   vertex and fragment shaders, compiled on the PC by `tools/glslc` into QPU code
-  and uploaded as program blobs. The Zero runs them in the V3D's GL shader mode,
+  and uploaded as program blobs. The RPi runs them in the V3D's GL shader mode,
   with vertex shading on the QPUs and clipping in hardware.
 
 Status: **draft**. Everything is normative unless marked *informative*.
@@ -31,14 +32,14 @@ Status: **draft**. Everything is normative unless marked *informative*.
 
 ### 2.1 Pins
 
-| Signal | Direction | Pico 2 W pin (GPIO) | Zero pin (GPIO, function) |
+| Signal | Direction | Pico 2 W pin (GPIO) | RPi pin (GPIO, function) |
 |---|---|---|---|
-| DATA | Pico → Zero | 21 (GP16) | 38 (GPIO20, PCM_DIN) |
-| BCLK | Pico → Zero | 22 (GP17) | 12 (GPIO18, PCM_CLK) |
-| FS | Pico → Zero | 24 (GP18) | 35 (GPIO19, PCM_FS) |
-| REPLY | Zero → Pico | 25 (GP19) | 40 (GPIO21, PCM_DOUT) |
-| READY | Zero → Pico | 26 (GP20) | 36 (GPIO16) |
-| FRAME | Zero → Pico | 27 (GP21) | 37 (GPIO26) |
+| DATA | Pico → RPi | 21 (GP16) | 38 (GPIO20, PCM_DIN) |
+| BCLK | Pico → RPi | 22 (GP17) | 12 (GPIO18, PCM_CLK) |
+| FS | Pico → RPi | 24 (GP18) | 35 (GPIO19, PCM_FS) |
+| REPLY | RPi → Pico | 25 (GP19) | 40 (GPIO21, PCM_DOUT) |
+| READY | RPi → Pico | 26 (GP20) | 36 (GPIO16) |
+| FRAME | RPi → Pico | 27 (GP21) | 37 (GPIO26) |
 | GND | — | 23, 28 | 39, 34 |
 
 READY has an external 10 kΩ pull-down to GND on the Pico side (see §3.1).
@@ -46,7 +47,7 @@ All signals are 3.3 V push-pull.
 
 ### 2.2 I2S format
 
-The Pico is the I2S **master**: it drives BCLK and FS. The Zero's PCM block is
+The Pico is the I2S **master**: it drives BCLK and FS. The RPi's PCM block is
 clock and frame-sync **slave** for both directions.
 
 - **Frame:** 64 BCLK periods, two 32-bit channels, standard I2S. FS is low for
@@ -62,15 +63,15 @@ clock and frame-sync **slave** for both directions.
   direction. Measured on the hardware: zero bit errors at 1–75 MHz, and the
   stream is word-aligned.
 - **The clock runs continuously.** The Pico keeps BCLK and FS running and sends
-  idle words (§4.4) when it has nothing to send. This is required: the Zero can
+  idle words (§4.4) when it has nothing to send. This is required: the RPi can
   only reply (REPLY, §9) while the Pico clocks, and a steady clock keeps the
-  Zero's receiver in frame lock.
+  RPi's receiver in frame lock.
 
 ### 2.3 Direction of the data lines
 
 - DATA (GP16 → PCM_DIN) carries the **command stream**.
 - REPLY (PCM_DOUT → GP19) carries the **reply stream**, clocked by the same
-  BCLK/FS. The Zero changes REPLY on the falling edge of BCLK.
+  BCLK/FS. The RPi changes REPLY on the falling edge of BCLK.
 - *Informative (v1 Pico library):* a second PIO state machine samples GP19 once per
   bit, in lockstep with the one that drives BCLK (same clock divider, started in
   the same cycle, input synchroniser bypassed). It doesn't track FS, so the reply
@@ -82,27 +83,27 @@ clock and frame-sync **slave** for both directions.
 
 ## 3. Side-band signals
 
-### 3.1 READY (Zero → Pico): flow control
+### 3.1 READY (RPi → Pico): flow control
 
-- READY **high** means the Zero's command ring buffer has room for at least
+- READY **high** means the RPi's command ring buffer has room for at least
   **one maximum-size packet** (§4.3) plus margin. The Pico may start sending a packet.
 - READY **low** means the Pico must not **start** a new packet. A packet already
   started is always completed; the READY rule guarantees there's room for it.
 - The Pico samples READY **before sending each packet header**.
-- Hysteresis (*informative*, v1 implementation): the Zero drops READY when free
+- Hysteresis (*informative*, v1 implementation): the RPi drops READY when free
   space falls below 128 KB and raises it again at 256 KB free, out of a 1 MB ring.
-- **Reset safety:** while the Zero boots or reboots, GPIO16 is an input with a
-  pull-down. READY then reads **low**, so the Pico never streams into a Zero that
+- **Reset safety:** while the RPi boots or reboots, GPIO16 is an input with a
+  pull-down. READY then reads **low**, so the Pico never streams into an RPi that
   isn't running. The external 10 kΩ pull-down covers an RP2350 GPIO pull-down
   erratum (E9), where an undriven pin can float high with only the internal pull-down.
-- After the Zero comes up, the Pico must send `RESET` (§7.1) before anything else.
+- After the RPi comes up, the Pico must send `RESET` (§7.1) before anything else.
 
-### 3.2 FRAME (Zero → Pico): frame pacing
+### 3.2 FRAME (RPi → Pico): frame pacing
 
-The Zero drives FRAME high for at least 10 µs when a frame starts its transfer to
+The RPi drives FRAME high for at least 10 µs when a frame starts its transfer to
 the panel (the moment `FRAME_END`'s image is handed to the panel DMA). The Pico
 can use a GPIO edge interrupt to pace its main loop without decoding REPLY.
-FRAME is optional for the Pico to use; the Zero always drives it.
+FRAME is optional for the Pico to use; the RPi always drives it.
 
 ---
 
@@ -122,7 +123,7 @@ Header:
 
 | Bits | Field | Meaning |
 |---|---|---|
-| 31–24 | SYNC | `0xA5` for commands (Pico → Zero), `0x5A` for replies (Zero → Pico) |
+| 31–24 | SYNC | `0xA5` for commands (Pico → RPi), `0x5A` for replies (RPi → Pico) |
 | 23–16 | OPCODE | command or reply code (§6, §9) |
 | 15–0 | LENGTH | payload length in 32-bit words |
 
@@ -133,7 +134,7 @@ Header:
 - It covers the header and payload words, each taken as **4 little-endian bytes**.
   In C, that's the words exactly as they lie in memory on either processor.
 - *Informative:* the RP2350's DMA sniffer computes this CRC in hardware while the
-  DMA feeds the PIO, so it costs the Pico nothing. On the Zero, a table-driven
+  DMA feeds the PIO, so it costs the Pico nothing. On the RPi, a table-driven
   CRC costs roughly 10% of the CPU at the full 9.4 MB/s.
 
 ### 4.3 Sizes
@@ -152,7 +153,7 @@ Header:
   and checks the CRC.
 - On a CRC mismatch, the receiver discards the header word only, and resumes the
   search at the next word. This lets it resynchronise after a glitch or a reset
-  in the middle of a packet. The Zero also reports the error (`ERROR`, §9).
+  in the middle of a packet. The RPi also reports the error (`ERROR`, §9).
 - Payload words may legitimately look like headers. They're never mistaken for
   one, because a packet is only accepted with a valid CRC.
 
@@ -182,7 +183,7 @@ Coordinates follow OpenGL:
 
 ### 6.1 Frames
 
-- Commands between two `FRAME_END` packets form a **frame**. The Zero executes
+- Commands between two `FRAME_END` packets form a **frame**. The RPi executes
   commands in stream order. It collects the frame's draws, bins and renders them
   when `FRAME_END` arrives, and hands the image to the panel.
 - **State persists across frames**: matrices, enables, bound textures, arrays and
@@ -193,7 +194,7 @@ Coordinates follow OpenGL:
 ### 6.2 Render targets, jobs and clearing
 
 - Draws go to the bound **render target**: the panel (framebuffer 0) or a
-  texture (§7.2, `BIND_FRAMEBUFFER`). The Zero collects the draws for the bound
+  texture (§7.2, `BIND_FRAMEBUFFER`). The RPi collects the draws for the bound
   target and renders them as one V3D job when the target changes, when the
   frame ends, or when pixels are read (`READ_PIXELS`, `COPY_TEX_IMAGE`).
 - **`CLEAR` works like `glClear`, at any time.** It respects the scissor
@@ -210,8 +211,8 @@ Coordinates follow OpenGL:
 
 - `BUFFER_DATA` and `TEXTURE_DATA` take effect for **draws issued after them**,
   with GL semantics. If the object was already used by an earlier draw in the
-  same frame, the Zero keeps the old contents for those draws (copy-on-write).
-- Deleting an object used by the current frame is allowed. The Zero frees it
+  same frame, the RPi keeps the old contents for those draws (copy-on-write).
+- Deleting an object used by the current frame is allowed. The RPi frees it
   once the frame has rendered.
 - *Informative:* frequently changing geometry is best sent with `DRAW_INLINE`.
 
@@ -219,16 +220,16 @@ Coordinates follow OpenGL:
 
 - Framebuffer 0 ("the panel" elsewhere in this document) is the **screen**: the
   ST7789 panel (320×240) or HDMI, where it is a framebuffer of a size chosen
-  for the monitor, which the Zero's firmware scales to the HDMI mode.
+  for the monitor, which the RPi's firmware scales to the HDMI mode.
 - By default the screen is on HDMI while a monitor is connected and on the
-  panel otherwise; the kernel command line can change that (§14). The Zero
+  panel otherwise; the kernel command line can change that (§14). The RPi
   watches the HDMI hot-plug line and reads a new monitor's EDID.
 - **The screen changes only between frames**: before the first draw of a
   frame. Both of its images are cleared then (a frame without a colour `CLEAR`
   starts from black), and its depth and stencil are undefined until cleared.
   The GL state does not change: the viewport and scissor box keep their values
   (pgl moves ones that covered the whole screen, §13.1).
-- After each change the Zero sends `DISPLAY` (§9), and `INFO` gives the new size.
+- After each change the RPi sends `DISPLAY` (§9), and `INFO` gives the new size.
 
 ### 6.5 Errors
 
@@ -239,7 +240,7 @@ Coordinates follow OpenGL:
 
 ---
 
-## 7. Commands (Pico → Zero, SYNC `0xA5`)
+## 7. Commands (Pico → RPi, SYNC `0xA5`)
 
 Payload fields are listed word by word. `[n]` means n words.
 
@@ -368,25 +369,25 @@ sampler indices, and the names and GL types that `glProgramBinaryOES` needs (§1
 | Op | Name | Payload | Meaning |
 |---|---|---|---|
 | `0x80` | PROGRAM_CREATE | `id program`, `u32 size_words` | Create a program of this blob size. Recreating an existing id replaces it. |
-| `0x81` | PROGRAM_DATA | `id program`, `u32 offset_words`, `words blob[…]` | Store part of the blob. When the last word has arrived, the Zero checks the blob and loads the code; an invalid blob is reported as `ERROR` 10 and the program stays unusable. |
+| `0x81` | PROGRAM_DATA | `id program`, `u32 offset_words`, `words blob[…]` | Store part of the blob. When the last word has arrived, the RPi checks the blob and loads the code; an invalid blob is reported as `ERROR` 10 and the program stays unusable. |
 | `0x82` | PROGRAM_DELETE | `id program` | Delete it. |
 | `0x83` | USE_PROGRAM | `id program` | Draw with this program; 0 = the fixed-function pipeline. |
 | `0x84` | PROGRAM_UNIFORM | `id program`, `u32 offset_words`, `words values[…]` | Write the program's uniform storage (offsets from the compiler's header). Values as Mesa's `vc4` driver stores them (it has native integers): `float` uniforms as 32-bit floats, `int` uniforms as 32-bit integers, `bool` uniforms as 0 (false) or `0xFFFFFFFF` (true). |
 | `0x85` | PROGRAM_SAMPLER | `id program`, `u32 sampler`, `u32 unit` | Like `glUniform1i` on a sampler: the texture unit (0–7) a sampler reads. Default: sampler n reads unit n. |
 | `0x86` | TEXTURE_BIND_UNIT | `u32 unit`, `id texture` | Bind a texture to unit 0–7 (0 = none). `TEXTURE_BIND` is unit 0. |
 | `0x87` | VERTEX_ATTRIB | `u32 index`, `f32 v[4]` | Current value of a generic attribute (0–7), used when its array is disabled. Default (0, 0, 0, 1). |
-| `0x88` | ATTRIB_ARRAY | `u32 index`, `id buffer`, `u32 offset_bytes`, `u32 stride_bytes`, `u32 size`, `u32 type` | Point generic attribute 0–7 at a buffer. stride 0 = tightly packed (over 255 bytes, the Zero copies the vertices used). |
+| `0x88` | ATTRIB_ARRAY | `u32 index`, `id buffer`, `u32 offset_bytes`, `u32 stride_bytes`, `u32 size`, `u32 type` | Point generic attribute 0–7 at a buffer. stride 0 = tightly packed (over 255 bytes, the RPi copies the vertices used). |
 | `0x89` | ATTRIBS_ENABLE | `u32 mask` | Which generic attributes come from arrays (bit n = attribute n). |
 | `0x8A` | PROGRAM_DRAW_INLINE | `u32 mode`, `u32 vertices`, `u32 attribute_mask`, `u32 index_count`, `u32 index_type`, then per attribute in the mask (ascending): `u32 format`, `bytes data[…]`; then `bytes indices[…]` | Draw with vertex data carried in the packet (client-side arrays). format = type \| size << 8; other formats than the program's are converted. The data is `vertices` values, tightly packed and padded to a word. index_count 0 = draw the vertices in order; otherwise index_count indices follow, u8 or u16. Attributes not in the mask come from `ATTRIB_ARRAY` (first vertex 0) or `VERTEX_ATTRIB`. |
 
 **Drawing:** while a program is in use, `DRAW_ARRAYS` and `DRAW_ELEMENTS` use
 it and the generic attributes, and `PROGRAM_DRAW_INLINE` draws vertex data from
 the packet. `DRAW_INLINE` (the fixed-function layout) isn't available with
-programs (error 5). The Zero picks the variant for the primitive mode; if the
+programs (error 5). The RPi picks the variant for the primitive mode; if the
 program wasn't compiled for it, the draw is reported as `ERROR` 10.
 
 - **Attributes:** arrays of any type and size can be used. If they differ from
-  what the program was compiled for (the fast path), the Zero converts the
+  what the program was compiled for (the fast path), the RPi converts the
   vertices used (missing components (0, 0, 0, 1), as GL). A disabled array uses
   the current value from `VERTEX_ATTRIB`.
 - **State that applies:** viewport and depth range, depth test and mask, culling
@@ -401,7 +402,7 @@ program wasn't compiled for it, the draw is reported as `ERROR` 10.
   `gl_FrontFacing`, `gl_PointCoord` and `gl_DepthRange` follow GL on the panel
   and on texture targets (verified numerically in self test 8). Mesa compiles
   the origin of `gl_PointCoord` into the fragment shader, so glslc adds a
-  points variant for texture targets (`PGPU_VK_TEXTURE_TARGET`), which the Zero
+  points variant for texture targets (`PGPU_VK_TEXTURE_TARGET`), which the RPi
   uses when drawing points into a texture. The panel has no alpha channel (`DST_ALPHA`
   reads 1); texture targets have one. Control flow (loops, `break`, `discard`,
   branches that differ per pixel) and dynamic indexing of uniform arrays work
@@ -446,10 +447,10 @@ program wasn't compiled for it, the draw is reported as `ERROR` 10.
 
 ### 7.12 Video
 
-Video streams are decoded by the Zero's VideoCore into **video textures**:
+Video streams are decoded by the RPi's VideoCore into **video textures**:
 ordinary 2D textures (sampled by any program or the fixed function, on any
 geometry) whose pixels are the frame of the stream that's due. The host sends
-the compressed samples, with their presentation times; the Zero decodes,
+the compressed samples, with their presentation times; the RPi decodes,
 scales and converts them in the VideoCore (its H.264 decoder and ISP), keeps
 the stream's clock and, at the end of each frame (`FRAME_END`), gives the
 texture the newest decoded frame whose time has come. So every draw of a
@@ -469,7 +470,7 @@ the GL frame rate.
   If the next frame lies more than a second ahead of the clock and of the
   frame on screen (a gap: samples the host skipped or lost), the clock jumps
   to it, so the video never stops for a gap.
-- **Flow control:** the Zero holds 4 MB and 256 samples of a stream not yet
+- **Flow control:** the RPi holds 4 MB and 256 samples of a stream not yet
   taken by its decoder. `VIDEO_STATUS` (every 100 ms while the stream is open,
   and on request) says how many bytes and samples the decoder has taken since
   the open; the host sends a sample only if it fits in what's left
@@ -504,29 +505,29 @@ the GL frame rate.
 | `0xC8`–`0xEF` | reserved |
 | `0xF0`–`0xFF` | debug and vendor |
 
-Debug commands (v1 Zero implementation, not needed by applications):
+Debug commands (v1 RPi implementation, not needed by applications):
 
 | Op | Name | Payload | Meaning |
 |---|---|---|---|
-| `0xF0` | DEBUG_SCREENSHOT | — | The Zero writes the last presented frame to its USB development log (base64 RGB565 between `#SCREENSHOT` and `#END` lines; `devtools/screenshot.py` makes a PNG). |
+| `0xF0` | DEBUG_SCREENSHOT | — | The RPi writes the last presented frame to its USB development log (base64 RGB565 between `#SCREENSHOT` and `#END` lines; `devtools/screenshot.py` makes a PNG). |
 
 ---
 
-## 9. Replies (Zero → Pico, SYNC `0x5A`)
+## 9. Replies (RPi → Pico, SYNC `0x5A`)
 
 Replies use the same packet format, sent on REPLY. Idle words are `0x00000000`.
 A reply to a request uses the request's opcode (`GET_INFO` → `INFO`, `PING` → `PONG`, …).
 
 | Op | Name | Payload | Sent when |
 |---|---|---|---|
-| `0x02` | INFO | `u32 version`, `u16 width, u16 height` (the screen's, §6.4), `u32 max_texture_size`, `u32 max_buffers`, `u32 max_textures`, `u32 max_lights`, `u32 ring_bytes` | After `RESET`, `GET_INFO`, and once after the Zero boots. version = `0x00010000` for 1.0. |
+| `0x02` | INFO | `u32 version`, `u16 width, u16 height` (the screen's, §6.4), `u32 max_texture_size`, `u32 max_buffers`, `u32 max_textures`, `u32 max_lights`, `u32 ring_bytes` | After `RESET`, `GET_INFO`, and once after the RPi boots. version = `0x00010000` for 1.0. |
 | `0x03` | PONG | `u32 cookie` | `PING` |
 | `0x04` | STATUS | `u32 frames`, `u32 crc_errors`, `u32 command_errors`, `u32 ring_free_bytes`, `u32 last_frame_us`, then the last measuring window (about a second): `u32 window_us`, `u32 window_frames`, `u32 v3d_busy_us` (binning and rendering), `u32 arm_busy_us` (receiving and executing commands, without the waits for the V3D and the panel), `u32 panel_wait_us` (for the panel DMA of the previous frame). Older Zeros send the first 5 words | `GET_STATUS` |
 | `0x05` | DISPLAY | `u32 output_flags`, `u16 width, u16 height`, `u16 monitor_width, u16 monitor_height`, `u32 monitor_refresh_mhz`, `u16 signal_width, u16 signal_height`, `u8 monitor_name[16]` (see below) | After each `INFO`, and whenever the screen or the HDMI monitor changes (§6.4) |
 | `0x06` | VIDEO_STATUS | `u32 stream`, `u32 flags` (bit 0 open, bit 1 playing, bit 2 ended: the EOS came out of the decoder, bit 3 error: a VideoCore component reported one), `u32 bytes_done`, `u32 ring_bytes`, `u32 decoded`, `u32 shown`, `u32 dropped` (frames), `s64 shown_pts` (2 words; `0x8000000000000000`: none), `u32 waiting` (decoded frames before their time), `u32 samples_done`, `u32 max_samples` | Every 100 ms while a stream is open, and `VIDEO_GET_STATUS`. `bytes_done` and `samples_done` count what the decoder has taken since `VIDEO_OPEN` (mod 2^32): the host may have `ring_bytes` and `max_samples` more in flight (§7.12) |
 | `0x11` | FRAME_DONE | `u32 frame_number`, `u32 render_us`, `u32 draws`, `u32 triangles` | After a frame whose `FRAME_END` had flag bit 0 set is handed to the panel |
 | `0x16` | PIXELS | `u32 offset`, `color pixels[1 … 61]` | `READ_PIXELS`: the pixels from `offset` (in pixels, rows bottom up), in as many replies as needed |
-| `0x7E` | CREDIT | `u32 bytes` | USB stream only (§13.3): the stream bytes the Zero has taken so far, since the session started |
+| `0x7E` | CREDIT | `u32 bytes` | USB stream only (§13.3): the stream bytes the RPi has taken so far, since the session started |
 | `0x7F` | ERROR | `u32 code`, `u32 opcode`, `u32 detail` | An invalid command (§6.5) or a CRC error (code 1, opcode 0) |
 
 Error codes: 1 = CRC, 2 = unknown opcode, 3 = bad length, 4 = bad id,
@@ -536,18 +537,18 @@ Error codes: 1 = CRC, 2 = unknown opcode, 3 = bad length, 4 = bad id,
 `ERROR` detail: the offending id for id and object errors, the received LENGTH
 for length errors, the header word for CRC errors, otherwise 0.
 
-The Pico can recognise a reboot of the Zero by an `INFO` reply it didn't ask
+The Pico can recognise a reboot of the RPi by an `INFO` reply it didn't ask
 for; all objects and state are gone then.
 
 `DISPLAY` fields:
 
 - `output_flags`: bits 0–7 the screen's output (1 = the panel, 2 = HDMI); bit 8:
-  an HDMI monitor is connected; bit 9: a panel is configured (the Zero can't
+  an HDMI monitor is connected; bit 9: a panel is configured (the RPi can't
   detect one); bit 10: the monitor's EDID was read.
 - `width`, `height`: the screen (framebuffer 0), as in `INFO`.
 - `monitor_width`, `monitor_height`, `monitor_refresh_mhz`: the monitor's
   preferred mode from its EDID (refresh in millihertz); 0 without an EDID.
-- `signal_width`, `signal_height`: the mode the Zero sends on HDMI. The
+- `signal_width`, `signal_height`: the mode the RPi sends on HDMI. The
   firmware sets it at boot (`config.txt`, §14) and keeps it.
 - `monitor_name`: the monitor's name from the EDID (up to 13 characters), zero
   padded; empty if it has none.
@@ -646,7 +647,7 @@ In the fixed-function pipeline SRC_ALPHA_SATURATE is approximated by SRC_ALPHA.
 | lights | 4 |
 | vertices per draw | 65536 |
 | packet payload | 16384 words (64 KB) |
-| command ring on the Zero | 1 MB |
+| command ring on the RPi | 1 MB |
 | video streams | 2; a stream: 4 MB and 256 samples not yet decoded, 8 decoded frames waiting |
 | video textures | width a power of two, 32 … 2048; height a multiple of 16, … 2048 |
 
@@ -706,7 +707,7 @@ The host library (`libpgpu/`, board independent) has two layers:
   (`pgpu_rx_parse`, §9.1). The words go through a transport
   (`libpgpu/pgpu_link.h`, one per link in `transports/`): on the Pico the I2S
   link (`transports/pico-i2s`: DMA over PIO, READY before each batch, replies
-  sampled into a DMA ring and parsed in a 1 ms timer); on a PC the Zero's USB
+  sampled into a DMA ring and parsed in a 1 ms timer); on a PC the RPi's USB
   (`transports/pc-usb`, §13.3). The builds per host board are in `hosts/`.
 - **`pgl`** (`libpgpu/gles/pgl.{h,c}`): the **OpenGL ES 2.0 API**, with
   the **GL ES 1.1 fixed-function calls** for program 0. It keeps the GL state
@@ -738,7 +739,7 @@ The host library (`libpgpu/`, board independent) has two layers:
     samples go as they are: format AVCC). So the only copy on the host is the
     filesystem's, from its sector buffer (or the card's DMA) into the
     packet; no buffer for a sample. A read that fails leaves the sample
-    unfinished; the Zero drops it at the next sample's first chunk.
+    unfinished; the RPi drops it at the next sample's first chunk.
     The reads are arranged for a filesystem's DMA: a sample's first packet
     carries the bytes up to the file's next 512-byte sector boundary, the
     others whole sectors, and idle words before a packet put its data on a
@@ -786,19 +787,19 @@ The host library (`libpgpu/`, board independent) has two layers:
 
 | GL | Wire |
 |---|---|
-| `glGen*`, `glBind*`, `glDelete*` | GL names map to Zero ids: buffers 1–250, textures 1–110 (texture object 0 of each target: 111, 112), framebuffers 1–16. Colour renderbuffers are Zero textures 121–128; framebuffers without a colour attachment get a scratch colour texture (113–120). Programs get Zero ids 1–64 from a pool. |
+| `glGen*`, `glBind*`, `glDelete*` | GL names map to RPi ids: buffers 1–250, textures 1–110 (texture object 0 of each target: 111, 112), framebuffers 1–16. Colour renderbuffers are RPi textures 121–128; framebuffers without a colour attachment get a scratch colour texture (113–120). Programs get RPi ids 1–64 from a pool. |
 | `glBufferData`, `glBufferSubData` | `BUFFER_CREATE`, `BUFFER_DATA`. Buffers up to 16 KB and all index buffers are also kept on the Pico (on a PC all buffers), for draws that combine an index buffer with client-side vertex arrays. |
 | `glTexImage2D`, `glTexSubImage2D`, `glCompressedTexImage2D` (ETC1), `glCopyTex[Sub]Image2D`, `glGenerateMipmap`, `glTexParameter*` | `TEXTURE_CREATE` when level 0's size or format changes, then `TEXTURE_DATA` (repacked for `GL_UNPACK_ALIGNMENT`; `glTexSubImage2D` data of another type than the texture's is converted on the Pico), `COPY_TEX_IMAGE`, `GENERATE_MIPMAP`, `TEXTURE_PARAMS`. A texture pgl knows to be incomplete (a level of size 0, a mipmap level that doesn't fit level 0) is bound as none. The GL ES 1.1 `GL_GENERATE_MIPMAP` parameter is supported. |
 | `glFramebufferTexture2D`, `glFramebufferRenderbuffer`, `glBindFramebuffer` | `FRAMEBUFFER_CREATE` and `BIND_FRAMEBUFFER`, sent by the next draw, clear or read. A depth or stencil renderbuffer sets the depth and stencil flag and names a shared depth and stencil buffer (the renderbuffer), so framebuffers attaching the same renderbuffer share its contents. |
 | `glEnable`, `glDisable` | `ENABLE` / `DISABLE`, sent by the next draw or clear. Depth and stencil tests are off on targets without those buffers, as in GL. |
 | `glShaderBinary` + `glLinkProgram`, `glProgramBinaryOES`; on a PC also `glCompileShader` + `glLinkProgram` | `PROGRAM_CREATE` / `PROGRAM_DATA`, then a `PING`. An `ERROR` from checking the blob makes the link fail. Samplers are set to unit 0, as in GL. |
 | `glUniform*` | `PROGRAM_UNIFORM`: locations are uniform index << 16 \| array element. Values are converted to the program's types (int32; bool 0 / ~0). Sampler uniforms use `PROGRAM_SAMPLER`. |
-| `glVertexAttribPointer`, `glDrawArrays`, `glDrawElements` with a program | Buffer arrays use `ATTRIB_ARRAY`. Client-side arrays and indices use `PROGRAM_DRAW_INLINE`, with the buffer arrays' offsets moved to the first vertex sent; lists are split into several packets; strips, fans and loops too large for a packet go to temporary buffers (Zero ids 253, 254). Draws of more than 65535 vertices are split (lists and strips). |
-| GL ES 1.1 arrays and draws | Buffer arrays use `ARRAY`. Client-side arrays (interleaved ones once) and indices are copied into two stream buffers (Zero ids 251 and 252), which the Zero reads when the draw arrives. |
+| `glVertexAttribPointer`, `glDrawArrays`, `glDrawElements` with a program | Buffer arrays use `ATTRIB_ARRAY`. Client-side arrays and indices use `PROGRAM_DRAW_INLINE`, with the buffer arrays' offsets moved to the first vertex sent; lists are split into several packets; strips, fans and loops too large for a packet go to temporary buffers (RPi ids 253, 254). Draws of more than 65535 vertices are split (lists and strips). |
+| GL ES 1.1 arrays and draws | Buffer arrays use `ARRAY`. Client-side arrays (interleaved ones once) and indices are copied into two stream buffers (RPi ids 251 and 252), which the RPi reads when the draw arrives. |
 | GL ES 1.1 matrices, lights, material, fog, `glTexEnv`, `glAlphaFunc`, `glShadeModel`, `glColor4f`, `glNormal3f`, `glMultiTexCoord4f` | Matrix stacks kept on the Pico (`LOAD_MATRIX` before a draw that needs a changed matrix); `LIGHT` (position and spot direction transformed by the modelview when set), `MATERIAL`, `LIGHT_MODEL`, `FOG`, `TEX_ENV`, `ALPHA_FUNC`, `SHADE_MODEL`, `COLOR`, `NORMAL`, `TEXCOORD`. |
 | `glClear`, `glClearColor`, `glClearDepthf`, `glClearStencil` | `CLEAR` |
 | `glReadPixels` (RGBA, UNSIGNED_BYTE) | `READ_PIXELS`, rows at `GL_PACK_ALIGNMENT`. Alpha is 255 on targets without alpha. |
-| `glGetError` | Errors found by pgl at once. `ERROR` replies map to GL errors (ENUM → `GL_INVALID_ENUM`, LIMIT → `GL_INVALID_VALUE`, MEMORY → `GL_OUT_OF_MEMORY`, others → `GL_INVALID_OPERATION`). If commands were sent since the last call, `glGetError` first waits for them with a `PING` (about 80 µs over USB, 1–3 ms over I2S), so it reports their errors. `pglGetZeroError` gives the last one's code, opcode and detail; with `PGL_DEBUG` set (PC), pgl prints them. |
+| `glGetError` | Errors found by pgl at once. `ERROR` replies map to GL errors (ENUM → `GL_INVALID_ENUM`, LIMIT → `GL_INVALID_VALUE`, MEMORY → `GL_OUT_OF_MEMORY`, others → `GL_INVALID_OPERATION`). If commands were sent since the last call, `glGetError` first waits for them with a `PING` (about 80 µs over USB, 1–3 ms over I2S), so it reports their errors. `pglGetRPiError` gives the last one's code, opcode and detail; with `PGL_DEBUG` set (PC), pgl prints them. |
 | `pglSwapBuffers` | `FRAME_END`. Then, if a `DISPLAY` reply has brought a new screen size: a viewport and scissor box that covered the whole old screen are set to the new one (`VIEWPORT`, `SCISSOR`), as a window system does for a resized window. `pglGetScreenSize` gives the size; `pgpu_get_display` the whole `DISPLAY` reply. |
 
 ### 13.2 Differences from GL ES 2.0 and 1.1
@@ -821,11 +822,11 @@ The host library (`libpgpu/`, board independent) has two layers:
 - Draws of more than 65535 vertices as fans or loops report
   `GL_OUT_OF_MEMORY`.
 - **Framebuffers:** colour attachments are level 0 of an RGBA or RGB texture,
-  or an RGBA4, RGB5_A1, RGB565, RGB8 or RGBA8 renderbuffer. The Zero keeps
+  or an RGBA4, RGB5_A1, RGB565, RGB8 or RGBA8 renderbuffer. The RPi keeps
   depth and stencil together: a framebuffer with separate depth and stencil
   renderbuffers shares its depth and stencil with others through the depth one.
 - **Textures:** a level of an incomplete texture that doesn't fit level 0
-  keeps its old contents on the Zero (GL has none, the texture being
+  keeps its old contents on the RPi (GL has none, the texture being
   incomplete); only visible once the texture is complete again.
 - **Fixed function:** 4 lights, no spot lights (`GL_SPOT_*` is stored but
   ignored), one texture unit, `MODULATE`, `REPLACE`, `DECAL` and `BLEND`
@@ -833,7 +834,7 @@ The host library (`libpgpu/`, board independent) has two layers:
   texture coordinate's r and q are ignored.
 - **`GL_DITHER`** is stored but has no effect: the V3D's dither moves values
   by up to two steps (0 becomes 2 of 31, measured), where GL requires one of
-  the two nearest values (GL ES 2.0 4.1.7). pgl keeps it off (the Zero's
+  the two nearest values (GL ES 2.0 4.1.7). pgl keeps it off (the RPi's
   `DITHER` capability); without it, the V3D truncates, as GL does.
 - `GL_POINT_SMOOTH`, `GL_LINE_SMOOTH` and the multisample enables are stored,
   but have no effect (there is no multisample buffer).
@@ -846,16 +847,16 @@ The host library (`libpgpu/`, board independent) has two layers:
 ### 13.3 pgl on a PC (tests)
 
 pgl and pgpu also build for Linux (`hosts/pc`): the transport
-(`transports/pc-usb/pgpu_host.c`) sends the packets to the Zero over its USB serial link (the
+(`transports/pc-usb/pgpu_host.c`) sends the packets to the RPi over its USB serial link (the
 gpu app's devlink), so programs on the PC drive the GPU without the Pico:
 
 - **The stream:** the PC sends `pico-gpu-stream` (a new session each time);
-  the Zero answers `#STREAM`, takes all following bytes as command packets
+  the RPi answers `#STREAM`, takes all following bytes as command packets
   (§4, byte aligned) and ignores the I2S input from then on. Replies come back
   on the same link; the log goes on as text, which the PC skips (packets are
   found by their header and CRC).
-- **Flow control:** the Zero's USB gadget buffers 64 KB and drops what doesn't
-  fit, so the Zero sends `CREDIT` replies (§9) with the number of stream bytes
+- **Flow control:** the RPi's USB gadget buffers 64 KB and drops what doesn't
+  fit, so the RPi sends `CREDIT` replies (§9) with the number of stream bytes
   taken; the PC keeps at most 6 KB unacknowledged (`PGPU_WINDOW` sets it).
 - **Shader compiler:** on the PC, `GL_SHADER_COMPILER` is true:
   `glCompileShader` runs `glslc --check` (Mesa's info log),
@@ -870,7 +871,7 @@ gpu app's devlink), so programs on the PC drive the GPU without the Pico:
   after a crash), `failures.py` groups the failures, `compare-vc4.py` compares
   with Mesa's `vc4` on a Raspberry Pi 3.
 
-## 14. Zero implementation notes (*informative*)
+## 14. RPi implementation notes (*informative*)
 
 - **Receive:** cyclic DMA from the PCM receive FIFO into a 1 MB ring buffer. The
   CPU parses packets from the ring and drives READY from its fill level.
@@ -932,7 +933,7 @@ gpu app's devlink), so programs on the PC drive the GPU without the Pico:
   512×300: CPU-G 20% instead of 6%). The vertical sync is the frame count of
   the display scaler's channel for HDMI (HVS `DISPSTAT1`, bits 17:12; measured
   60 a second), polled with a 100 ms timeout. The firmware's "wait for vsync"
-  call, used before, has no timeout; with it, the Zero hung once as a monitor
+  call, used before, has no timeout; with it, the RPi hung once as a monitor
   was switched on during a video (the log stopped, the watchdog reset it;
   where it hung isn't known), and since the change it hasn't. The video demo
   on 1024×600 went from 38–51 to 57–60 fps. A page flip is still a firmware call
@@ -975,8 +976,9 @@ gpu app's devlink), so programs on the PC drive the GPU without the Pico:
   bytes are the module maker's (IDSET, C1h, in the panel's NVM; the ST7789V
   datasheet's default is 85 85 52), and no register tells the glass's size
   (the controller's memory is 240×320 whatever is attached).
-- **Hot plug:** the HDMI hot-plug line is GPIO46 on the Zero (low while a
-  monitor is connected), sampled every 20 ms; a change counts after 200 ms.
+- **Hot plug:** the HDMI hot-plug line is GPIO46 on a Zero, GPIO28 on a Zero
+  2 W (low while a monitor is connected), sampled every 20 ms; a change counts
+  after 200 ms.
   The EDID is read over the DDC bus (BSC2, address 0x50, 100 kHz, about 12 ms),
   because the firmware's EDID property tag keeps answering with the EDID read
   at boot after the monitor is gone. At boot it's read at once; after a hot
@@ -985,7 +987,7 @@ gpu app's devlink), so programs on the PC drive the GPU without the Pico:
   second.
 - **HDMI mode:** the firmware chooses it at boot and doesn't change it later.
   `config.txt` has `hdmi_force_hotplug=1`, so that HDMI stays on (640×480)
-  when the Zero boots without a monitor. By default the firmware prefers TV
+  when the RPi boots without a monitor. By default the firmware prefers TV
   modes: for a 1024×600 monitor it sent 720×576 at 50 Hz, capping frames at
   50 fps. `hdmi_group=2` gave 1024×768 at 60 Hz; `hdmi_mode=87` with
   `hdmi_cvt=1024 600 60` gives that monitor's own mode (measured: 59.9 fps).

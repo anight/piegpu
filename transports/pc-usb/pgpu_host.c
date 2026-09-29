@@ -1,11 +1,11 @@
 /*
  * pgpu_host.c - the transport of pgpu.c on a PC (pgpu_link.h): the packets go
- * to the Zero over USB, replies come back the same way. For running pgl on
- * the PC (tests such as dEQP, demos): the Zero executes the same commands as
+ * to the RPi over USB, replies come back the same way. For running pgl on
+ * the PC (tests such as dEQP, demos): the RPi executes the same commands as
  * from the Pico.
  *
  * Two ways over the same cable:
- * - the Zero's GL interface (devtools/pgpugadget: vendor class, subclass 'P',
+ * - the RPi's GL interface (devtools/pgpugadget: vendor class, subclass 'P',
  *   protocol 'G'; a bulk endpoint each way), with libusb: USB's own flow
  *   control, large transfers. Needs access to the device (a udev rule,
  *   README);
@@ -18,7 +18,7 @@
  *
  * Environment:
  *	PGPU_TTY	use the serial port, this device (default: the gpu app's)
- *	PGPU_TEXT_LOG	a file for the text the Zero sends besides the replies on
+ *	PGPU_TEXT_LOG	a file for the text the RPi sends besides the replies on
  *			the serial port (the log; DEBUG_SCREENSHOT dumps, for
  *			devtools/screenshot.py)
  *	PGPU_WINDOW	the serial port's flow-control window, bytes (tests)
@@ -70,8 +70,8 @@ static volatile int usb_read_done[USB_READS], usb_write_busy[USB_WRITES];
 static unsigned usb_next_read, usb_next_write;	/* (they complete in order) */
 #endif
 
-/* flow control: the Zero's USB gadget buffers 64 KB and drops what doesn't
-   fit; CREDIT replies say how many stream bytes the Zero has taken. Larger
+/* flow control: the RPi's USB gadget buffers 64 KB and drops what doesn't
+   fit; CREDIT replies say how many stream bytes the RPi has taken. Larger
    windows send faster but read back slower (linktest, 2026-09-29: 6 KB 8.3
    and 6.1 MB/s, 60 KB 11.0 and 3.2 MB/s) */
 #define WINDOW		6144
@@ -148,13 +148,13 @@ static void LIBUSB_CALL usb_write_done_cb (struct libusb_transfer *t)
 {
 	if (t->status != LIBUSB_TRANSFER_COMPLETED)
 	{
-		fprintf (stderr, "pgpu_host: a transfer to the Zero failed (%s)\n", libusb_error_name (t->status));
+		fprintf (stderr, "pgpu_host: a transfer to the RPi failed (%s)\n", libusb_error_name (t->status));
 		exit (1);
 	}
 	usb_write_busy[(uintptr_t) t->user_data] = 0;
 }
 
-/* the Zero's GL interface: true if it's there and open */
+/* the RPi's GL interface: true if it's there and open */
 static bool usb_open (void)
 {
 	if (libusb_init (&usb_ctx) < 0)
@@ -203,9 +203,9 @@ static bool usb_open (void)
 	}
 	if (!usb_dev)
 	{
-		if (interface >= 0)		/* (an older Zero has none: quiet) */
+		if (interface >= 0)		/* (an older RPi has none: quiet) */
 		{
-			fprintf (stderr, "pgpu_host: the Zero's GL interface: %s%s; using its serial port\n",
+			fprintf (stderr, "pgpu_host: the RPi's GL interface: %s%s; using its serial port\n",
 				 libusb_error_name (result),
 				 result == LIBUSB_ERROR_ACCESS ? " (the udev rule in README)" : "");
 		}
@@ -229,7 +229,7 @@ static bool usb_open (void)
 		libusb_fill_bulk_transfer (usb_write[i], usb_dev, ep_out, malloc (USB_XFER_BYTES), 0,
 					   usb_write_done_cb, (void *) (uintptr_t) i, 0);
 		/* a transfer of a multiple of 512 bytes ends with a zero-length
-		   packet: the Zero's receive ends there */
+		   packet: the RPi's receive ends there */
 		usb_write[i]->flags = LIBUSB_TRANSFER_ADD_ZERO_PACKET;
 	}
 	return true;
@@ -245,7 +245,7 @@ static void usb_poll (int timeout_us)
 		struct libusb_transfer *t = usb_read[usb_next_read];
 		if (t->status != LIBUSB_TRANSFER_COMPLETED)
 		{
-			fprintf (stderr, "pgpu_host: the Zero is gone (%s)\n", libusb_error_name (t->status));
+			fprintf (stderr, "pgpu_host: the RPi is gone (%s)\n", libusb_error_name (t->status));
 			exit (1);
 		}
 		if (rx_bytes + t->actual_length > sizeof rx)
@@ -270,10 +270,10 @@ static void usb_send (const uint8_t *p, uint32_t bytes)
 	{
 		if (usb_write_busy[usb_next_write])
 		{
-			pgpu_link_poll ();		/* replies meanwhile: the Zero may wait for room for them */
+			pgpu_link_poll ();		/* replies meanwhile: the RPi may wait for room for them */
 			if (pgpu_link_time_us () > wait_start + 10000000)
 			{
-				fprintf (stderr, "pgpu_host: the Zero takes no commands for 10 s\n");
+				fprintf (stderr, "pgpu_host: the RPi takes no commands for 10 s\n");
 				exit (1);
 			}
 			continue;
@@ -299,7 +299,7 @@ static void usb_send (const uint8_t *p, uint32_t bytes)
 static void send_bytes (const uint8_t *p, uint32_t bytes);
 
 /* a new session: whatever an earlier program left half sent (killed in the
-   middle of a packet), zeros complete it (the Zero then finds its CRC wrong
+   middle of a packet), zeros complete it (the RPi then finds its CRC wrong
    and skips zeros); then a PING, and replies before its PONG are an earlier
    program's */
 #define START_COOKIE	0x5D000000u
@@ -320,7 +320,7 @@ static void start_session (void)
 	}
 	if (start_pong != start_cookie)
 	{
-		fprintf (stderr, "pgpu_host: no answer from the Zero (is the gpu app running?)\n");
+		fprintf (stderr, "pgpu_host: no answer from the RPi (is the gpu app running?)\n");
 		exit (1);
 	}
 }
@@ -351,7 +351,7 @@ static ssize_t tty_read (void *p, size_t n)
 	ssize_t r = read (fd, p, n);
 	if (r < 0 && errno != EAGAIN && errno != EINTR)
 	{
-		fail ("read (the Zero is gone)");
+		fail ("read (the RPi is gone)");
 	}
 	return r > 0 ? r : 0;
 }
@@ -362,7 +362,7 @@ static void tty_wait (int us)
 	struct timespec wait = {0, us * 1000};
 	if (ppoll (&p, 1, &wait, NULL) > 0 && (p.revents & (POLLHUP | POLLERR)))
 	{
-		fprintf (stderr, "pgpu_host: the Zero is gone\n");
+		fprintf (stderr, "pgpu_host: the RPi is gone\n");
 		exit (1);
 	}
 }
@@ -405,7 +405,7 @@ static void tty_open (void)
 #endif
 
 	/* switch the link to the binary stream: wait for the acknowledgement
-	   (the log the Zero sends before it is text) */
+	   (the log the RPi sends before it is text) */
 	write_all (STREAM_MAGIC, sizeof STREAM_MAGIC - 1);
 	char seen[sizeof STREAM_ACK] = {0};
 	uint64_t end = pgpu_link_time_us () + 3000000;
@@ -426,7 +426,7 @@ static void tty_open (void)
 			tty_wait (1000);
 		}
 	}
-	fprintf (stderr, "pgpu_host: no answer from the Zero on %s (is the gpu app running?)\n", tty);
+	fprintf (stderr, "pgpu_host: no answer from the RPi on %s (is the gpu app running?)\n", tty);
 	exit (1);
 }
 
@@ -446,7 +446,7 @@ void pgpu_link_init (void)
 #define SYNC_COOKIE	0x5C000000u		/* the PINGs of PGPU_SYNC (high byte) */
 static uint32_t sync_pong;
 
-/* PGPU_SYNC set: each packet alone, then a PING; reports the packet the Zero
+/* PGPU_SYNC set: each packet alone, then a PING; reports the packet the RPi
    doesn't get past (debugging hangs) */
 static void send_synced (const uint32_t *words, uint32_t n)
 {
@@ -465,7 +465,7 @@ static void send_synced (const uint32_t *words, uint32_t n)
 		}
 		if (sync_pong != cookie)
 		{
-			fprintf (stderr, "pgpu_host: the Zero hangs in opcode %02x, %u words:",
+			fprintf (stderr, "pgpu_host: the RPi hangs in opcode %02x, %u words:",
 				 PGPU_HEADER_OP (words[i]), PGPU_HEADER_LEN (words[i]));
 			for (uint32_t k = 1; k < len - 1 && k <= 12; k++)
 			{
@@ -511,7 +511,7 @@ static void send_bytes (const uint8_t *p, uint32_t bytes)
 			pgpu_link_poll ();		/* wait for credit */
 			if (pgpu_link_time_us () > credit_wait_start + 10000000)
 			{
-				fprintf (stderr, "pgpu_host: no credit from the Zero for 10 s\n");
+				fprintf (stderr, "pgpu_host: no credit from the RPi for 10 s\n");
 				exit (1);
 			}
 			continue;
@@ -613,10 +613,10 @@ void pgpu_link_settle (void)
 }
 
 bool pgpu_wait_ready (uint32_t timeout_ms)	{ return true; }	/* USB flow control */
-/* no FRAME line over USB: a PING after the frame instead. The Zero runs the
+/* no FRAME line over USB: a PING after the frame instead. The RPi runs the
    commands in order, so its PONG comes once it has executed everything
    before: the frame, with its wait for the screen (the panel's DMA of the
-   frame before, or HDMI's vertical sync). Programs pace on the Zero's frames
+   frame before, or HDMI's vertical sync). Programs pace on the RPi's frames
    as on the Pico's FRAME pulses; frame_count counts these. */
 static uint32_t frames_waited;
 

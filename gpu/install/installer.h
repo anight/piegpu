@@ -1,7 +1,7 @@
 //
 // installer.h
 //
-// Puts files on the Zero's SD card for the host (web/installer: the page that
+// Puts files on the RPi's SD card for the host (web/installer: the page that
 // installs pico-gpu), over the USB serial link (devtools/devlink) in text
 // lines, between the log's lines:
 //

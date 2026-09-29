@@ -75,7 +75,7 @@ GLint a_pos, a_uv, a_color, u_mode, u_flat, u_rows;
 // the water: its program, the scene's water state, and the previous frame to
 // mirror: with water the scene is drawn into one of two textures (frame
 // buffer objects) and that onto the panel; the next frame mirrors it. All
-// GPU work: copying the panel into a texture costs the Zero's ARM ~15 ms.
+// GPU work: copying the panel into a texture costs the RPi's ARM ~15 ms.
 GLuint water_program, frame_texture[2], frame_buffer[2];
 GLint w_pos, w_uv, w_color, w_water, w_water2, w_colour, w_sky_rows;
 bool frame_valid, water_drawn, offscreen;

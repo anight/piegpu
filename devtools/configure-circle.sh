@@ -10,6 +10,9 @@
 #           tree is made from ./circle (the same commit) and patches/ if it
 #           isn't there.
 #
+# These two are the boards pico-gpu supports for now; more RPi boards are to
+# come.
+#
 # Circle builds in its source tree, so each board has its own. Toolchains:
 # Arm GNU 15.2 (arm-none-eabi for zero, aarch64-none-elf for zero2) in
 # ~/toolchains; Circle takes the architecture from the prefix.
@@ -20,7 +23,7 @@
 # include/circle/sysconfig.h, HEAP_BLOCK_BUCKET_SIZES). The gpu app allocates
 # textures (up to ~22 MB with mipmaps at 2048x2048), buffers and depth/stencil
 # storage from the heap, and GL programs create and delete them all the time:
-# with the default buckets the dEQP texture tests ran the Zero out of memory
+# with the default buckets the dEQP texture tests ran the RPi out of memory
 # within minutes. PGPU_HEAP_BUCKETS tells the gpu app it was built this way
 # (gpu/textures.cpp).
 #

@@ -1,5 +1,5 @@
 //
-// gpu: the Pi Zero side of the Pico GPU (docs/protocol.md).
+// gpu: the RPi side of the Pico GPU (docs/protocol.md).
 // Receives the command stream from the host over a link (link/: the Pico's
 // I2S, or a PC over USB) and renders with the V3D to an output (display/: the
 // ST7789 panel, or HDMI: by default HDMI while a monitor is connected, else
@@ -288,6 +288,16 @@ TShutdownMode CKernel::Run (void)
 {
 	LOGNOTE ("Compile time: " __DATE__ " " __TIME__);
 	LOGNOTE ("Build: %s", GetBuildInfo ());
+	// supported for now: the Zero / Zero W and the Zero 2 W (other RPi boards
+	// may run this build, but nothing is verified on them: the HDMI hot-plug
+	// line, for one, is a guess there)
+	TMachineModel Model = CMachineInfo::Get ()->GetMachineModel ();
+	if (   Model != MachineModelZero && Model != MachineModelZeroW
+	    && Model != MachineModelZero2W)
+	{
+		LOGWARN ("%s isn't supported yet (for now: the Zero / Zero W and the Zero 2 W)",
+			 CMachineInfo::Get ()->GetMachineName ());
+	}
 	LOGNOTE ("Core clock %u MHz", CMachineInfo::Get ()->GetClockRate (CLOCK_ID_CORE) / 1000000);
 	// the firmware's throttle flags (under-voltage and so on, since boot)
 	LOGNOTE ("Throttled %05X", GetThrottled ());

@@ -10,7 +10,9 @@
 #include <circle/util.h>
 
 // the hot-plug line, low while connected: GPIO46 on a Zero (seen on ours),
-// GPIO28 on a Zero 2 W (Raspberry Pi's bcm2710-rpi-zero-2-w.dts: hpd-gpios)
+// GPIO28 on a Zero 2 W (Raspberry Pi's bcm2710-rpi-zero-2-w.dts: hpd-gpios).
+// Only these two boards are supported for now: another one gets the Zero's
+// pin, unverified (kernel.cpp warns at boot).
 #define HPD_PIN_ZERO		46
 #define HPD_PIN_ZERO2		28
 

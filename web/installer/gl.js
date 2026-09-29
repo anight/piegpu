@@ -1,4 +1,4 @@
-// gl.js - a demo compiled to WebAssembly (hosts/web: gears) driving the Zero
+// gl.js - a demo compiled to WebAssembly (hosts/web: gears) driving the RPi
 // over the page's serial port. The demo's transport (transports/pc-usb/
 // pgpu_host.c, built with Emscripten) calls Module.glIO: a GLStream, which
 // holds what the port has received and writes to the port. The demo runs

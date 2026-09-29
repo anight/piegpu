@@ -1,7 +1,7 @@
 //
 // pgpugadget.h
 //
-// The Zero's USB device for the gpu app: one composite device with
+// The RPi's USB device for the gpu app: one composite device with
 //  - a serial port (CDC ACM, interfaces 0 and 1: devlink's log, the installer,
 //    the PC's GL stream), as Circle's CUSBCDCGadget has it;
 //  - a vendor interface (2, class FF, subclass 'P', protocol 'G') with a bulk

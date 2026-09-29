@@ -9,20 +9,20 @@
  * made for continuous audio, it keeps filling a partly written buffer across
  * calls and takes the oldest sent buffer next, which on a link that idles
  * between batches can be the one the DMA sends at that moment - measured:
- * stray words at the Zero and packets lost without a CRC error.
+ * stray words at the RPi and packets lost without a CRC error.
  * The RX channel, on the same BCLK and WS, receives the reply stream: a task
  * on core 1 copies it into a ring and runs the shared parser (pgpu_rx_parse,
  * pgpu.c). FRAME counts in a GPIO interrupt.
  *
  * Pins (Waveshare ESP32-P4-Module-DEV-KIT, 40-pin header, Pi numbering):
  *
- *	BCLK	GPIO20	pin 13	-> Zero pin 12 (GPIO18, PCM_CLK)
- *	DATA	GPIO21	pin 11	-> Zero pin 38 (GPIO20, PCM_DIN)
- *	FS	GPIO22	pin 12	-> Zero pin 35 (GPIO19, PCM_FS)
- *	REPLY	GPIO23	pin 7	<- Zero pin 40 (GPIO21, PCM_DOUT)
- *	READY	GPIO4	pin 18	<- Zero pin 36 (GPIO16), 10k pull-down to GND
- *	FRAME	GPIO5	pin 16	<- Zero pin 37 (GPIO26)
- *	GND		9, 14, 20, 25	-- Zero 39, 34
+ *	BCLK	GPIO20	pin 13	-> RPi pin 12 (GPIO18, PCM_CLK)
+ *	DATA	GPIO21	pin 11	-> RPi pin 38 (GPIO20, PCM_DIN)
+ *	FS	GPIO22	pin 12	-> RPi pin 35 (GPIO19, PCM_FS)
+ *	REPLY	GPIO23	pin 7	<- RPi pin 40 (GPIO21, PCM_DOUT)
+ *	READY	GPIO4	pin 18	<- RPi pin 36 (GPIO16), 10k pull-down to GND
+ *	FRAME	GPIO5	pin 16	<- RPi pin 37 (GPIO26)
+ *	GND		9, 14, 20, 25	-- RPi 39, 34
  *
  * Bit clock: the I2S driver divides its source by at least 2 to MCLK, and
  * MCLK by 2 (mclk_multiple 128) to BCLK. Chips from revision v3.0 on: the
@@ -35,7 +35,7 @@
  *
  * Flow control: READY promises room for one maximum-size batch (16 KB). What
  * the TX ring and DMA still hold (at most 32 + 4 KB) is on its way on top of
- * that; the Zero drops READY while 128 KB are still free, so that is covered.
+ * that; the RPi drops READY while 128 KB are still free, so that is covered.
  */
 #include "pgpu_link.h"
 #include <string.h>
@@ -154,7 +154,7 @@ void pgpu_link_init (void)
 {
 	parser_lock = xSemaphoreCreateMutex ();
 
-	/* READY and FRAME from the Zero (READY has an external 10k pull-down) */
+	/* READY and FRAME from the RPi (READY has an external 10k pull-down) */
 	gpio_config_t in = {
 		.pin_bit_mask = 1ull << PIN_READY,
 		.mode = GPIO_MODE_INPUT,
@@ -228,7 +228,7 @@ void pgpu_link_init (void)
 
 void pgpu_link_send (const uint32_t *words, uint32_t n)
 {
-	/* READY high: the Zero has room for a maximum-size batch */
+	/* READY high: the RPi has room for a maximum-size batch */
 	uint64_t wait_start = esp_timer_get_time ();
 	while (!gpio_get_level (PIN_READY))
 	{

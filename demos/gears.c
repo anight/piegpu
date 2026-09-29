@@ -4,8 +4,8 @@
  * GL ES 2.0: one precompiled program (shaders/gears.*, lit per pixel), a
  * vertex buffer per gear, three draws per frame.
  *
- * A HUD (hud.c) shows the frame rate, the load of the V3D, of the Zero's ARM
- * and of the Pico, and the V3D time and panel wait per frame; the Zero
+ * A HUD (hud.c) shows the frame rate, the load of the V3D, of the RPi's ARM
+ * and of the Pico, and the V3D time and panel wait per frame; the RPi
  * measures its part (STATUS, docs/protocol.md 9). The console (UART) prints
  * the same every 5 seconds.
  */
@@ -194,7 +194,7 @@ int main (void)
 {
 	stdio_init_all ();
 	pgpu_init ();
-	printf ("\ngears: waiting for the Zero (READY)...\n");
+	printf ("\ngears: waiting for the RPi (READY)...\n");
 	while (!pgpu_wait_ready (1000))
 	{
 	}
@@ -205,7 +205,7 @@ int main (void)
 	}
 	if (tries == 5)
 	{
-		printf ("gears: no answer from the Zero\n");
+		printf ("gears: no answer from the RPi\n");
 	}
 
 	GLuint prog = glCreateProgram ();

@@ -8,11 +8,12 @@
 #   gears breakout flight
 #   toy-NAME            Shadertoy-style: shaders/toy_NAME.frag; a game has
 #                       NAME.c (pong, snake, asteroids)
-#   video               an MP4 played by the Zero's decoder into a texture:
+#   video               an MP4 played by the RPi's decoder into a texture:
 #                       PGPU_VIDEO_MP4 (default: a 720p test pattern made with
 #                       ffmpeg), linked in
 #
-# The Jet demos (demos/jet) are C++ with their own runtime: hosts/pico only.
+# The Jet demos (demos/jet) are C++ with their own runtime: demos/jet/jet.cmake
+# (hosts/pico and hosts/esp32p4).
 include(${CMAKE_CURRENT_LIST_DIR}/../libpgpu/pgpu_sources.cmake)
 
 set(PGPU_DEMOS ${CMAKE_CURRENT_LIST_DIR})

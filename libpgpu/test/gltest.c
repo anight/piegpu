@@ -82,7 +82,7 @@ static bool near (uint32_t c, int r, int g, int b, int a, int tol)
 		CHECK (e_ == (expected), "%s: error %04x, expected %04x", what, e_, (unsigned) (expected)); \
 	} while (0)
 
-#define MAX_TEST_TEXTURE	128	/* a Zero texture id pgl doesn't use here */
+#define MAX_TEST_TEXTURE	128	/* an RPi texture id pgl doesn't use here */
 
 struct pc_vertex { float x, y; uint8_t rgba[4]; };
 
@@ -309,7 +309,7 @@ unsigned gl_self_test (void)
 	glDrawElements (GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, (void *) 0);
 	glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, 0);
 
-	/* more vertices than the Zero takes per draw (65535): degenerate
+	/* more vertices than the RPi takes per draw (65535): degenerate
 	   triangles at (0, 0), then a quad; a strip (split with overlap) and a list */
 	GLuint big[2];
 	glGenBuffers (2, big);
@@ -655,14 +655,14 @@ unsigned gl_self_test (void)
 	glCompileShader (shader);
 	CHECK_ERROR (compiler ? GL_NO_ERROR : GL_INVALID_OPERATION, "glCompileShader");
 	glDeleteShader (shader);
-	pgpu_texture_params (MAX_TEST_TEXTURE, 0, 0, 0, 0);	/* no such texture: the Zero reports it */
+	pgpu_texture_params (MAX_TEST_TEXTURE, 0, 0, 0, 0);	/* no such texture: the RPi reports it */
 	glFinish ();
-	uint32_t zero_error[3];
-	pglGetZeroError (zero_error);
+	uint32_t rpi_error[3];
+	pglGetRPiError (rpi_error);
 	CHECK_ERROR (GL_INVALID_OPERATION, "an ERROR reply");
-	CHECK (zero_error[0] == PGPU_ERR_OBJECT && zero_error[1] == PGPU_OP_TEXTURE_PARAMS,
-	       "Zero error %lu %02lx %lu", (unsigned long) zero_error[0],
-	       (unsigned long) zero_error[1], (unsigned long) zero_error[2]);
+	CHECK (rpi_error[0] == PGPU_ERR_OBJECT && rpi_error[1] == PGPU_OP_TEXTURE_PARAMS,
+	       "RPi error %lu %02lx %lu", (unsigned long) rpi_error[0],
+	       (unsigned long) rpi_error[1], (unsigned long) rpi_error[2]);
 	glUseProgram (0);
 
 	/* ---- the panel ---- */

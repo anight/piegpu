@@ -1,9 +1,10 @@
 # hosts/web - a web page as the host: the demos compiled to WebAssembly
-# (Emscripten), their commands going to the Zero over the page's Web Serial
-# port (web/installer: its "Run gears" button; web/installer/gl.js). The
-# transport is the PC's serial one (transports/pc-usb/pgpu_host.c) with the
-# page moving the bytes; the demos' blocking waits run with Asyncify. Shaders
-# are precompiled at build time (tools/glslc), as for the Pico.
+# (Emscripten), their commands going to the RPi over the page's Web Serial
+# port (web/installer: its Test OpenGL and Test video buttons; web/installer/
+# gl.js). The transport is the PC's serial one (transports/pc-usb/
+# pgpu_host.c) with the page moving the bytes; the demos' blocking waits run
+# with Asyncify. Shaders are precompiled at build time (tools/glslc), as for
+# the Pico.
 #
 #   source ~/emsdk/emsdk_env.sh
 #   emcmake cmake -S hosts/web -B hosts/web/build && make -C hosts/web/build

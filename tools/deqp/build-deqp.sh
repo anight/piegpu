@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Build dEQP-GLES2 (the Khronos VK-GL-CTS) for pgl on the PC: the tests' GL
-# calls go through pgl (hosts/pc) to the Zero over USB.
+# calls go through pgl (hosts/pc) to the RPi over USB.
 #
 # Result: third_party/deqp-build/modules/gles2/deqp-gles2 (run it with
 # tools/deqp/run-deqp.sh). Needs the host pgl build (hosts/pc/build).

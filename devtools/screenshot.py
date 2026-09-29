@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Extract a screenshot dumped by the gpu app (PGPU_OP_DEBUG_SCREENSHOT) from
-a Zero log file and write it as PNG.
+an RPi log file and write it as PNG.
 
 usage: devtools/screenshot.py [log] [out.png] [--scale N] [--index N]
   --index: which screenshot in the log (0 = first, default: the last)

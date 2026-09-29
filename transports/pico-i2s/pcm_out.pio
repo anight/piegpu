@@ -46,7 +46,7 @@ static inline void pcm_out_program_init (PIO pio, uint sm, uint offset,
 %}
 
 ;
-; pcm_in - samples the Zero's reply line (GP19) once per bit clock period.
+; pcm_in - samples the RPi's reply line (GP19) once per bit clock period.
 ; Runs with the same clock divider as pcm_out and is started in the same
 ; cycle, so it stays in lockstep with the bit clock: pcm_out drives BCLK high
 ; on even cycles (counted from the start) and low on odd ones. Starting at

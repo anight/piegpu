@@ -1,15 +1,15 @@
 /*
  * video.c - an MP4 played by the GPU: its H.264 track (pgpu_mp4) goes to the
- * Zero's decoder sample by sample as it is in the file (pgpu_video_sample_read:
+ * RPi's decoder sample by sample as it is in the file (pgpu_video_sample_read:
  * from the file straight into the link's packets; a file on an SD card would
  * be read the same way, with its own pgpu_read_t), the video is a texture
  * (pglVideoTexture) drawn on a quad over the screen, letterboxed, with the HUD
  * over it. The MP4 is a file (PGPU_VIDEO_PATH, a host with a filesystem: the
  * ESP32-P4's microSD card) read as it's needed, or else linked in (demos.cmake:
  * PGPU_VIDEO_MP4). It loops: the
- * next round's times follow on, so the Zero's clock just runs.
+ * next round's times follow on, so the RPi's clock just runs.
  *
- * The samples go as far ahead as the Zero's buffer takes (pgpu_video_room),
+ * The samples go as far ahead as the RPi's buffer takes (pgpu_video_room),
  * at most AHEAD_US of video ahead of the frame on screen.
  */
 #include <stdio.h>
@@ -76,7 +76,7 @@ int main (void)
 {
 	stdio_init_all ();
 	pgpu_init ();
-	printf ("\nvideo: waiting for the Zero (READY)...\n");
+	printf ("\nvideo: waiting for the RPi (READY)...\n");
 	while (!pgpu_wait_ready (1000))
 	{
 	}
@@ -192,7 +192,7 @@ int main (void)
 			printf ("video: texture %ux%u\n", tex_w, tex_h);
 		}
 
-		/* samples: as many as the Zero takes, up to AHEAD_US ahead */
+		/* samples: as many as the RPi takes, up to AHEAD_US ahead */
 		pgpu_video_status_t st;
 		pgpu_video_get_status (STREAM, &st);
 		int64_t shown = st.shown_pts == PGPU_VIDEO_TIME_NONE ? 0 : st.shown_pts;

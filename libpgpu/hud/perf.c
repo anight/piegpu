@@ -29,7 +29,7 @@ bool perf_frame (uint32_t wait, perf_t *m)
 	while (pgpu_poll_reply (&r))		/* (replies nobody waits for: as before) */
 	{
 	}
-	pgpu_last_status (&status);		/* the Zero's last second: kept aside, so a
+	pgpu_last_status (&status);		/* the RPi's last second: kept aside, so a
 						   wait for another reply (the PC's frame
 						   pacing) can't lose it */
 
@@ -49,7 +49,7 @@ bool perf_frame (uint32_t wait, perf_t *m)
 		m->panel_ms = status.panel_wait_us / 1000.0f / n;
 	}
 
-	/* the Zero's numbers for the next second */
+	/* the RPi's numbers for the next second */
 	pgpu_request_status ();
 	pgpu_flush ();
 	frames = 0;

@@ -105,7 +105,7 @@ index efc9832..db0eff8 100644
 -                caps->max_const_buffer0_size = 16 * 1024 * sizeof(float);
 +                /* pico-gpu: pgl's limits, so the shaders' gl_Max* constants
 +                 * match glGetIntegerv: 512 uniform vectors per stage (the
-+                 * Zero's uniform storage is 4096 words). st_extensions.c
++                 * RPi's uniform storage is 4096 words). st_extensions.c
 +                 * reserves room for lowered state out of this - 8 clip
 +                 * planes in the VS, the alpha test value in the FS (measured:
 +                 * 504 and 511 vectors without these), which GLES 2.0

@@ -536,7 +536,7 @@ int main (void)
 {
 	stdio_init_all ();
 	pgpu_init ();
-	printf ("\nbreakout: waiting for the Zero (READY)...\n");
+	printf ("\nbreakout: waiting for the RPi (READY)...\n");
 	while (!pgpu_wait_ready (1000))
 	{
 	}

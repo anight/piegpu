@@ -1,4 +1,4 @@
-// settings.js - the pico-gpu settings as the Zero reads them: config.txt (the
+// settings.js - the pico-gpu settings as the RPi reads them: config.txt (the
 // firmware's: memory, clocks, the HDMI mode) and cmdline.txt (the gpu app's
 // options, docs/protocol.md 14 / README "Kernel command line"), and back
 // from the files on a card.
@@ -25,7 +25,8 @@ export function makeCmdline (s)
 	return options.join (' ') + '\n';
 }
 
-// the boards pico-gpu is built for (web/installer/make-firmware.sh)
+// the boards pico-gpu supports for now, and is built for (web/installer/
+// make-firmware.sh); more RPi boards are to come
 export const BOARDS = {zero: 'Raspberry Pi Zero / Zero W', zero2: 'Raspberry Pi Zero 2 W'};
 
 // board: 'zero' (32 bit, kernel.img), 'zero2' (64 bit, kernel8.img), or 'any'

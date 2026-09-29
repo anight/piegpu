@@ -1,7 +1,7 @@
 /*
- * pgpu_protocol.h - Pico -> Zero GPU command protocol, version 1
+ * pgpu_protocol.h - Pico -> RPi GPU command protocol, version 1
  *
- * Shared by the Zero (C++, Circle) and the Pico (C, Pico SDK).
+ * Shared by the RPi (C++, Circle) and the Pico (C, Pico SDK).
  * Normative description: docs/protocol.md
  */
 #ifndef PGPU_PROTOCOL_H
@@ -115,7 +115,7 @@ enum pgpu_opcode
 	PGPU_OP_VIDEO_GET_STATUS = 0xC3,
 
 	/* debug */
-	PGPU_OP_DEBUG_SCREENSHOT = 0xF0		/* dump the last presented frame to the Zero's USB log */
+	PGPU_OP_DEBUG_SCREENSHOT = 0xF0		/* dump the last presented frame to the RPi's USB log */
 };
 
 /* ---- replies (section 9) ------------------------------------------------- */

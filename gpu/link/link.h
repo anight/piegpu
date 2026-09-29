@@ -4,7 +4,7 @@
 // A link from the host: the command stream in, replies out (docs/protocol.md
 // 4 and 9). The kernel takes packets from the first active link of its list
 // and hands the Commands the link to reply on. i2s_link: the Pico's I2S (PCM
-// slave); usb_link: a PC over the Zero's USB (tests). A new transport (USB 2,
+// slave); usb_link: a PC over the RPi's USB (tests). A new transport (USB 2,
 // ...) is another class of this kind.
 //
 #ifndef _link_h

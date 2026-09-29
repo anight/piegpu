@@ -219,7 +219,7 @@ int main (void)
 {
 	stdio_init_all ();
 	pgpu_init ();
-	printf ("\nflight: waiting for the Zero (READY)...\n");
+	printf ("\nflight: waiting for the RPi (READY)...\n");
 	while (!pgpu_wait_ready (1000))
 	{
 	}

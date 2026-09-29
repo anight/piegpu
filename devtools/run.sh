@@ -1,6 +1,7 @@
 #!/bin/bash
 #
-# Build a Circle app, boot it on the Pi Zero over USB and capture its log.
+# Build a Circle app, boot it on the RPi over USB and capture its log. Verified
+# on a Zero (32 bit, kernel.img); a Zero 2 W didn't start over USB here.
 #
 #   devtools/run.sh <app-dir> [log-seconds]   build, boot, capture log (default 10 s, 0 = boot only)
 #   devtools/run.sh --log [log-seconds]        only capture the log of the running app
@@ -9,7 +10,7 @@
 #   devtools/run.sh --shot                     only get a screenshot from the running gpu app
 #                                              (devtools/logs/screenshot.png)
 #
-# The Pi Zero is connected with its "USB" port (no SD card inserted), so its boot ROM
+# The RPi is connected with its "USB" port (no SD card inserted), so its boot ROM
 # waits for rpiboot. Apps must use CDevLink (devtools/devlink.h), which provides the
 # log over USB serial, the reboot magic and a watchdog.
 #

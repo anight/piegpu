@@ -1,5 +1,5 @@
 # hosts/pc - a PC as the host: pgl (the GL ES 2.0 / 1.1 API) with the
-# commands going to the Zero over its USB link (../../transports/pc-usb) and
+# commands going to the RPi over its USB link (../../transports/pc-usb) and
 # GLSL compiled at run time (tools/glslc). For tests: libpgl.a for dEQP
 # (tools/deqp), gltest_host (self test 8), compile_test.
 cmake_minimum_required(VERSION 3.13)
@@ -21,7 +21,7 @@ target_compile_definitions(pgl PRIVATE PGL_GLSLC="${ROOT}/tools/glslc/glslc.py")
 target_include_directories(pgl PUBLIC ${ROOT}/libpgpu ${ROOT}/libpgpu/gles ${ROOT}/protocol)
 set_property(TARGET pgl PROPERTY POSITION_INDEPENDENT_CODE ON)
 target_compile_options(pgl PRIVATE -Wall -Wno-unused-parameter)
-# the Zero's GL interface
+# the RPi's GL interface
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
 target_include_directories(pgl PRIVATE ${LIBUSB_INCLUDE_DIRS})
@@ -41,7 +41,7 @@ pgpu_glsl_program(TARGET gltest_host NAME builtin DIR ${ROOT}/libpgpu/test
 add_executable(compile_test compile_test.c)
 target_link_libraries(compile_test pgl)
 
-# video: an MP4's H.264 track played by the Zero into a texture (videoplay FILE.mp4)
+# video: an MP4's H.264 track played by the RPi into a texture (videoplay FILE.mp4)
 add_executable(videoplay videoplay.c)
 target_link_libraries(videoplay pgl)
 

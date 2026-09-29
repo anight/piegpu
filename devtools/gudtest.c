@@ -1,5 +1,5 @@
 /*
- * gudtest.c - drives the Zero's USB monitor (GUD, gpu/display/gud_display)
+ * gudtest.c - drives the RPi's USB monitor (GUD, gpu/display/gud_display)
  * from a Linux PC through DRM, without a desktop using it: a test pattern
  * (colour bars, a border, a grid), then two measurements, each update
  * flushed by DRM_IOCTL_MODE_DIRTYFB (with the gud driver's default

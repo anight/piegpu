@@ -17,7 +17,7 @@ usage:
          program to draw every primitive type; -v limits the blob to some)
 
 Attribute locations are in -a order. The attribute formats are the fast
-path: the Zero converts arrays of other types and sizes. Each variant has
+path: the RPi converts arrays of other types and sizes. Each variant has
 two fragment shader endings (plain, and blending / colour mask from
 uniforms), so every blend state works with every program.
 """
@@ -65,14 +65,14 @@ FLOAT_TYPES = {0x1406, 0x8B50, 0x8B51, 0x8B52, 0x8B5A, 0x8B5B, 0x8B5C}
 INT_TYPES = {0x1404, 0x8B53, 0x8B54, 0x8B55}
 BOOL_TYPES = {0x8B56, 0x8B57, 0x8B58, 0x8B59}
 
-# Mesa built-in state variables the Zero provides -> pgpu uniform kind
+# Mesa built-in state variables the RPi provides -> pgpu uniform kind
 STATE_KINDS = {
     'state.FbWposYTransform': 32,	# gl_FragCoord
     'state.depth.range': 33,		# gl_DepthRange
     'state.FbPntcYTransform': 34,	# gl_PointCoord
 }
 
-# uniform kinds the Zero implements (protocol/pgpu_program.h)
+# uniform kinds the RPi implements (protocol/pgpu_program.h)
 SUPPORTED_KINDS = {
     'QUNIFORM_CONSTANT', 'QUNIFORM_UNIFORM',
     'QUNIFORM_VIEWPORT_X_SCALE', 'QUNIFORM_VIEWPORT_Y_SCALE',
@@ -147,7 +147,7 @@ def vpm_writes(code):
 # blending disabled: they end by writing the colour, packed BGRA, to
 # tlb_color_all (conditionally, for discard), followed by the program end.
 # That write is redirected into an accumulator, and one of two endings is
-# appended that writes the tile buffer in the Zero's order (R in byte 0):
+# appended that writes the tile buffer in the RPi's order (R in byte 0):
 #   plain:   reorder the bytes (blending off, colour mask all on)
 #   generic: blending and colour mask from 48 uniforms: per channel c
 #            F = k0 + k1 As + k2 Ad + k3 Sc + k4 Dc + k5 min (As, 1 - Ad)
@@ -539,14 +539,14 @@ def compile_program(args):
         idx = []
         for stage in ('fs', 'vs', 'cs'):
             o = used[stage]
-            o['stream'] = []		# (kind, data) as the Zero gets them
+            o['stream'] = []		# (kind, data) as the RPi gets them
             stage_units = {}		# Mesa's sampler index in this stage -> harness unit
             for kind, data, value in o['uniforms']:
                 o['stream'].append([kind, data, value])
                 kname = kind_names.get(kind, f'#{kind}')
                 kinds_used.add(kname)
                 if kname not in SUPPORTED_KINDS:
-                    fail(f'the {stage.upper()} uses {kname}, which the Zero does not implement')
+                    fail(f'the {stage.upper()} uses {kname}, which the RPi does not implement')
                 if kname == 'QUNIFORM_UNIFORM':
                     f = struct.unpack('<f', struct.pack('<I', value))[0]
                     layout = layout_words['f' if stage == 'fs' else 'v'].get(data)
@@ -572,7 +572,7 @@ def compile_program(args):
                             fail(f'{stage} uniform word {data} (value {value:#x}) matches no uniform')
                         if param[0] not in STATE_KINDS:
                             fail(f'the {stage.upper()} reads built-in GL state {param[0]}, '
-                                 f'which the Zero does not provide')
+                                 f'which the RPi does not provide')
                         o['stream'][-1][:2] = [STATE_KINDS[param[0]], param[1]]
                         continue
                     slots = uniform_slots['f' if stage == 'fs' else 'v']
@@ -590,7 +590,7 @@ def compile_program(args):
                     if stage_units.setdefault(data, unit) != unit:
                         fail(f'{stage} sampler {data} reads two units')
             # Mesa numbers each stage's samplers apart (VS and FS both from
-            # 0); the Zero has one table per program: the index is the
+            # 0); the RPi has one table per program: the index is the
             # sampler's harness unit, which names each element of each
             # sampler uniform once
             for e in o['stream']:
@@ -665,7 +665,7 @@ def compile_program(args):
         else:
             # Mesa numbers the attributes the VS reads (vertex elements) in
             # the order of their locations: element k is the k-th set bit of
-            # the VS inputs; the blob and the Zero use GL locations
+            # the VS inputs; the blob and the RPi use GL locations
             locs = [b - VERT_ATTRIB_GENERIC0 if b >= VERT_ATTRIB_GENERIC0 else 0
                     for b in range(64) if o['inputs_read'] >> b & 1]
             if not locs:

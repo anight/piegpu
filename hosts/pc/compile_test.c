@@ -1,6 +1,6 @@
 /*
  * compile_test.c - pgl's shader compiler on the PC: GLSL source compiled at
- * run time (glShaderSource, glCompileShader, glLinkProgram), drawn by the Zero
+ * run time (glShaderSource, glCompileShader, glLinkProgram), drawn by the RPi
  */
 #include <stdio.h>
 #include <string.h>
@@ -75,9 +75,9 @@ int main (void)
 	CHECK (q[0] < 8 && q[1] < 8 && q[2] < 8, "outside %d %d %d", q[0], q[1], q[2]);
 	glFinish ();
 	uint32_t ze[3];
-	pglGetZeroError (ze);
+	pglGetRPiError (ze);
 	GLenum e = glGetError ();
-	CHECK (e == GL_NO_ERROR, "GL error %04x (Zero %u %02x %u)", e, ze[0], ze[1], ze[2]);
+	CHECK (e == GL_NO_ERROR, "GL error %04x (RPi %u %02x %u)", e, ze[0], ze[1], ze[2]);
 	pglSwapBuffers ();
 
 	printf ("compile_test: %u failed\n", failures);

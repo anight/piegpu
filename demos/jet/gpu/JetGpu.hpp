@@ -1,4 +1,4 @@
-// JetGpu.hpp - Jet's pixel work on the Pi Zero's V3D (through pgl).
+// JetGpu.hpp - Jet's pixel work on the RPi's V3D (through pgl).
 //
 // Jet transforms, lights and queues triangles on the Pico as before; where it
 // would write pixels, the GPU does instead:

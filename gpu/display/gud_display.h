@@ -1,9 +1,9 @@
 //
 // gud_display.h
 //
-// The Zero as a monitor for a Linux PC, over its USB port: the device side
+// The RPi as a monitor for a Linux PC, over its USB port: the device side
 // of GUD, the Linux kernel's Generic USB Display (drivers/gpu/drm/gud; the
-// protocol: include/drm/gud.h). The PC's desktop shows on the screen the Zero
+// protocol: include/drm/gud.h). The PC's desktop shows on the screen the RPi
 // has now (the panel or HDMI) while the PC has the display enabled; the GL
 // host's frames are rendered off screen meanwhile (the kernel's choice).
 //

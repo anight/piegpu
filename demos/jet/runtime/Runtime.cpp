@@ -96,7 +96,7 @@ void start (Init init, Update update, Update afterRender, RenderEffects renderEf
 	hud (perf);
 	absolute_time_t last = get_absolute_time ();
 	unsigned windows = 0;
-	/* one frame in flight: the Pico builds the next frame while the Zero
+	/* one frame in flight: the Pico builds the next frame while the RPi
 	   renders this one (FRAME pulses count the presented frames) */
 	uint32_t sent = 0, presented_base = pgpu_frame_count ();
 #if JET_PROFILE

@@ -3,7 +3,7 @@
  * GPU's video (pgpu_video_*): the samples in decode order with their
  * presentation times, where they are in the file, and the avcC (the decoder's
  * configuration, for pgpu_video_open with PGPU_VIDEO_AVCC). The samples go to
- * the Zero as they are (NAL units with length prefixes).
+ * the RPi as they are (NAL units with length prefixes).
  *
  * The file is read through a callback (pgpu_read_t: an offset and a size, so a
  * file on an SD card is read by the filesystem as it's needed): the boxes by

@@ -1,8 +1,8 @@
 //
 // hdmi_output.h
 //
-// HDMI (the Zero's mini-HDMI): the firmware's framebuffer (Circle's
-// CBcmFrameBuffer), RGB565 of any size - the firmware scales it to the HDMI
+// HDMI (the RPi's HDMI port: mini-HDMI on the Zeros): the firmware's
+// framebuffer (Circle's CBcmFrameBuffer), RGB565 of any size - the firmware scales it to the HDMI
 // mode - with three pages, which the renderer draws into directly
 // (GetBuffers): Show makes a page the one on screen from the next vertical
 // sync (SetVirtualOffset), WaitIdle waits for that sync: it watches the

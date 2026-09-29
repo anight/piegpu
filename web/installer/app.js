@@ -1,5 +1,5 @@
-// app.js - the installer page: connects to the Zero (Web Serial to a running
-// pico-gpu, or WebUSB to start a blank Zero first: rpiboot.js), shows its
+// app.js - the installer page: connects to the RPi (Web Serial to a running
+// pico-gpu, or WebUSB to start a blank RPi first: rpiboot.js), shows its
 // card, and writes the firmware and the settings onto it (pgi.js).
 
 import {USB_FILTERS, bootStage, waitForBootDevice} from './rpiboot.js';
@@ -129,7 +129,9 @@ async function loadManifest ()
 }
 
 // 'zero' or 'zero2': the board a running pico-gpu reports (INFO; an older one
-// doesn't say: a Zero); null before one has answered
+// doesn't say: a Zero); null before one has answered. Only these two are
+// supported for now (BOARDS): another board counts as a Zero, and the board
+// facts say it isn't supported
 function currentBoard ()
 {
 	if (!card)
@@ -209,7 +211,7 @@ async function attach (port, onLine = log)
 			updateButtons ();
 			if (!busy)
 			{
-				status ('connect-status', 'The Zero went away.', 'warn');
+				status ('connect-status', 'The RPi went away.', 'warn');
 			}
 		}
 	});
@@ -235,7 +237,7 @@ async function openInstaller (port)
 		}
 		status ('connect-status', 'pico-gpu doesn\'t answer (busy with GL commands?): restarting it…', 'warn');
 		const connection = installer;
-		await restartZero (() => connection.restart ());
+		await restartRPi (() => connection.restart ());
 		await refreshCard (true);
 		status ('connect-status', 'Connected to pico-gpu (restarted).', 'ok');
 	}
@@ -299,7 +301,7 @@ async function bootBlank ()
 			device = await waitForBootDevice (5000);
 			if (!device)
 			{
-				status ('connect-status', 'The Zero is ready for the next step. Press Continue and pick it again.', 'warn');
+				status ('connect-status', 'The RPi is ready for the next step. Press Continue and pick it again.', 'warn');
 				device = await pickAgain (() => navigator.usb.requestDevice ({filters: USB_FILTERS}));
 			}
 		}
@@ -364,11 +366,12 @@ async function refreshCard (loadSettings)
 	$('card-retry').hidden = true;
 	$('format').hidden = true;
 	add ('Type', card.board ? `${card.board}${card.ramMB ? `, ${card.ramMB} MB` : ''} (revision ${card.revision})`
+				  + (/Zero/.test (card.board) ? '' : ': not supported yet (for now: the Zero / Zero W and the Zero 2 W)')
 				: "unknown (this pico-gpu doesn't say: install to see it)");
 	if (!card.card)
 	{
 		add ('SD card', 'none found');
-		status ('card-status', 'Put the microSD card in the Zero now, then press the button.', 'warn');
+		status ('card-status', 'Put the microSD card in the RPi now, then press the button.', 'warn');
 		$('card-retry').hidden = false;
 	}
 	else
@@ -393,7 +396,7 @@ async function refreshCard (loadSettings)
 		else
 		{
 			add ('SD card', facts.join (' · '));
-			status ('card-status', 'The card has no FAT file system, which the Zero needs to start from it. '
+			status ('card-status', 'The card has no FAT file system, which the RPi needs to start from it. '
 				+ 'Formatting erases everything on it.', 'warn');
 			$('format').hidden = false;
 		}
@@ -423,7 +426,7 @@ function describeInstalled ()
 
 async function format ()
 {
-	if (!confirm (`Erase everything on the ${mb (card.sizeMB)} card in the Zero and make it one FAT32 partition?`))
+	if (!confirm (`Erase everything on the ${mb (card.sizeMB)} card in the RPi and make it one FAT32 partition?`))
 	{
 		return;
 	}
@@ -471,24 +474,24 @@ async function install (settingsOnly)
 		log (`(page) wrote ${all.length} files, ${total} bytes, each checked by its CRC`);
 		cardHost = s.host;
 
-		status ('action-status', 'Written. Restarting the Zero from the card…');
-		const screen = await restartZero (() => installer.reboot ());
+		status ('action-status', 'Written. Restarting the RPi from the card…');
+		const screen = await restartRPi (() => installer.reboot ());
 		status ('action-status', `Done: pico-gpu started from the card.${screen ? ' ' + screen + '.' : ''}`, 'ok');
 		status ('connect-status', 'Connected to pico-gpu.', 'ok');
 	}, 'action-status');
 	$('progress').hidden = true;
 }
 
-// restart the Zero (how: a function) and connect again; returns its
+// restart the RPi (how: a function) and connect again; returns its
 // "Screen: ..." line
-async function restartZero (how)
+async function restartRPi (how)
 {
 	const waiting = waitForSerial (30000);
 	await how ();
 	const port = await waiting;
 	if (!port)
 	{
-		throw new Error ('The Zero didn\'t come back from its card within 30 s');
+		throw new Error ('The RPi didn\'t come back from its card within 30 s');
 	}
 	await new Promise (r => setTimeout (r, 500));
 	const seen = [];
@@ -504,7 +507,7 @@ async function restartZero (how)
 	return seen.pop ();
 }
 
-// ---- demos on the Zero -----------------------------------------------------------
+// ---- demos on the RPi -----------------------------------------------------------
 
 // the video the Test video button plays (web/installer/make-firmware.sh puts
 // it here: the Sintel trailer, Blender Foundation, CC BY 3.0)
@@ -514,12 +517,12 @@ let demo = null;			// the running demo's GLStream
 
 async function testOpenGL ()
 {
-	await runOnZero ('gears', 'The OpenGL test', async () => ({}));
+	await runOnRPi ('gears', 'The OpenGL test', async () => ({}));
 }
 
 async function testVideo ()
 {
-	await runOnZero ('video', 'The video', async () =>
+	await runOnRPi ('video', 'The video', async () =>
 	{
 		status ('action-status', 'Fetching the test video…');
 		const response = await fetch (TEST_VIDEO);
@@ -531,14 +534,14 @@ async function testVideo ()
 	});
 }
 
-// run demos/NAME.js (WebAssembly) on the Zero over the serial port; files ():
-// its files. Then the Zero restarts: it keeps taking commands from the
+// run demos/NAME.js (WebAssembly) on the RPi over the serial port; files ():
+// its files. Then the RPi restarts: it keeps taking commands from the
 // serial port until it does.
-async function runOnZero (name, title, files)
+async function runOnRPi (name, title, files)
 {
 	if (cardHost === 'i2s')
 	{
-		status ('action-status', 'The card has Host: I2S, so the Zero ignores commands from this page. '
+		status ('action-status', 'The card has Host: I2S, so the RPi ignores commands from this page. '
 			+ 'Choose Auto or USB above and save the settings first.', 'warn');
 		return;
 	}
@@ -573,27 +576,27 @@ async function runOnZero (name, title, files)
 			$('stop-demo').hidden = true;
 		}
 
-		status ('action-status', code ? `${title} ended with an error (see the log). Restarting the Zero…`
-				       : 'Stopped. Restarting the Zero…', code ? 'bad' : '');
-		await restartZero (() => connection.restart ());
-		status ('action-status', code ? `${title} ended with an error (see the log); the Zero restarted.`
-				       : 'Stopped; the Zero restarted.', code ? 'bad' : 'ok');
+		status ('action-status', code ? `${title} ended with an error (see the log). Restarting the RPi…`
+				       : 'Stopped. Restarting the RPi…', code ? 'bad' : '');
+		await restartRPi (() => connection.restart ());
+		status ('action-status', code ? `${title} ended with an error (see the log); the RPi restarted.`
+				       : 'Stopped; the RPi restarted.', code ? 'bad' : 'ok');
 		status ('connect-status', 'Connected to pico-gpu.', 'ok');
 	}, 'action-status');
 }
 
 // ---- reset ----------------------------------------------------------------------
 
-// restart the Zero from its card (the reboot magic: in any mode, a running
+// restart the RPi from its card (the reboot magic: in any mode, a running
 // GL stream too) and connect again
 async function reset ()
 {
 	await run (async () =>
 	{
-		status ('connect-status', 'Restarting the Zero from its card…');
+		status ('connect-status', 'Restarting the RPi from its card…');
 		const connection = installer;
-		const screen = await restartZero (() => connection.restart ());
-		status ('connect-status', `The Zero restarted; connected.${screen ? ' ' + screen + '.' : ''}`, 'ok');
+		const screen = await restartRPi (() => connection.restart ());
+		status ('connect-status', `The RPi restarted; connected.${screen ? ' ' + screen + '.' : ''}`, 'ok');
 	});
 }
 

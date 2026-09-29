@@ -2,7 +2,7 @@
  * linktest - the link at full speed, both ways, checked word by word:
  *
  * - down: 64 KB buffer uploads (BUFFER_DATA) back to back, random data; the
- *   Zero checks each packet's CRC (STATUS: crc_errors, command_errors)
+ *   RPi checks each packet's CRC (STATUS: crc_errors, command_errors)
  * - round trip: a 256x256 RGBA8888 texture of random data (a new seed each
  *   round) uploaded, then read back from a framebuffer on it (READ_PIXELS)
  *   and compared with what was sent; reply CRC errors are counted here
@@ -53,7 +53,7 @@ int main (void)
 {
 	stdio_init_all ();
 	pgpu_init ();
-	printf ("\nlinktest: waiting for the Zero (READY)...\n");
+	printf ("\nlinktest: waiting for the RPi (READY)...\n");
 	while (!pgpu_wait_ready (1000))
 	{
 	}
@@ -71,7 +71,7 @@ int main (void)
 	for (int i = 0; i < 5 && !(have_st0 = pgpu_get_status (&st0, 200)); i++)
 	{
 	}
-	printf ("linktest: %s; the Zero's counts so far: CRC errors %u, command errors %u\n",
+	printf ("linktest: %s; the RPi's counts so far: CRC errors %u, command errors %u\n",
 		have_st0 ? "STATUS read" : "no STATUS", have_st0 ? (unsigned) st0.crc_errors : 0,
 		have_st0 ? (unsigned) st0.command_errors : 0);
 
@@ -150,7 +150,7 @@ int main (void)
 			t_lost += s.reply_overruns + s.replies_lost;
 			printf ("linktest: %3u s: down %u KB/s, up %u KB/s, round trip %u KB/s; %u rounds, "
 				"%u words compared, %u wrong, %u reads failed; reply CRC errors %u, overruns %u, "
-				"lost %u; READY wait %u ms; Zero: CRC errors %d, command errors %d, CPU %d%%\n",
+				"lost %u; READY wait %u ms; RPi: CRC errors %d, command errors %d, CPU %d%%\n",
 				(unsigned) ((now - start) / 1000000),
 				(unsigned) (down_us ? down_bytes * 1000 / down_us : 0),
 				(unsigned) (up_us ? up_bytes * 1000 / up_us : 0),

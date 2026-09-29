@@ -1,6 +1,6 @@
 /*
- * gpulink demo - drives the Pi Zero GPU over the command protocol and uses
- * the fixed-function features of the Zero:
+ * gpulink demo - drives the RPi GPU over the command protocol and uses
+ * the fixed-function features of the RPi:
  *
  * - a textured, lit cube from vertex and index buffers (DRAW_ELEMENTS, u8
  *   indices, BYTE_NORM normals), a directional and an orbiting point light
@@ -366,7 +366,7 @@ static void draw_scene (float t)
 	mat_identity (identity);
 
 	/* state for the frame (re-sent every frame, so the demo recovers if the
-	   Zero reboots) */
+	   RPi reboots) */
 	pgpu_viewport (0, 0, WIDTH, HEIGHT, 0.0f, 1.0f);
 	pgpu_load_matrix (PGPU_PROJECTION, projection);
 	pgpu_load_matrix (PGPU_TEXTURE, identity);
@@ -684,7 +684,7 @@ static void self_test (void)
 
 static void upload_programs (void);
 
-/* RESET, read INFO, upload the objects (also after the Zero rebooted) */
+/* RESET, read INFO, upload the objects (also after the RPi rebooted) */
 static void setup (void)
 {
 	pgpu_reset ();
@@ -1251,7 +1251,7 @@ static void self_test_5 (void)
 	ff_quad (-0.95f, -0.25f, 0.95f, 0.45f, 0, PGPU_RGBA (255, 255, 255, 255));
 	pgpu_disable (PGPU_CAP_STENCIL_TEST);
 
-	/* the cube three times, in other array formats (converted by the Zero) */
+	/* the cube three times, in other array formats (converted by the RPi) */
 	static int16_t pos_s[24][3];
 	static float normal_f[24][3];
 	static uint8_t uv_b[24][2];
@@ -1728,10 +1728,10 @@ int main (void)
 	stdio_init_all ();
 	pgpu_init ();
 
-	printf ("\ngpulink: waiting for the Zero (READY)...\n");
+	printf ("\ngpulink: waiting for the RPi (READY)...\n");
 	while (!pgpu_wait_ready (1000))
 	{
-		printf ("gpulink: READY is low - Zero not running yet\n");
+		printf ("gpulink: READY is low - RPi not running yet\n");
 	}
 	printf ("gpulink: READY, starting\n");
 
@@ -1744,7 +1744,7 @@ int main (void)
 	self_test_5 ();
 	self_test_6 ();
 	self_test_7 ();
-	gl_self_test ();		/* gltest.c: resets the Zero */
+	gl_self_test ();		/* gltest.c: resets the RPi */
 	setup ();
 
 	uint32_t frames = 0, timeouts = 0, frame_done = 0, last_frame_number = 0, render_us = 0;
@@ -1767,13 +1767,13 @@ int main (void)
 		pgpu_frame_end (PGPU_FRAME_REPLY);
 		frames++;
 
-		/* pace on the Zero's FRAME pulse */
+		/* pace on the RPi's FRAME pulse */
 		if (!pgpu_wait_frame (100))
 		{
 			timeouts++;
 		}
 
-		/* 's' on the console: the Zero dumps the last frame to its USB log
+		/* 's' on the console: the RPi dumps the last frame to its USB log
 		   (devtools/screenshot.py) */
 		if (getchar_timeout_us (0) == 's')
 		{
@@ -1788,8 +1788,8 @@ int main (void)
 		{
 			if (r.opcode == PGPU_REPLY_INFO)
 			{
-				/* unsolicited INFO: the Zero has (re)booted, objects are gone */
-				printf ("gpulink: the Zero rebooted, setting up again\n");
+				/* unsolicited INFO: the RPi has (re)booted, objects are gone */
+				printf ("gpulink: the RPi rebooted, setting up again\n");
 				while (!pgpu_wait_ready (1000))
 				{
 				}
@@ -1812,14 +1812,14 @@ int main (void)
 
 			printf ("gpulink: %lu fps sent, %lu KB/s, READY wait %lu us, frame timeouts %lu | "
 				"FRAME_DONE %lu (#%lu, render %lu us), ping %ld us | "
-				"replies %lu, CRC err %lu, overruns %lu, lost %lu, Zero errors %lu (last %lu/%02lx/%lu)\n",
+				"replies %lu, CRC err %lu, overruns %lu, lost %lu, RPi errors %lu (last %lu/%02lx/%lu)\n",
 				(unsigned long) frames, (unsigned long) (s.words * 4 / 1024),
 				(unsigned long) s.ready_wait_us, (unsigned long) timeouts,
 				(unsigned long) frame_done, (unsigned long) last_frame_number,
 				(unsigned long) render_us, (long) rtt,
 				(unsigned long) s.replies, (unsigned long) s.reply_crc_errors,
 				(unsigned long) s.reply_overruns, (unsigned long) s.replies_lost,
-				(unsigned long) s.zero_errors, (unsigned long) s.last_error[0],
+				(unsigned long) s.rpi_errors, (unsigned long) s.last_error[0],
 				(unsigned long) s.last_error[1], (unsigned long) s.last_error[2]);
 			if (have_status)
 			{

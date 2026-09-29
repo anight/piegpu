@@ -65,7 +65,7 @@ static bool rx_timer_callback (repeating_timer_t *t)
 
 void pgpu_link_init (void)
 {
-	/* READY and FRAME from the Zero (READY has an external 10k pull-down) */
+	/* READY and FRAME from the RPi (READY has an external 10k pull-down) */
 	gpio_init (PIN_READY);
 	gpio_set_dir (PIN_READY, GPIO_IN);
 	gpio_disable_pulls (PIN_READY);
@@ -133,7 +133,7 @@ void pgpu_link_send (const uint32_t *words, uint32_t n)
 		tight_loop_contents ();
 	}
 
-	/* READY high: the Zero has room for a maximum-size packet (> one batch) */
+	/* READY high: the RPi has room for a maximum-size packet (> one batch) */
 	uint64_t wait_start = time_us_64 ();
 	while (!gpio_get (PIN_READY))
 	{
@@ -170,7 +170,7 @@ void pgpu_set_reply_phase (unsigned phase)
 	}
 
 	/* restart both state machines in the same cycle (the command stream is
-	   idle, so the Zero only sees one short frame of zeros) */
+	   idle, so the RPi only sees one short frame of zeros) */
 	uint32_t mask = (1u << sm) | (1u << sm_rx);
 	pio_set_sm_mask_enabled (pio, mask, false);
 	pio_restart_sm_mask (pio, mask);

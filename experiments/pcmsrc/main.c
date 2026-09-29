@@ -1,11 +1,11 @@
 //
 // pcmsrc - streams a known pattern as I2S master (32-bit channels) to the
-// Pi Zero's PCM block in slave mode, stepping the bit clock.
+// RPi's PCM block in slave mode, stepping the bit clock.
 //
-//   GP16 (pin 21) data  -> Zero pin 38 (PCM_DIN)
-//   GP17 (pin 22) BCLK  -> Zero pin 12 (PCM_CLK)
-//   GP18 (pin 24) FS    -> Zero pin 35 (PCM_FS)
-//   GND  (pin 23)       -- Zero pin 39
+//   GP16 (pin 21) data  -> RPi pin 38 (PCM_DIN)
+//   GP17 (pin 22) BCLK  -> RPi pin 12 (PCM_CLK)
+//   GP18 (pin 24) FS    -> RPi pin 35 (PCM_FS)
+//   GND  (pin 23)       -- RPi pin 39
 //
 // Pattern word k (k = 0..8191, repeating): (k * 2654435761) ^ 0x5A5A0001.
 // DMA re-reads the 32 KB buffer forever (read ring + self-trigger), no CPU.

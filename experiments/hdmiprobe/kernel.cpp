@@ -1,5 +1,5 @@
 //
-// hdmiprobe: what can the Pi Zero see of an HDMI monitor being plugged in
+// hdmiprobe: what can the RPi see of an HDMI monitor being plugged in
 // and out, and of the ST7789 panel being there or not? Polls the HPD pin
 // (GPIO46), the firmware's EDID and display tags and logs every change;
 // probes the panel's lines with the pull resistors and tries to read its ID.

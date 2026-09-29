@@ -2,7 +2,7 @@
  * pgpu.h - Pico side of the Pico GPU link (docs/protocol.md)
  *
  * Commands are appended to a staging buffer and sent in batches by the
- * transport (pgpu_link.h: the I2S link on the Pico, pgpu_pico.c; the Zero's
+ * transport (pgpu_link.h: the I2S link on the Pico, pgpu_pico.c; the RPi's
  * USB on a PC, host/pgpu_host.c). pgpu_flush () sends the batch;
  * pgpu_frame_end () flushes. Replies are parsed into small queues
  * (pgpu_poll_reply (), pgpu_poll_error ()).
@@ -32,7 +32,7 @@ typedef struct
 	uint32_t reply_crc_errors;	/* reply headers with a bad CRC */
 	uint32_t reply_overruns;	/* the parser fell behind the DMA ring */
 	uint32_t replies_lost;		/* reply queue full */
-	uint32_t zero_errors;		/* ERROR replies */
+	uint32_t rpi_errors;		/* ERROR replies */
 	uint32_t errors_lost;		/* error queue full */
 	uint32_t last_error[3];		/* code, opcode, detail */
 } pgpu_stats_t;
@@ -62,7 +62,7 @@ typedef struct
 	uint32_t command_errors;
 	uint32_t ring_free_bytes;
 	uint32_t last_frame_us;
-	/* the Zero's last measuring window (about a second; 0 from an older Zero) */
+	/* the RPi's last measuring window (about a second; 0 from an older RPi) */
 	uint32_t window_us;
 	uint32_t window_frames;
 	uint32_t v3d_busy_us;		/* binning and rendering */
@@ -75,33 +75,33 @@ typedef struct
 {
 	uint8_t output;			/* PGPU_OUTPUT_PANEL or PGPU_OUTPUT_HDMI: where frames go */
 	bool hdmi_connected;		/* a monitor is plugged in */
-	bool panel_present;		/* the Zero has a panel (configured) */
+	bool panel_present;		/* the RPi has a panel (configured) */
 	bool edid;			/* the monitor's EDID was read: the monitor fields are set */
 	uint16_t width, height;		/* the screen (framebuffer 0) */
 	uint16_t monitor_width;		/* the monitor's preferred mode */
 	uint16_t monitor_height;
 	uint32_t monitor_refresh_mhz;	/* its refresh rate in millihertz */
-	uint16_t signal_width;		/* the HDMI mode the Zero sends (the firmware's) */
+	uint16_t signal_width;		/* the HDMI mode the RPi sends (the firmware's) */
 	uint16_t signal_height;
 	char monitor_name[14];		/* from the EDID, may be empty */
 } pgpu_display_t;
 
 /* the last DISPLAY reply; returns how many have arrived (0: none yet, the
-   Zero sends one after each INFO and whenever something changes). Replies
+   RPi sends one after each INFO and whenever something changes). Replies
    never get lost to other waits: compare the count to see a change */
 uint32_t pgpu_get_display (pgpu_display_t *display);
 
-/* video streams decoded by the Zero into textures (docs/protocol.md 7.12) */
+/* video streams decoded by the RPi into textures (docs/protocol.md 7.12) */
 typedef struct
 {
 	uint32_t flags;			/* PGPU_VIDEO_OPEN_FLAG, _PLAYING, _ENDED, _ERROR */
 	uint32_t bytes_done;		/* sample bytes the decoder has taken, since the open */
-	uint32_t ring_bytes;		/* the Zero's buffer for the samples not taken yet */
+	uint32_t ring_bytes;		/* the RPi's buffer for the samples not taken yet */
 	uint32_t decoded, shown, dropped;	/* frames */
 	int64_t shown_pts;		/* the frame in the texture (PGPU_VIDEO_TIME_NONE: none) */
 	uint32_t waiting;		/* decoded frames waiting for their time */
 	uint32_t samples_done;		/* samples the decoder has taken, since the open */
-	uint32_t max_samples;		/* samples the Zero holds (not taken yet) */
+	uint32_t max_samples;		/* samples the RPi holds (not taken yet) */
 } pgpu_video_status_t;
 
 /* where data comes from: bytes at offset into buffer (a file on an SD card
@@ -117,7 +117,7 @@ typedef bool (*pgpu_read_t) (void *ctx, uint64_t offset, void *buffer, uint32_t 
 #define PGPU_READ_ALIGN		64		/* bytes: the ESP32-P4's cache line (its SDMMC DMA) */
 #endif
 
-/* texture (Zero id) becomes an RGBA width x height video texture (width a
+/* texture (RPi id) becomes an RGBA width x height video texture (width a
    power of two, 32 or more; height a multiple of 16), fed by stream (1 or 2):
    H.264 of coded_width x coded_height, scaled to the texture. avcc: the
    samples are NAL units with length prefixes, as in MP4 (pgpu_mp4: its avcC);
@@ -126,11 +126,11 @@ void pgpu_video_open (uint32_t stream, uint32_t texture, uint32_t width, uint32_
 		      uint32_t coded_width, uint32_t coded_height, const void *avcc, uint32_t avcc_bytes);
 /* a whole sample (an access unit; flags PGPU_VIDEO_KEYFRAME, _CONFIG, _EOS),
    pts in microseconds; split into packets as needed. Send only what
-   pgpu_video_room () allows: the Zero rejects the rest */
+   pgpu_video_room () allows: the RPi rejects the rest */
 void pgpu_video_sample (uint32_t stream, uint32_t flags, int64_t pts, const void *data, uint32_t bytes);
 /* the same, the data read straight into the packets (bytes at offset through
    read, a packet's payload at a time: no buffer for the sample); false if a
-   read failed (the Zero drops the part it has) */
+   read failed (the RPi drops the part it has) */
 bool pgpu_video_sample_read (uint32_t stream, uint32_t flags, int64_t pts, uint32_t bytes,
 			     pgpu_read_t read, void *ctx, uint64_t offset);
 uint32_t pgpu_video_room (uint32_t stream);
@@ -139,17 +139,17 @@ void pgpu_video_control (uint32_t stream, uint32_t op, int64_t arg);	/* PGPU_VID
    decoding and the clock go on */
 void pgpu_video_resize (uint32_t stream, uint32_t width, uint32_t height);
 void pgpu_video_request_status (uint32_t stream);
-/* the last VIDEO_STATUS of a stream (the Zero sends one every 100 ms while it's
+/* the last VIDEO_STATUS of a stream (the RPi sends one every 100 ms while it's
    open); returns how many have come (0: none) */
 uint32_t pgpu_video_get_status (uint32_t stream, pgpu_video_status_t *status);
 
 /* link */
 void pgpu_init (void);
 /* the side-band signals (the transport's; over USB they answer at once) */
-bool pgpu_wait_ready (uint32_t timeout_ms);	/* the Zero is up and accepting */
+bool pgpu_wait_ready (uint32_t timeout_ms);	/* the RPi is up and accepting */
 bool pgpu_wait_frame (uint32_t timeout_ms);	/* next FRAME pulse */
 uint32_t pgpu_frame_count (void);		/* FRAME pulses so far (over USB: frames waited for) */
-const char *pgpu_link_name (void);		/* the link to the Zero: "I2S", "USB" */
+const char *pgpu_link_name (void);		/* the link to the RPi: "I2S", "USB" */
 uint64_t pgpu_time_us (void);			/* the transport's clock, microseconds */
 void pgpu_flush (void);
 uint32_t pgpu_packets_sent (void);		/* packets built since pgpu_init () */

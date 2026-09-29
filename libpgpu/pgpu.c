@@ -319,7 +319,7 @@ void pgpu_deliver_reply (uint8_t opcode, const uint32_t *payload, uint32_t lengt
 	}
 	if (opcode == PGPU_REPLY_ERROR && length >= 3)
 	{
-		pgpu_link_stats.zero_errors++;
+		pgpu_link_stats.rpi_errors++;
 		memcpy (pgpu_link_stats.last_error, payload, sizeof pgpu_link_stats.last_error);
 
 		uint32_t tail = error_tail;
@@ -1244,7 +1244,7 @@ void pgpu_video_open (uint32_t stream, uint32_t texture, uint32_t width, uint32_
 	pgpu_end ();
 	if (stream >= 1 && stream <= PGPU_VIDEO_STREAMS)
 	{
-		/* the Zero counts from 0 again; until its first status (the old
+		/* the RPi counts from 0 again; until its first status (the old
 		   stream's gone) there's no room */
 		video_bytes_sent[stream] = 0;
 		video_samples_sent[stream] = 0;

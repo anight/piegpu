@@ -1,7 +1,7 @@
 //
 // usb_link.h
 //
-// The command stream over the Zero's USB serial port (CDevLink stream mode):
+// The command stream over the RPi's USB serial port (CDevLink stream mode):
 // the same packets as on the I2S link (docs/protocol.md 4), sent by a PC that
 // runs the GL layer itself (hosts/pc, transports/pc-usb) without access to
 // the GL interface (usb_bulk_link). Replies go back the same way, with CREDIT
@@ -15,7 +15,7 @@
 #include <devlink.h>
 #include <circle/types.h>
 
-class CUSBLink : public CByteStreamLink	/// a PC over the Zero's USB serial port (CDevLink)
+class CUSBLink : public CByteStreamLink	/// a PC over the RPi's USB serial port (CDevLink)
 {
 public:
 	CUSBLink (CDevLink *pDevLink);

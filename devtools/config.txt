@@ -31,7 +31,7 @@ core_freq_min=300
 # watches the hot-plug line itself. No overscan borders.
 hdmi_force_hotplug=1
 disable_overscan=1
-# HDMI mode: the firmware picks it at boot and the Zero can't change it later
+# HDMI mode: the firmware picks it at boot and the RPi can't change it later
 # (the gpu app sizes its screen from the EDID; the firmware scales). By
 # default it prefers TV (CEA) modes: for the 1024x600 monitor it sent 720x576
 # at 50 Hz (50 fps). hdmi_group=2 (monitor modes) gave 1024x768 at 60 Hz; the

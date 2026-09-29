@@ -1,6 +1,6 @@
 # Local change to Circle Step51.1 (c776b3c6), after circle-cdc-rx-overrun.patch and
 # circle-cdc-short-packets.patch: the CDC gadget's throughput (measured with
-# hosts/pc/build/linktest_host: 5.2 -> 8.3 MB/s to the Zero, 4.8 -> 6.1 MB/s back).
+# hosts/pc/build/linktest_host: 5.2 -> 8.3 MB/s to the RPi, 4.8 -> 6.1 MB/s back).
 # The queues copy in blocks (memcpy) instead of a byte at a time, hold 64 KB
 # (room for a larger flow-control window: transports/pc-usb, PGPU_WINDOW), and
 # IN transfers take up to 16 KB, still ending with a short packet (never a

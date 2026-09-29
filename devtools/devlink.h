@@ -1,7 +1,7 @@
 //
 // devlink.h
 //
-// Development link over the Pi Zero's USB port (USB serial CDC gadget):
+// Development link over the RPi's USB port (USB serial CDC gadget):
 //  - the log goes to the host as /dev/ttyACMx (the boot log is replayed on connect)
 //  - the host sends DEVLINK_REBOOT_MAGIC to reboot into USB boot (rpiboot)
 //  - a hardware watchdog reboots the board if Update() isn't called for a while

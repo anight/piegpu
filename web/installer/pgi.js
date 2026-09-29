@@ -1,7 +1,7 @@
 // pgi.js - the pico-gpu installer protocol (gpu/install/installer.h) over the
-// Zero's USB serial port (Web Serial): text lines, the Zero's log between its
+// RPi's USB serial port (Web Serial): text lines, the RPi's log between its
 // answers (#PGI ...). File data goes as base64 lines of 4.5 KB, each answered
-// (the Zero's text path has no flow control). A GL demo can take the port's
+// (the RPi's text path has no flow control). A GL demo can take the port's
 // bytes over (rawSink, writeRaw: gl.js).
 
 // the gpu app (devtools/pgpugadget.h: serial port + monitor), and older ones
@@ -9,7 +9,7 @@
 export const SERIAL_FILTERS = [{usbVendorId: 0x1d50, usbProductId: 0x614d},
 			       {usbVendorId: 0x1209, usbProductId: 0x0001}];
 
-const DATA_CHUNK = 4608;			// a 6 KB line: the Zero's USB serial queue is 8 KB
+const DATA_CHUNK = 4608;			// a 6 KB line: the RPi's USB serial queue is 8 KB
 
 let crcTable = null;
 
@@ -59,7 +59,7 @@ function fromBase64 (text)
 
 export class Installer
 {
-	// onLog (line): the Zero's log; onClose (): the port went away
+	// onLog (line): the RPi's log; onClose (): the port went away
 	constructor (port, onLog, onClose)
 	{
 		this.port = port;
@@ -73,7 +73,7 @@ export class Installer
 
 	async open ()
 	{
-		// (the Zero sends up to 16 KB at a time: its boot log when the port opens)
+		// (the RPi sends up to 16 KB at a time: its boot log when the port opens)
 		await this.port.open ({baudRate: 115200, bufferSize: 65536});
 		this.writer = this.port.writable.getWriter ();
 		this.reading = this.readLoop ();
@@ -95,7 +95,7 @@ export class Installer
 		}
 	}
 
-	// until the port is gone (the Zero restarted or was unplugged) or closed;
+	// until the port is gone (the RPi restarted or was unplugged) or closed;
 	// after other read errors (e.g. a buffer overrun) the port has a new stream
 	async readLoop ()
 	{
@@ -153,7 +153,7 @@ export class Installer
 				break;
 			}
 		}
-		this.fail (new Error ('The Zero went away' + (this.lastError ? ` (${this.lastError})` : '')));
+		this.fail (new Error ('The RPi went away' + (this.lastError ? ` (${this.lastError})` : '')));
 		if (!this.closing)
 		{
 			this.onClose?.();
@@ -272,7 +272,7 @@ export class Installer
 	}
 
 	// a restart that works in any mode (devtools/devlink.h: the reboot magic;
-	// the Zero starts from its card again)
+	// the RPi starts from its card again)
 	async restart ()
 	{
 		await this.writeRaw (new TextEncoder ().encode ('\npico-gpu-reboot\n'));

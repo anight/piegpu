@@ -61,7 +61,7 @@ public:
 	/// \return FALSE if it was dropped
 	boolean SendReply (u8 uchOpcode, const u32 *pPayload, unsigned nLength);
 
-	/// \brief Zero sent replies in the transmit ring (called by GetPacket too)
+	/// \brief RPi sent replies in the transmit ring (called by GetPacket too)
 	void UpdateTx (void);
 
 	void Flush (void)			{ UpdateTx (); }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""run-deqp.py - run dEQP-GLES2 on the Pico GPU (pgl on the PC, the Zero over
+"""run-deqp.py - run dEQP-GLES2 on the Pico GPU (pgl on the PC, the RPi over
 USB; tools/deqp/build-deqp.sh builds it).
 
 usage: run-deqp.py [-o OUT_DIR] [-x EXCLUDE]... [--resume] [--pbuffer] PATTERN...
@@ -12,7 +12,7 @@ line per case: name status) and prints a summary per group.
 """
 import argparse, collections, fnmatch, os, re, subprocess, sys, time
 
-# the Zero's serial port: the gpu app's (devtools/pgpugadget: "pico-gpu" and
+# the RPi's serial port: the gpu app's (devtools/pgpugadget: "pico-gpu" and
 # the board's serial number), or an older one's (Circle's CDC gadget); the
 # transport (transports/pc-usb) is told which by PGPU_TTY
 import glob
@@ -60,11 +60,11 @@ def parse_log(path):
     return results, started
 
 
-def reboot_zero():
-    """load the gpu app on the Zero again (after a crash or a hang: its
+def reboot_rpi():
+    """load the gpu app on the RPi again (after a crash or a hang: its
     watchdog reboots it into USB boot); False if it doesn't come back"""
     for attempt in range(3):
-        print(f'run-deqp: rebooting the Zero', flush=True)
+        print(f'run-deqp: rebooting the RPi', flush=True)
         subprocess.run([os.path.join(ROOT, 'devtools', 'run.sh'), 'gpu', '0'], cwd=ROOT,
                        env=dict(os.environ, CAMERA='none'), stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL)
@@ -113,21 +113,21 @@ def main():
     remaining = [c for c in cases if c not in results]
     t0 = time.time()
     while remaining:
-        # a Zero booted just before this run may not be on USB yet
+        # an RPi booted just before this run may not be on USB yet
         for _ in range(30):
             if os.path.exists(TTY):
                 break
             time.sleep(1)
         else:
-            if not reboot_zero():
-                sys.exit('run-deqp: the Zero does not come up')
+            if not reboot_rpi():
+                sys.exit('run-deqp: the RPi does not come up')
         caselist = os.path.join(args.out, 'caselist.txt')
         open(caselist, 'w').write('\n'.join(remaining) + '\n')
         log = os.path.join(args.out, f'batch{batch}.qpa')
         with open(os.path.join(args.out, f'batch{batch}.out'), 'w') as out:
             proc = subprocess.Popen([DEQP, f'--deqp-caselist-file={caselist}', f'--deqp-log-filename={log}']
                                     + BASE_ARGS + (PBUFFER if args.pbuffer else PANEL), cwd=GLES2, stdout=out, stderr=subprocess.STDOUT,
-                                    env=dict(os.environ, PGPU_TEXT_LOG=os.path.join(args.out, f'zero{batch}.log')))
+                                    env=dict(os.environ, PGPU_TEXT_LOG=os.path.join(args.out, f'rpi{batch}.log')))
             size, since = -1, time.time()
             while proc.poll() is None:
                 time.sleep(2)
@@ -141,15 +141,15 @@ def main():
             sys.exit(f'run-deqp: no log from {DEQP} (see {args.out}/batch{batch}.out)')
         got, crashed = parse_log(log)
         if not got and not crashed and not os.path.exists(TTY):
-            # nothing ran because the Zero is missing: not the cases' fault
-            if not reboot_zero():
+            # nothing ran because the RPi is missing: not the cases' fault
+            if not reboot_rpi():
                 write_results(os.path.join(args.out, 'results.txt'), cases, results)
-                sys.exit('run-deqp: the Zero does not come back, giving up')
+                sys.exit('run-deqp: the RPi does not come back, giving up')
             batch += 1
             continue
-        if proc.returncode != 0 and (got or crashed) and not reboot_zero():
+        if proc.returncode != 0 and (got or crashed) and not reboot_rpi():
             write_results(os.path.join(args.out, 'results.txt'), cases, results)
-            sys.exit('run-deqp: the Zero does not come back, giving up')
+            sys.exit('run-deqp: the RPi does not come back, giving up')
         results.update(got)
         if crashed:
             results[crashed] = 'Crash'

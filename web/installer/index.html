@@ -48,7 +48,12 @@ h2 .step
 }
 .sub
 {
-	color: var(--muted); margin: 0 0 20px;
+	color: var(--muted); margin: 0 0 12px;
+}
+.note
+{
+	border-left: 3px solid var(--warn); padding: 6px 12px; margin: 0 0 20px;
+	background: var(--panel);
 }
 section
 {
@@ -172,8 +177,10 @@ progress
 <body>
 <main>
 	<h1>pico-gpu installer</h1>
-	<p class="sub">Puts pico-gpu on the Raspberry Pi Zero's microSD card from this page, over the
-		Zero's USB port. <span id="version"></span></p>
+	<p class="sub">Puts pico-gpu on the Raspberry Pi's (RPi's) microSD card from this page, over the
+		RPi's USB port. <span id="version"></span></p>
+	<p class="note"><b>Supported for now: the Raspberry Pi Zero / Zero W and the Zero 2 W.</b>
+		More RPi boards are to come.</p>
 
 	<section id="unsupported" hidden>
 		<div class="status bad">This browser can't talk to USB devices. Use Chrome or Edge on a
@@ -181,22 +188,22 @@ progress
 	</section>
 
 	<section>
-		<h2><span class="step">1</span>Connect the Zero</h2>
-		<p>Put a microSD card in the Zero, then connect the Zero's <b>USB</b> port (not PWR IN)
+		<h2><span class="step">1</span>Connect the RPi</h2>
+		<p>Put a microSD card in the RPi, then connect the RPi's <b>USB</b> port (not PWR IN)
 			to this computer.</p>
 		<div class="buttons">
-			<button id="connect" class="primary">Connect to pico-gpu</button>
-			<button id="boot">Start a blank Zero</button>
+			<button id="connect" class="primary">Connect</button>
+			<button id="boot">Start a blank RPi</button>
 			<button id="reset" disabled>Reset</button>
 			<button id="continue" class="primary" hidden>Continue</button>
 		</div>
 		<p class="hint" style="margin-top: 12px">
-			<b>Connect to pico-gpu</b> if the card already has pico-gpu (the panel shows it).
-			<b>Start a blank Zero</b> if the card is new or empty: the Zero then waits for this
+			<b>Connect</b> if the card already has pico-gpu (the panel shows it).
+			<b>Start a blank RPi</b> if the card is new or empty: the RPi then waits for this
 			computer, and the page starts pico-gpu on it (a Zero or a Zero 2 W: the board takes its
 			own build). If the card holds another system
 			(Raspberry Pi OS, say), take it out first and put it back when the page asks.
-			<b>Reset</b> restarts a connected Zero from its card.</p>
+			<b>Reset</b> restarts a connected RPi from its card.</p>
 		<div id="connect-status" class="status" hidden></div>
 	</section>
 
@@ -225,7 +232,7 @@ progress
 		<fieldset>
 			<legend>USB monitor</legend>
 			<label class="choice"><input type="radio" name="gud" value="on">
-				On <span>a Linux PC can show its desktop on the Zero's screen (GUD)</span></label>
+				On <span>a Linux PC can show its desktop on the RPi's screen (GUD)</span></label>
 			<label class="choice"><input type="radio" name="gud" value="off">
 				Off <span>no monitor for the PC (GL commands, the log and this page work as before)</span></label>
 		</fieldset>
@@ -241,7 +248,7 @@ progress
 		<fieldset>
 			<legend>Panel</legend>
 			<label class="choice"><input type="radio" name="panel" value="auto">
-				Detect <span>the Zero reads the panel's ID at start (its SDO wired to pin 21)</span></label>
+				Detect <span>the RPi reads the panel's ID at start (its SDO wired to pin 21)</span></label>
 			<label class="choice"><input type="radio" name="panel" value="yes">
 				Always there <span>for a panel without the SDO wire</span></label>
 			<label class="choice"><input type="radio" name="panel" value="none">
@@ -289,19 +296,19 @@ progress
 		<div id="action-status" class="status" hidden></div>
 		<p class="hint" style="margin-top: 12px">
 			<b>Install pico-gpu</b> writes the firmware and the settings above to the card, then
-			restarts the Zero from it; <b>Save the settings only</b> writes just the settings.
-			<b>Test OpenGL</b> runs gears (glxgears' three gears) on the Zero: the demo runs in this page
+			restarts the RPi from it; <b>Save the settings only</b> writes just the settings.
+			<b>Test OpenGL</b> runs gears (glxgears' three gears) on the RPi: the demo runs in this page
 			(WebAssembly) and sends its OpenGL ES commands over the serial port (it needs the Host
 			setting Auto or USB on the card). <b>Test video</b> plays the Sintel trailer (854x480
 			H.264; Blender Foundation, <a href="https://durian.blender.org/">CC BY 3.0</a>) the same
-			way, decoded by the Zero's VideoCore.
-			While a demo runs, the Zero takes commands from this page only; <b>Stop</b> restarts
-			the Zero.</p>
+			way, decoded by the RPi's VideoCore.
+			While a demo runs, the RPi takes commands from this page only; <b>Stop</b> restarts
+			the RPi.</p>
 	</section>
 
 	<section>
 		<details id="log-details">
-			<summary>The Zero's log</summary>
+			<summary>The RPi's log</summary>
 			<pre id="log"></pre>
 		</details>
 	</section>

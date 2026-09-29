@@ -1,6 +1,6 @@
 /*
- * pincheck.c - before wiring the Zero: holds the link's output and REPLY pins
- * high, to be measured (3.3 V expected; the Zero's GPIOs are 3.3 V only), and
+ * pincheck.c - before wiring the RPi: holds the link's output and REPLY pins
+ * high, to be measured (3.3 V expected; the RPi's GPIOs are 3.3 V only), and
  * prints the READY and FRAME inputs once a second (PGPU_APP=pincheck)
  */
 #include <stdio.h>

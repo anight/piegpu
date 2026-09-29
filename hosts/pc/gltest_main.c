@@ -1,5 +1,5 @@
 /*
- * gltest_main.c - self test 8 (gltest.c) on a PC, through the Zero's USB
+ * gltest_main.c - self test 8 (gltest.c) on a PC, through the RPi's USB
  */
 #include <stdio.h>
 #include "pgpu.h"

@@ -1,7 +1,7 @@
 //
 // usb_bulk_link.h
 //
-// The command stream from a PC over the Zero's GL interface (devtools/
+// The command stream from a PC over the RPi's GL interface (devtools/
 // pgpugadget: interface 2, a bulk endpoint each way; transports/pc-usb with
 // libusb). The same packets as on the other links (docs/protocol.md 4).
 //
@@ -9,7 +9,7 @@
 // gadget only while it's free, so USB itself holds the host back when the
 // ring is full (no CREDIT replies). Replies go out from a ring of bytes,
 // up to 16 KB a transfer. Active once the host has sent on it (until the
-// Zero restarts).
+// RPi restarts).
 //
 #ifndef _usb_bulk_link_h
 #define _usb_bulk_link_h

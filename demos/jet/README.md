@@ -1,6 +1,6 @@
 # Jet on the Pico GPU
 
-picojet's demos (`~/picojet`) running on the Pico with the Zero's V3D doing
+picojet's demos (`~/picojet`) running on the Pico with the RPi's V3D doing
 the pixel work: Jet still transforms, lights, culls and sorts on the Pico, and
 where it would rasterise, the GPU draws instead. The Pico keeps no framebuffer.
 
@@ -49,14 +49,14 @@ where it would rasterise, the GPU draws instead. The Pico keeps no framebuffer.
 - `WATER_REFLECT` is `shaders/jetwater.*`: Jet's row mirror with its ripple,
   reading the previous frame. A scene with water is drawn into one of two
   textures and then onto the panel, so the next frame can mirror it (copying
-  the panel into a texture costs the Zero's ARM about 15 ms a frame). Sprites
+  the panel into a texture costs the RPi's ARM about 15 ms a frame). Sprites
   are drawn after that, on the panel: the water never mirrors them (the lens
   flare), as upstream, which composites sprites at scanout.
 - Pick queries (the lens flare's occlusion) are answered per triangle on the
   Pico, closest wins, as Jet does.
 
 The runtime keeps one frame in flight: the Pico builds the next frame while
-the Zero renders this one. `cmake -DJET_PROFILE=ON` prints where the Pico's
+the RPi renders this one. `cmake -DJET_PROFILE=ON` prints where the Pico's
 frame time goes (update, render, drawTriangle, texture checks, GL draws, wait).
 
 Not done: PHONG is lit per vertex, perspective-incorrect (affine) texturing

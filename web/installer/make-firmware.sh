@@ -1,13 +1,14 @@
 #!/bin/bash
 #
 # Puts the files the installer page serves into web/installer/firmware/, a
-# set per board: the Raspberry Pi firmware (Circle's boot/: bootcode.bin,
+# set per board (the ones pico-gpu supports for now: the Zero / Zero W and the
+# Zero 2 W): the Raspberry Pi firmware (Circle's boot/: bootcode.bin,
 # start.elf, fixup.dat) and the gpu app built for it (devtools/build-gpu.sh:
 # firmware/zero/kernel.img; firmware/zero2/kernel8.img if Circle is
 # configured for the Zero 2 W), with a manifest the page reads. config.txt and
-# cmdline.txt come from the page's settings. And the demo the page runs ("Run
-# gears": hosts/web, into web/installer/demos/), if Emscripten is there
-# (EMSDK, default ~/emsdk).
+# cmdline.txt come from the page's settings. And the demos the page runs (Test
+# OpenGL, Test video: hosts/web, into web/installer/demos/), if Emscripten is
+# there (EMSDK, default ~/emsdk), with the test video (web/installer/videos/).
 #
 #   web/installer/make-firmware.sh
 #
@@ -65,5 +66,5 @@ if [ -f "$EMSDK_ENV" ]; then
 	make -C "$ROOT/hosts/web/build" >/dev/null
 	echo "demos/: gears, video (WebAssembly)"
 else
-	echo "demos/: none (no Emscripten at $EMSDK_ENV): the page can't run gears"
+	echo "demos/: none (no Emscripten at $EMSDK_ENV): the page can't run its demos"
 fi

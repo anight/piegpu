@@ -3,7 +3,7 @@
  *
  * pgpu.c encodes commands into batches and parses reply packets; a transport
  * moves the words. pgpu_pico.c is the I2S link of the Pico (docs/protocol.md
- * 2-4); host/pgpu_host.c streams the same packets over the Zero's USB, for
+ * 2-4); host/pgpu_host.c streams the same packets over the RPi's USB, for
  * running pgl on a PC (tests).
  *
  * A new board (e.g. an ESP32-P4 as the I2S master) needs only a transport:
@@ -22,13 +22,13 @@
 void pgpu_link_init (void);
 /* send a batch of whole packets; the words must stay untouched until the next
    call returns (the Pico sends by DMA while the next batch is built). Before
-   sending, the transport waits for READY: the Zero then has room for one
+   sending, the transport waits for READY: the RPi then has room for one
    maximum-size batch, not more (docs/protocol.md 3.1) */
 void pgpu_link_send (const uint32_t *words, uint32_t n);
 /* parse replies received so far (the Pico does this in a timer as well) */
 void pgpu_link_poll (void);
 uint64_t pgpu_link_time_us (void);
-/* return when every reply the Zero has sent so far has been delivered */
+/* return when every reply the RPi has sent so far has been delivered */
 void pgpu_link_settle (void);
 /* keep the reply parser out (an interrupt, or another core) while pgpu.c
    copies the counters; not nested */

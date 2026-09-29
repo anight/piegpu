@@ -1,29 +1,66 @@
 # pico-gpu
 
-An OpenGL ES 2.0 GPU for microcontrollers: a Raspberry Pi Zero runs bare metal
-(Circle) and renders with its VideoCore IV V3D. The host (a Raspberry Pi
-Pico 2 W, an ESP32-P4, or a PC for tests) sends GL commands over a link. The
-frames go to an ST7789 panel or to HDMI. Video (H.264, e.g. from an MP4) is
-decoded by the VideoCore into textures that any draw can use. The protocol is
-in [docs/protocol.md](docs/protocol.md).
+An OpenGL ES 2.0 GPU for microcontrollers: a Raspberry Pi (RPi) runs bare
+metal (Circle) and renders with its VideoCore IV V3D. The host sends GL
+commands over a link:
+
+- a Raspberry Pi Pico 2 W or an ESP32-P4, over I2S;
+- a Linux PC, or a page in Chrome, over the RPi's USB port.
+
+The frames go to an ST7789 panel or to HDMI. Video (H.264, e.g. from an MP4)
+is decoded by the VideoCore into textures that any draw can use. Over the same
+USB port the RPi also installs itself on its SD card (from a web page) and
+serves as a monitor for a Linux desktop.
+
+**Supported for now: the Raspberry Pi Zero / Zero W and the Zero 2 W.** More
+RPi boards are to come; "RPi" below means the board pico-gpu runs on, and a
+model is named where only that one was verified.
+
+The protocol is in [docs/protocol.md](docs/protocol.md). Notes on how the RPi
+side works inside are in [DEVELOPMENT.md](DEVELOPMENT.md).
 
 | Directory | What |
 |---|---|
-| `gpu/` | the Zero's firmware: links (`link/`), outputs (`display/`), renderer, video (`video/`) |
+| `gpu/` | the RPi's firmware: links (`link/`), outputs (`display/`), renderer, video (`video/`), SD card installer (`install/`) |
+| `drivers/` | the RPi's V3D and ST7789 (DMA) drivers |
 | `libpgpu/` | the host library: protocol encoding, pgl (the GL ES API), MP4 reader, HUD, self tests |
 | `transports/` | links for the host library: `pico-i2s`, `esp32p4-i2s`, `pc-usb` |
-| `hosts/` | builds per host board: `pico`, `esp32p4`, `pc`, `web` (a page, WebAssembly) |
+| `hosts/` | builds per host: `pico`, `esp32p4`, `pc`, `web` (a page, WebAssembly) |
 | `demos/` | the demos, for every host |
 | `protocol/` | the wire format header, shared by both sides |
-| `devtools/` | boot the Zero over USB, logs, screenshots (`run.sh`) |
-| `web/installer/` | a page that installs pico-gpu on the Zero's SD card over USB |
+| `devtools/` | Circle setup and builds per board, the RPi's USB device (serial port, GL interface, monitor), the run log, `run.sh` (boot an RPi over USB, logs, screenshots) |
+| `tools/` | `glslc` (GLSL compiler: Mesa's vc4, offline), `deqp` (the conformance tests) |
+| `patches/` | local changes to Circle (and Mesa, for `tools/glslc`) |
+| `web/installer/` | a page that installs pico-gpu on the RPi's SD card over USB and runs demos on it |
+| `experiments/` | the early probes and demos that led here (links, displays, V3D, video) |
 
 ## Boards and building
 
-pico-gpu runs on a Raspberry Pi Zero / Zero W (32 bit, `kernel.img`) and on a
-Zero 2 W (64 bit, `kernel8.img`; render 0.9 ms a gears frame, the Zero's 1.2). Circle builds in its source tree, so each board has its own: `circle`
-and `circle-zero2` (made from `circle` and `patches/`). Toolchains: Arm GNU
-15.2 in `~/toolchains` (`arm-none-eabi` and `aarch64-none-elf`).
+pico-gpu supports two boards for now:
+
+- a Raspberry Pi Zero or Zero W: 32 bit, `kernel.img`, 1.2 ms to render a
+  gears frame;
+- a Zero 2 W: 64 bit, `kernel8.img`, 0.9 ms.
+
+Circle builds in its source tree, so each board has its own copy:
+
+- `circle`: Circle Step51.1 with the patches in `patches/`;
+- `circle-zero2`: made from `circle` by `configure-circle.sh zero2`.
+
+Toolchains: Arm GNU 15.2 in `~/toolchains` (`arm-none-eabi` and
+`aarch64-none-elf`).
+
+```bash
+git clone https://github.com/rsta2/circle.git && git -C circle checkout Step51.1
+```
+
+```bash
+for p in cdc-endpoint-gadget cdc-rx-overrun cdc-short-packets ep0-vendor-in fatfs-mkfs cdc-throughput persistent-memory; do git -C circle apply ../patches/circle-$p.patch; done
+```
+
+```bash
+devtools/configure-circle.sh zero
+```
 
 ```bash
 devtools/configure-circle.sh zero2
@@ -33,18 +70,25 @@ devtools/configure-circle.sh zero2
 devtools/build-gpu.sh all
 ```
 
-Video decoding works the same in both: MMAL's messages to the VideoCore have
-the VideoCore's 32-bit layout on any client (`gpu/video/userland/interface/
-mmal/vc/mmal_vc_msgs.h`, checked against the 32-bit compiler's by
-`devtools/mmal-layout.py`); Circle's vcos is used in 64 bit too
-(`patches/circle-vcos-aarch64.patch`), and the MMAL sources are built with
-`-mstrict-align` there (they read VCHIQ's messages in place, in Circle's
-coherent region: Device memory in 64 bit, where unaligned accesses fault).
-Verified on both boards: 640x360 to 1280x720, 0 dropped. The Zero 2 W's HDMI hot-plug line is GPIO28 (the
-Zero's: GPIO46). `web/installer/make-firmware.sh`
-puts both builds on the installer page, which picks the one for the board.
+This gives `gpu/kernel.img` (the Zero) and `build/zero2/gpu/kernel8.img` (the
+Zero 2 W). `web/installer/make-firmware.sh` puts both builds on the installer
+page, which picks the one for the board.
 
-A restart explains itself (`devtools/runlog.h`): the Zero keeps its log in
+Video decoding works the same on both boards:
+
+- MMAL's messages to the VideoCore have the VideoCore's 32-bit layout on any
+  client (`gpu/video/userland/interface/mmal/vc/mmal_vc_msgs.h`).
+  `devtools/mmal-layout.py` checks the layout against the 32-bit compiler's.
+- Circle's vcos is used in 64 bit too (`patches/circle-vcos-aarch64.patch`).
+- In 64 bit, the MMAL sources are built with `-mstrict-align`. They read
+  VCHIQ's messages in place, in Circle's coherent region, which is Device
+  memory in 64 bit, where unaligned accesses fault.
+
+Verified on both boards: 640x360 to 1280x720, 0 dropped.
+
+### Why the RPi restarted: the run log
+
+A restart explains itself (`devtools/runlog.h`): the RPi keeps its log in
 the top 64 KB of the ARM memory, which Circle leaves to the app
 (`patches/circle-persistent-memory.patch`, `MEM_PERSISTENT_SIZE`) and the
 firmware doesn't clear at a restart (the low memory it does: the Zero 2 W's
@@ -69,51 +113,58 @@ four); the Zero not yet. How it works: [DEVELOPMENT.md](DEVELOPMENT.md).
 ```
                   I2S link + READY/FRAME            SPI0
    ┌────────────┐  (6 signals + GND)   ┌────────────┐   ┌────────────────┐
-   │    host    │ ───────────────────► │  Pi Zero   │──►│ ST7789 320x240 │
+   │    host    │ ───────────────────► │    RPi     │──►│ ST7789 320x240 │
    │ Pico 2 W   │ ◄─────────────────── │   (GPU)    │   └────────────────┘
    │ or ESP32-P4│                      │            │ mini-HDMI ┌─────────┐
    └────────────┘                      │            │──────────►│ monitor │
                                        └─────┬──────┘           └─────────┘
-                                             │ "USB" port: power, boot and log
-                                             ▼ (devtools/run.sh)
+                                             │ "USB" port, one cable:
+                                             │  power; its log; USB boot (a Zero)
+                                             │  GL commands and video from a PC
+                                             │    or a page (instead of I2S)
+                                             │  the installer (web/installer)
+                                             │  a monitor for the PC's desktop
+                                             ▼
                                             PC
 ```
 
 Pin numbers below are **physical header pins** with the GPIO number in
-brackets. All signals are 3.3 V. Connect the grounds of both boards.
+brackets. All signals are 3.3 V. Connect the grounds of both boards. The
+Zero and the Zero 2 W have the same 40-pin header, so the same wiring.
+Verified on both: gears from the ESP32-P4 over I2S, on the panel.
 
-### Host ↔ Zero: the link
+### Host ↔ RPi: the link
 
-The Zero's PCM (I2S) block is the slave. The host drives the bit clock
-(BCLK), the frame sync (FS) and the command data. The Zero answers on REPLY,
+The RPi's PCM (I2S) block is the slave. The host drives the bit clock
+(BCLK), the frame sync (FS) and the command data. The RPi answers on REPLY,
 and signals READY (room for a packet) and FRAME (a frame went to the screen).
 
-| Signal | Direction | Zero | Pico 2 W | ESP32-P4 (Waveshare dev kit) |
+| Signal | Direction | RPi | Pico 2 W | ESP32-P4 (Waveshare dev kit) |
 |---|---|---|---|---|
-| DATA | host → Zero | 38 (GPIO20, PCM_DIN) | 21 (GP16) | 11 (GPIO21) |
-| BCLK | host → Zero | 12 (GPIO18, PCM_CLK) | 22 (GP17) | 13 (GPIO20) |
-| FS | host → Zero | 35 (GPIO19, PCM_FS) | 24 (GP18) | 12 (GPIO22) |
-| REPLY | Zero → host | 40 (GPIO21, PCM_DOUT) | 25 (GP19) | 7 (GPIO23) |
-| READY | Zero → host | 36 (GPIO16) | 26 (GP20) | 18 (GPIO4) |
-| FRAME | Zero → host | 37 (GPIO26) | 27 (GP21) | 16 (GPIO5) |
+| DATA | host → RPi | 38 (GPIO20, PCM_DIN) | 21 (GP16) | 11 (GPIO21) |
+| BCLK | host → RPi | 12 (GPIO18, PCM_CLK) | 22 (GP17) | 13 (GPIO20) |
+| FS | host → RPi | 35 (GPIO19, PCM_FS) | 24 (GP18) | 12 (GPIO22) |
+| REPLY | RPi → host | 40 (GPIO21, PCM_DOUT) | 25 (GP19) | 7 (GPIO23) |
+| READY | RPi → host | 36 (GPIO16) | 26 (GP20) | 18 (GPIO4) |
+| FRAME | RPi → host | 37 (GPIO26) | 27 (GP21) | 16 (GPIO5) |
 | GND | — | 39, 34 | 23, 28 | 9, 14, 20, 25 |
 
 - **READY needs an external 10 kΩ pull-down to GND on the host side.** While
-  the Zero boots, READY must read low so that the host doesn't stream into a
-  Zero that isn't running. On the RP2350 the internal pull-down alone isn't
+  the RPi boots, READY must read low so that the host doesn't stream into an
+  RPi that isn't running. On the RP2350 the internal pull-down alone isn't
   enough (erratum E9, docs/protocol.md §3.1).
 - The ESP32-P4 pins are on the dev kit's 40-pin header, which has the
   Raspberry Pi layout. The bit clock is 31.25 MHz on a v1.x chip (the dev
   kit's; its most) and 40 MHz from chip revision v3.0 on
   (`transports/esp32p4-i2s`).
-- On the Pico only physical pins 21–27 are used (GP16–GP21 and GND).
+- On the Pico the link uses only physical pins 21–27 (GP16–GP21 and GND).
 
-### Zero ↔ ST7789 panel
+### RPi ↔ ST7789 panel
 
 The panel is a 240x320 ST7789 module (14 pins) on SPI0 at 75 MHz, driven in
 landscape as 320x240 (`gpu/display/panel_output`).
 
-| Panel | Zero |
+| Panel | RPi |
 |---|---|
 | CS | 24 (GPIO8, SPI0 CE0) |
 | SCK | 23 (GPIO11, SPI0 SCLK) |
@@ -122,28 +173,41 @@ landscape as 320x240 (`gpu/display/panel_output`).
 | RESET | 22 (GPIO25) |
 | SDO (MISO) | 21 (GPIO9, SPI0 MISO) |
 
-At boot the Zero reads the panel's ID over SDO, so it knows whether a panel is
+At boot the RPi reads the panel's ID over SDO, so it knows whether a panel is
 there. Without the SDO wire it can't tell: set `panel=yes` (see below).
 
-### Zero ↔ HDMI, and the PC
+### RPi ↔ HDMI, and the PC
 
 - **HDMI:** a monitor on the mini-HDMI port. By default the screen is on HDMI
-  while a monitor is connected and on the panel otherwise; the Zero watches the
-  hot-plug line and reads the monitor's EDID for its resolution.
-  `devtools/config.txt` has `hdmi_force_hotplug=1` so that HDMI stays on when
-  the Zero boots without a monitor.
-- **PC:** the Zero's "USB" port (not "PWR IN"). Without a card that holds
-  pico-gpu the Zero boots over USB from `rpiboot`; `devtools/run.sh gpu`
-  builds, boots and logs. The same cable powers it and carries its log, the
-  PC's GL commands (below) and the USB monitor.
+  while a monitor is connected and on the panel otherwise.
+  - The RPi watches the hot-plug line: GPIO46 on a Zero, GPIO28 on a Zero 2
+    W.
+  - It reads the monitor's EDID for the resolution.
+  - `config.txt` has `hdmi_force_hotplug=1` (`devtools/config.txt`, and the
+    installer's), so that HDMI stays on when the RPi boots without a
+    monitor.
+- **PC:** the RPi's "USB" port (not "PWR IN"). The one cable carries:
+  - power;
+  - the RPi's log;
+  - the installer (below);
+  - GL commands and video from a PC program or a page (below);
+  - the USB monitor (below).
+
+  Without a card that holds pico-gpu, many RPi boards can boot over USB from
+  a PC with `rpiboot` (Raspberry Pi's usbboot lists them). Here that's been
+  verified on a Zero:
+  - `devtools/run.sh gpu` builds, boots and logs, with the Zero's 32-bit
+    build (`make -C gpu`).
+  - A Zero 2 W didn't start over USB here (see the installer).
+  - `devtools/run.sh --log` captures the log of either board.
 
 ### Kernel command line (`cmdline.txt`)
 
 | Option | Meaning |
 |---|---|
-| `host=auto` | the default: GL commands from a PC over USB once it opens its stream (until the Zero restarts), else from I2S |
+| `host=auto` | the default: GL commands from a PC over USB once it opens its stream (until the RPi restarts), else from I2S |
 | `host=usb`, `host=i2s` | only a PC over USB, or only a Pico / ESP32-P4 over I2S (the log, the installer and the USB monitor work either way) |
-| `gud=on` | the default: the Zero is also a USB monitor for a Linux PC (below) |
+| `gud=on` | the default: the RPi is also a USB monitor for a Linux PC (below) |
 | `gud=off` | no monitor for a PC's desktop to take (the serial port and the GL interface stay) |
 | `output=auto` | the default: HDMI while a monitor is connected, else the panel |
 | `output=panel`, `output=hdmi` | always this output |
@@ -153,13 +217,49 @@ there. Without the SDO wire it can't tell: set `panel=yes` (see below).
 
 With `devtools/run.sh`, pass these as `CMDLINE="output=panel" devtools/run.sh gpu`.
 
+## Host boards (`hosts/pico`, `hosts/esp32p4`)
+
+Both host builds make the self tests and the demos (`demos/demos.cmake`), plus
+the Jet demos (`demos/jet`).
+
+**Raspberry Pi Pico 2 W:** the Pico SDK (2.2.0 here, `PICO_SDK_PATH`). The
+build makes one `.uf2` per program in `hosts/pico/build`:
+
+- `gpulink.uf2`: the self tests;
+- `gears.uf2`, `toy-pong.uf2`, `jet-viewer.uf2` and so on: the demos.
+
+The console is on UART0 (GP0/GP1, pins 1 and 2: a Debugprobe's UART bridge).
+
+```bash
+cmake -S hosts/pico -B hosts/pico/build -G Ninja
+```
+
+```bash
+ninja -C hosts/pico/build
+```
+
+**ESP32-P4** (Waveshare ESP32-P4-Module-DEV-KIT): ESP-IDF v5.5. One program
+per build, chosen with `PGPU_APP`:
+
+- `selftest`, the default;
+- a demo: `gears`, `toy-NAME`, `jet-NAME` and so on;
+- `pincheck`: the pins alone, before wiring the RPi.
+
+```bash
+. ~/esp/esp-idf-v5.5/export.sh
+```
+
+```bash
+idf.py -C hosts/esp32p4 -B hosts/esp32p4/build-gears -DPGPU_APP=gears build flash monitor
+```
+
 ## OpenGL ES from a PC (`hosts/pc`)
 
-A Linux PC can be the host too: the same GL ES 2.0 API (`pgl`, with the GL ES
-1.1 fixed-function calls) and the same command packets, over the Zero's USB
-serial port instead of I2S (`transports/pc-usb`). GLSL is compiled at run
+A Linux PC can be the host too. It uses the same GL ES 2.0 API (`pgl`, with
+the GL ES 1.1 fixed-function calls) and the same command packets, but over the
+RPi's USB port instead of I2S (`transports/pc-usb`). GLSL is compiled at run
 time on the PC by `tools/glslc` (Mesa's vc4 compiler, offline; results
-cached in `~/.cache/pgpu-glslc`). There is no EGL: the Zero's screen is the
+cached in `~/.cache/pgpu-glslc`). There is no EGL: the RPi's screen is the
 window (`pglInit`, `pglGetScreenSize`, `pglSwapBuffers`; `pglInitSurface` for
 an off-screen one). `hosts/pc/videoplay.c` is an example program.
 
@@ -168,13 +268,13 @@ cmake -S hosts/pc -B hosts/pc/build && make -C hosts/pc/build
 ```
 
 - Over USB there is no FRAME line: `pgpu_wait_frame` sends a PING instead,
-  whose answer comes once the Zero has executed the frame (and waited for
-  the screen), so programs pace on the Zero's frames as on the Pico's. The
+  whose answer comes once the RPi has executed the frame (and waited for
+  the screen), so programs pace on the RPi's frames as on the Pico's. The
   demos build for the PC as `DEMO_host` (`hosts/pc/build/gears_host`: 60
   fps on the panel, render 1.2 ms a frame).
-- While a PC's desktop uses the Zero as a monitor (below), GL frames are
+- While a PC's desktop uses the RPi as a monitor (below), GL frames are
   rendered off screen: turn that monitor off first.
-- Two ways over the cable (`transports/pc-usb/pgpu_host.c`): the Zero's GL
+- Two ways over the cable (`transports/pc-usb/pgpu_host.c`): the RPi's GL
   interface (a vendor interface with a bulk endpoint each way, libusb), when
   the PC may open the device; else its serial port, found by name
   (`/dev/serial/by-id/usb-pico-gpu_pico-gpu_*`; `PGPU_TTY` picks it and
@@ -190,7 +290,7 @@ word by word; 30 s):
 
 | | PC, USB | ESP32-P4, I2S 31.25 MHz |
 |---|---|---|
-| to the Zero | 8.3 MB/s | 3.9 MB/s |
+| to the RPi | 8.3 MB/s | 3.9 MB/s |
 | back from it | 6.1 MB/s | 2.37 MB/s |
 | errors | 0 of 6.0M words | 0 |
 
@@ -202,7 +302,7 @@ Tests from the PC:
   PATTERN...` runs cases as Mesa's CI does (a 256x256 RGBA8888 off-screen
   surface), in batches that go on after a crash; `compare-vc4.py` puts the
   results next to Mesa's vc4 on a Raspberry Pi 3 and marks the cases outside
-  Khronos' mustpass list. The runner reboots the Zero at the end: not while a
+  Khronos' mustpass list. The runner reboots the RPi at the end: not while a
   desktop uses it as a monitor.
 
 Results (2026-09-29): self test 8, 83 of 83. dEQP-GLES2, 2015 cases (clears,
@@ -214,10 +314,17 @@ fail, 290 not supported). Of the 16, 11 fail with Mesa's vc4 too (the V3D),
 
 ## Installing on an SD card (`web/installer`)
 
-A static page puts pico-gpu on the microSD card in the Zero, over the Zero's
-USB port, with its settings (the screen, the panel, the HDMI mode). It needs
-Chrome or Edge on a desktop (WebUSB and Web Serial) and a secure origin
-(https, or `localhost`).
+A static page puts pico-gpu on the microSD card in the RPi, over the RPi's
+USB port, with its settings. The settings are the command line above
+(`cmdline.txt`) and `config.txt`:
+
+- where the GL commands come from;
+- the screen and the panel;
+- the HDMI mode;
+- the USB monitor.
+
+The page needs Chrome or Edge on a desktop (WebUSB and Web Serial) and a
+secure origin (https, or `localhost`).
 
 ```bash
 web/installer/make-firmware.sh
@@ -229,26 +336,35 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory web/installer
 
 Then open http://localhost:8765 and follow the steps:
 
-- **A blank or new card:** the Zero's boot ROM finds nothing to start and waits
-  for USB. "Start a blank Zero" boots pico-gpu from the page (WebUSB, the
-  rpiboot protocol: `rpiboot.js`). The page serves both builds and a
-  `config.txt` whose `[pi02]` lines would make a Zero 2 W ask for its 64-bit
-  `kernel8.img` (a Zero: `kernel.img`); once pico-gpu runs it says which board
-  it is, and Install writes that board's files only. A card without a FAT
-  file system can be formatted there (one FAT32 partition). **A Zero 2 W**
-  didn't start over USB here, with Raspberry Pi's own `rpiboot` either (its
-  boot ROM took `bootcode.bin`, then stopped answering): write its card on a
-  PC instead (one FAT32 partition, type 0x0c; the files of
-  `web/installer/firmware/zero2`, a `config.txt` with `arm_64bit=1`, a
-  `cmdline.txt`), then Connect and Install work as on a Zero.
-- **A card with pico-gpu:** "Connect to pico-gpu" (Web Serial). Install again,
+- **A blank or new card:** the RPi's boot ROM finds nothing to start and waits
+  for USB. "Start a blank RPi" boots pico-gpu from the page (WebUSB, the
+  rpiboot protocol: `rpiboot.js`; verified on a Zero).
+  - The page serves both builds, and a `config.txt` whose `[pi02]` lines would
+    make a Zero 2 W ask for its 64-bit `kernel8.img` (a Zero asks for
+    `kernel.img`).
+  - Once pico-gpu runs, it says which board it is, and Install writes that
+    board's files only.
+  - A card without a FAT file system can be formatted there (one FAT32
+    partition).
+- **A Zero 2 W with a blank card:** it didn't start over USB here, even with
+  Raspberry Pi's own `rpiboot`: its boot ROM took `bootcode.bin`, then stopped
+  answering. Raspberry Pi's usbboot does list the Zero 2 W (with its
+  mass-storage-gadget files), so this may be fixable. For now, write its card
+  on a PC instead:
+  - one FAT32 partition, type 0x0c;
+  - the files of `web/installer/firmware/zero2`;
+  - a `config.txt` with `arm_64bit=1`;
+  - a `cmdline.txt`.
+
+  Then Connect and Install work as on a Zero.
+- **A card with pico-gpu:** "Connect" (Web Serial). Install again,
   or change the settings only. If pico-gpu doesn't answer (a program left it
   taking GL commands), the page restarts it; "Reset" restarts it any time.
-- **A card with another system:** take it out, start the Zero from the page,
+- **A card with another system:** take it out, start the RPi from the page,
   and put the card in when the page asks.
 
 pico-gpu writes the files itself (`gpu/install`): each is checked by its CRC,
-then renamed into place. At the end the Zero restarts from the card, and the
+then renamed into place. At the end the RPi restarts from the card, and the
 page shows where the screen went. Measured: 3.5 MB in 5.4 s; a 64 GB card
 formatted in 7.3 s.
 
@@ -259,21 +375,28 @@ transport; `web/installer/gl.js` moves the bytes). No driver or udev rule is
 needed. Test OpenGL runs `demos/gears.c` (60 fps, render 1.2 ms, as
 `gears_host`); Test video runs `demos/video.c` on the Sintel trailer (854x480
 H.264, Blender Foundation, CC BY 3.0; the MP4's title is the bottom line),
-decoded by the Zero's VideoCore: 24 fps, 0 dropped. Stop restarts the Zero,
+decoded by the RPi's VideoCore: 24 fps, 0 dropped. Stop restarts the RPi,
 which takes commands from the serial port until then. `make-firmware.sh`
 builds the demos when Emscripten is installed (`EMSDK`, default `~/emsdk`)
 and downloads the trailer (Blender's server doesn't let a page fetch it).
 
-## The Zero as a USB monitor for Linux
+## The RPi as a USB monitor for Linux
 
-Over its USB port the Zero is also a monitor for a Linux PC, with no driver
-to install: GUD, the kernel's Generic USB Display (`gud`). The Zero is one
-USB device, `1d50:614d` (the ID GUD's driver binds to), with the serial port
-as before and a display. While the PC has the display on, its desktop takes
-the Zero's screen (the panel, or HDMI), and a GL host's frames are rendered
-off screen until the PC turns it off (`gpu/display/gud_display`).
+Over its USB port the RPi is also a monitor for a Linux PC, with no driver
+to install: GUD, the kernel's Generic USB Display (`gud`).
 
-- The PC sees one connector with one mode, the Zero's screen size, and an
+The RPi is one USB device, `1d50:614d` (the ID GUD's driver binds to), with
+three functions (`devtools/pgpugadget.h`):
+
+- the serial port (interfaces 0 and 1: the log, the installer, a GL stream);
+- the GL interface (2);
+- the display (3). `gud=off` leaves it out.
+
+While the PC has the display on, its desktop takes the RPi's screen (the
+panel, or HDMI). A GL host's frames are rendered off screen until the PC turns
+the display off (`gpu/display/gud_display`).
+
+- The PC sees one connector with one mode, the RPi's screen size, and an
   EDID: GNOME calls it "PGU pico-gpu".
 - `devtools/gudtest.c` drives it through DRM without a desktop: a test
   pattern and two rates. Measured at 320x240: 110 full frames a second
@@ -284,8 +407,8 @@ off screen until the PC turns it off (`gpu/display/gud_display`).
   everywhere, e.g. in a drop-in for its unit:
   `~/.config/systemd/user/org.gnome.Shell@ubuntu.service.d/*.conf` with
   `[Service]` and `Environment=MUTTER_DEBUG_DISABLE_HW_CURSORS=1`.
-- Don't unplug or reboot the Zero while GNOME uses it as a monitor: GNOME
+- Don't unplug or reboot the RPi while GNOME uses it as a monitor: GNOME
   Shell 50.1 crashed once when it came back within seconds (it keeps the old
   device, and the new one had the same `/dev/dri` name). For a desktop that
-  must leave it alone, set `gud=off` on the Zero, or tag it in udev: `SUBSYSTEM=="drm", KERNEL=="card*",
+  must leave it alone, set `gud=off` on the RPi, or tag it in udev: `SUBSYSTEM=="drm", KERNEL=="card*",
   ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="614d", TAG+="mutter-device-ignore"`.

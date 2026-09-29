@@ -1,8 +1,8 @@
 /*
  * pgl.c - OpenGL ES 2.0 / 1.1 API on top of pgpu (see pgl.h)
  *
- * GL objects map to Zero objects with the same id where possible (buffers,
- * textures, framebuffers); programs get Zero ids from a pool. State that
+ * GL objects map to RPi objects with the same id where possible (buffers,
+ * textures, framebuffers); programs get RPi ids from a pool. State that
  * depends on several GL objects (framebuffer attachments, texture units,
  * vertex arrays, enables that need a depth or stencil buffer, fixed-function
  * matrices) is sent when a draw, clear or read needs it; other state is sent
@@ -21,7 +21,7 @@
 
 /* ---- limits -------------------------------------------------------------------- */
 
-#define MAX_BUFFER_NAMES	250		/* Zero ids 1 .. 250 */
+#define MAX_BUFFER_NAMES	250		/* RPi ids 1 .. 250 */
 #ifndef PGL_SHADOW_LIMIT
 #define PGL_SHADOW_LIMIT	16384		/* copies of buffers kept up to this size (0: all) */
 #endif
@@ -29,15 +29,15 @@
 #define HW_STREAM_INDEX		252		/* fixed-function client indices */
 #define HW_TEMP_VERTEX		253		/* program draws too large for a packet */
 #define HW_TEMP_INDEX		254
-#define MAX_TEXTURE_NAMES	109		/* Zero ids 1 .. 109 */
+#define MAX_TEXTURE_NAMES	109		/* RPi ids 1 .. 109 */
 #define HW_SURFACE_TEXTURE	110		/* pglInitSurface: the default framebuffer's colour */
 #define TEX_DEFAULT_2D		111		/* texture object 0 of each target */
 #define TEX_DEFAULT_CUBE	112
 #define HW_SCRATCH_BASE		112		/* colour for framebuffers without: 113 .. 120 */
 #define SCRATCH_TEXTURES	8
-#define MAX_RENDERBUFFER_NAMES	8		/* colour storage: Zero textures 121 .. 128 */
+#define MAX_RENDERBUFFER_NAMES	8		/* colour storage: RPi textures 121 .. 128 */
 #define HW_RENDERBUFFER_BASE	120
-#define MAX_FRAMEBUFFER_NAMES	15		/* Zero ids 1 .. 15 */
+#define MAX_FRAMEBUFFER_NAMES	15		/* RPi ids 1 .. 15 */
 #define HW_SURFACE_FRAMEBUFFER	16		/* pglInitSurface: the default framebuffer */
 #define MAX_OBJECT_NAMES	128		/* programs and shaders */
 #define MAX_HW_PROGRAMS		64
@@ -70,7 +70,7 @@ typedef struct
 {
 	bool used;
 	uint8_t target;			/* TEX_2D, TEX_CUBE once bound */
-	bool storage;			/* created on the Zero */
+	bool storage;			/* created on the RPi */
 	uint16_t width, height;		/* level 0 */
 	uint8_t format;			/* enum pgpu_format */
 	GLenum gl_format, gl_type;	/* of the levels (GL_ETC1_RGB8_OES: compressed) */
@@ -111,7 +111,7 @@ typedef struct
 	bool used;			/* name generated or bound */
 	bool bound;			/* an object (GL: created by the first bind) */
 	attachment_t att[ATTACHMENTS];
-	bool created;			/* on the Zero, with: */
+	bool created;			/* on the RPi, with: */
 	uint32_t sent_texture, sent_flags, sent_generation;
 	uint8_t scratch;		/* colour texture when none is attached (0: none) */
 	uint16_t scratch_width, scratch_height;
@@ -133,7 +133,7 @@ typedef struct
 	bool compiled;
 	char *log_buf;			/* info log (shader: compile, program: link) */
 	/* program */
-	uint8_t hw;			/* Zero id, 0 = none */
+	uint8_t hw;			/* RPi id, 0 = none */
 	bool linked;
 	bool validated;
 	const char *log;
@@ -167,7 +167,7 @@ typedef struct
 	float attenuation[3];
 } light_t;
 
-/* what the Zero has, for state sent when a draw needs it */
+/* what the RPi has, for state sent when a draw needs it */
 typedef struct
 {
 	bool valid;
@@ -180,10 +180,10 @@ static struct
 
 	uint32_t errors;		/* GL error flags: bit (error - GL_INVALID_ENUM) */
 	uint32_t synced_packets;	/* pgpu_packets_sent () at the last error sync */
-	bool debug;			/* PGL_DEBUG set: print the Zero's errors */
-	uint32_t zero_error[3];
+	bool debug;			/* PGL_DEBUG set: print the RPi's errors */
+	uint32_t rpi_error[3];
 
-	/* GL names -> slots (the index of these arrays, and the Zero id where it
+	/* GL names -> slots (the index of these arrays, and the RPi id where it
 	   is the same): GL allows any name, created by glBind* */
 	GLuint buffer_names[MAX_BUFFER_NAMES + 1];
 	GLuint texture_names[MAX_TEXTURE_NAMES + 1];
@@ -255,7 +255,7 @@ static struct
 	GLenum tex_env_mode;
 	float tex_env_color[4];
 
-	/* sent to the Zero (reset by pglInit) */
+	/* sent to the RPi (reset by pglInit) */
 	uint32_t sent_caps;
 	uint32_t sent_units[UNITS];
 	bool sent_units_valid[UNITS];
@@ -345,9 +345,9 @@ static void mat_transform (float *r, const float *m, const float *v)	/* r = m * 
 	memcpy (r, t, sizeof t);
 }
 
-/* ---- Zero errors ----------------------------------------------------------------- */
+/* ---- RPi errors ----------------------------------------------------------------- */
 
-static GLenum map_zero_error (uint32_t code)
+static GLenum map_rpi_error (uint32_t code)
 {
 	switch (code)
 	{
@@ -360,7 +360,7 @@ static GLenum map_zero_error (uint32_t code)
 
 /* move ERROR replies into the GL error flags; with program_hw, errors of
    uploading that program are counted instead (return value) */
-static unsigned drain_zero_errors (uint32_t program_hw)
+static unsigned drain_rpi_errors (uint32_t program_hw)
 {
 	unsigned program_errors = 0;
 	uint32_t e[3];
@@ -368,22 +368,22 @@ static unsigned drain_zero_errors (uint32_t program_hw)
 	{
 		if (S.debug)
 		{
-			fprintf (stderr, "pgl: Zero error %lu, opcode %02lx, detail %lu\n", (unsigned long) e[0],
+			fprintf (stderr, "pgl: RPi error %lu, opcode %02lx, detail %lu\n", (unsigned long) e[0],
 				 (unsigned long) e[1], (unsigned long) e[2]);
 		}
-		memcpy (S.zero_error, e, sizeof e);
+		memcpy (S.rpi_error, e, sizeof e);
 		if (   program_hw
 		    && (e[1] == PGPU_OP_PROGRAM_CREATE || e[1] == PGPU_OP_PROGRAM_DATA))
 		{
 			program_errors++;
 			continue;
 		}
-		set_error (map_zero_error (e[0]));
+		set_error (map_rpi_error (e[0]));
 	}
 	return program_errors;
 }
 
-/* errors the Zero finds come back as ERROR replies: wait for those of the
+/* errors the RPi finds come back as ERROR replies: wait for those of the
    commands sent so far (a PING round trip, only if anything was sent) */
 static void sync_errors (void)
 {
@@ -394,7 +394,7 @@ static void sync_errors (void)
 		pgpu_link_settle ();
 		S.synced_packets = pgpu_packets_sent ();
 	}
-	drain_zero_errors (0);
+	drain_rpi_errors (0);
 }
 
 GLenum glGetError (void)
@@ -411,10 +411,10 @@ GLenum glGetError (void)
 	return GL_NO_ERROR;
 }
 
-void pglGetZeroError (uint32_t error[3])
+void pglGetRPiError (uint32_t error[3])
 {
 	sync_errors ();
-	memcpy (error, S.zero_error, sizeof S.zero_error);
+	memcpy (error, S.rpi_error, sizeof S.rpi_error);
 }
 
 void glFlush (void)
@@ -424,12 +424,12 @@ void glFlush (void)
 
 void glFinish (void)
 {
-	/* PONG comes when the Zero has executed everything before it, and the
+	/* PONG comes when the RPi has executed everything before it, and the
 	   ERROR replies of those commands come before it */
 	static uint32_t cookie = 0x9C000000u;
 	pgpu_ping_wait (++cookie, 1000);
 	pgpu_link_settle ();
-	drain_zero_errors (0);
+	drain_rpi_errors (0);
 }
 
 /* ---- init ------------------------------------------------------------------------ */
@@ -492,7 +492,7 @@ bool pglInit (void)
 	{
 	}
 
-	/* GL defaults (the Zero's defaults after RESET are the same, §7.11) */
+	/* GL defaults (the RPi's defaults after RESET are the same, §7.11) */
 	S.clear_depth = 1.0f;
 	for (int i = 0; i < 4; i++)
 	{
@@ -586,7 +586,7 @@ bool pglInitSurface (unsigned width, unsigned height)
 	S.surface = true;
 	S.width = width;
 	S.height = height;
-	/* sent too: the Zero's viewport after RESET is the panel's */
+	/* sent too: the RPi's viewport after RESET is the panel's */
 	glViewport (0, 0, (GLsizei) width, (GLsizei) height);
 	glScissor (0, 0, (GLsizei) width, (GLsizei) height);
 	return true;
@@ -594,7 +594,7 @@ bool pglInitSurface (unsigned width, unsigned height)
 
 /* the screen has a new size (a monitor plugged in or out, DISPLAY): a
    viewport and scissor box that covered the whole screen cover the new one,
-   as when a window system resizes a window. The Zero changes size between
+   as when a window system resizes a window. The RPi changes size between
    frames and tells afterwards, so a frame or two may still use the old size */
 static uint32_t display_seen;
 
@@ -781,7 +781,7 @@ static int map_texture_format (GLenum format, GLenum type)
 
 /* ---- enables ----------------------------------------------------------------------- */
 
-/* GL_LIGHT0 .. 3 and the other caps with a Zero bit */
+/* GL_LIGHT0 .. 3 and the other caps with an RPi bit */
 static uint32_t cap_bit (GLenum cap)
 {
 	switch (cap)
@@ -804,7 +804,7 @@ static uint32_t cap_bit (GLenum cap)
 	}
 }
 
-/* the caps without a Zero bit; NULL if not a cap */
+/* the caps without an RPi bit; NULL if not a cap */
 static bool *cap_flag (GLenum cap)
 {
 	switch (cap)
@@ -917,7 +917,7 @@ static bool texture_has_alpha (uint8_t format)
 	return format == PGPU_RGBA8888 || format == PGPU_RGBA4444 || format == PGPU_RGBA5551;
 }
 
-/* colour-renderable texture formats (RGB ones read alpha 1 on the Zero) */
+/* colour-renderable texture formats (RGB ones read alpha 1 on the RPi) */
 static bool texture_renderable (uint8_t format)
 {
 	return texture_has_alpha (format) || format == PGPU_RGB888 || format == PGPU_RGB565;
@@ -1051,10 +1051,10 @@ static bool target_has_alpha (void)
 	return f != GL_RGB565 && f != GL_RGB8_OES;
 }
 
-/* the bound framebuffer on the Zero, with its current attachments */
+/* the bound framebuffer on the RPi, with its current attachments */
 static void release_render_target (uint32_t hw);
 
-/* the Zero renders to a colour target: a framebuffer with only depth and/or
+/* the RPi renders to a colour target: a framebuffer with only depth and/or
    stencil gets a scratch colour texture (writes to it can't be seen) */
 static uint32_t scratch_texture (GLuint name, framebuffer_t *fb, unsigned w, unsigned h)
 {
@@ -1120,7 +1120,7 @@ static bool validate_framebuffer (void)
 			free_scratch (fb);
 		}
 		/* depth and stencil live in the renderbuffer: framebuffers with the
-		   same one share them (the Zero keeps depth and stencil together:
+		   same one share them (the RPi keeps depth and stencil together:
 		   the depth renderbuffer names them, else the stencil one) */
 		uint32_t flags = 0;
 		if (target_has_depth () || target_has_stencil ())
@@ -1147,7 +1147,7 @@ static bool validate_framebuffer (void)
 	return true;
 }
 
-/* enables as the Zero needs them: depth and stencil tests pass without the buffers */
+/* enables as the RPi needs them: depth and stencil tests pass without the buffers */
 static void validate_caps (void)
 {
 	uint32_t caps = S.caps;
@@ -1589,8 +1589,8 @@ static texture_t *texture_for_target (GLenum target, GLuint *name, unsigned *fac
 	return &S.textures[*name];
 }
 
-/* before a Zero texture is re-created or deleted: if it is the target of the
-   framebuffer bound on the Zero, bind the panel (which renders that job),
+/* before an RPi texture is re-created or deleted: if it is the target of the
+   framebuffer bound on the RPi, bind the panel (which renders that job),
    and have framebuffers on it re-created before their next use */
 static void release_render_target (uint32_t hw)
 {
@@ -1609,7 +1609,7 @@ static void release_render_target (uint32_t hw)
 	}
 }
 
-/* define level `level` with this size and format: create the Zero texture if
+/* define level `level` with this size and format: create the RPi texture if
    needed; false if the level can't be stored (inconsistent with level 0:
    the texture is incomplete in GL, and pgl ignores the level) */
 static bool define_level (GLuint name, texture_t *t, unsigned face, GLint level, GLsizei w, GLsizei h,
@@ -1646,7 +1646,7 @@ static bool define_level (GLuint name, texture_t *t, unsigned face, GLint level,
 		return true;
 	}
 
-	/* a mipmap level: the Zero has them for power-of-two sizes (a mipmapped
+	/* a mipmap level: the RPi has them for power-of-two sizes (a mipmapped
 	   non-power-of-two texture is incomplete in GL ES 2.0 anyway) */
 	if (!is_pot (t->width) || !is_pot (t->height))
 	{
@@ -1680,7 +1680,7 @@ static void empty_level (texture_t *t, unsigned face, GLint level)
 	}
 }
 
-/* complete as far as pgl knows (the Zero checks the rest: defined levels,
+/* complete as far as pgl knows (the RPi checks the rest: defined levels,
    NPOT rules) */
 static bool texture_usable (const texture_t *t)
 {
@@ -1705,7 +1705,7 @@ static bool check_level_size (GLenum target, GLint level, GLsizei w, GLsizei h, 
 }
 
 /* texels of the formats with several GL types (RGBA: 8888, 4444, 5551; RGB:
-   888, 565) to and from 8-bit RGBA, as the Zero converts them */
+   888, 565) to and from 8-bit RGBA, as the RPi converts them */
 static void unpack_texel (int format, const uint8_t *p, uint8_t rgba[4])
 {
 	uint32_t v = p[0] | (format_bytes[format] > 1 ? p[1] << 8 : 0);
@@ -1775,7 +1775,7 @@ static uint32_t unpack_stride (unsigned row_bytes)
    MAX_SIZE RGBA texels) */
 static uint8_t convert_rows[8192];
 
-/* GL_BGRA_EXT pixels (EXT_texture_format_BGRA8888): the Zero stores RGBA, so
+/* GL_BGRA_EXT pixels (EXT_texture_format_BGRA8888): the RPi stores RGBA, so
    blue and red are swapped on the way */
 static void texture_data_bgra (GLuint name, GLint level, unsigned face, GLint x, GLint y,
 			       GLsizei width, GLsizei height, const void *pixels)
@@ -2429,7 +2429,7 @@ void glRenderbufferStorage (GLenum target, GLenum internalformat, GLsizei width,
 	rb->generation++;
 	if (rb_is_color (internalformat) && width && height)
 	{
-		/* colour storage is a texture on the Zero; without alpha, it reads 1 */
+		/* colour storage is a texture on the RPi; without alpha, it reads 1 */
 		pgpu_texture_create (hw, width, height,
 				       internalformat == GL_RGB565 ? PGPU_RGB565
 				     : internalformat == GL_RGB8_OES ? PGPU_RGB888 : PGPU_RGBA8888);
@@ -2667,7 +2667,7 @@ void glGetRenderbufferParameteriv (GLenum target, GLenum pname, GLint *params)
 	case GL_RENDERBUFFER_WIDTH:		*params = rb->width;				break;
 	case GL_RENDERBUFFER_HEIGHT:		*params = rb->height;				break;
 	case GL_RENDERBUFFER_INTERNAL_FORMAT:	*params = rb->format ? rb->format : GL_RGBA4;	break;
-	/* the resolution the Zero stores (8-bit colour, 24-bit depth, 8-bit stencil) */
+	/* the resolution the RPi stores (8-bit colour, 24-bit depth, 8-bit stencil) */
 	case GL_RENDERBUFFER_RED_SIZE:
 	case GL_RENDERBUFFER_GREEN_SIZE:
 	case GL_RENDERBUFFER_BLUE_SIZE:		*params = color ? 8 : 0;			break;
@@ -3048,7 +3048,7 @@ void glReadPixels (GLint x, GLint y, GLsizei width, GLsizei height, GLenum forma
 			uint32_t timeout = 100 + span * n / 1000;
 			if (!pgpu_read_pixels (x + col, y + row, span, n, out, timeout))
 			{
-				ERROR (GL_OUT_OF_MEMORY);	/* no answer from the Zero */
+				ERROR (GL_OUT_OF_MEMORY);	/* no answer from the RPi */
 			}
 			for (uint32_t r = 0; r < n; r++)
 			{
@@ -3652,8 +3652,8 @@ static void link_binary (GLuint program, object_t *p, const pgpu_program_info_t 
 		v += info->uniforms[i].size * info->uniforms[i].components;
 	}
 
-	/* upload, and wait until the Zero has checked it */
-	drain_zero_errors (0);
+	/* upload, and wait until the RPi has checked it */
+	drain_rpi_errors (0);
 	pgpu_program_create (hw, info->blob, info->words);
 	memset (p->units, 0, sizeof p->units);
 	for (uint32_t i = 0; i < info->n_uniforms; i++)
@@ -3667,7 +3667,7 @@ static void link_binary (GLuint program, object_t *p, const pgpu_program_info_t 
 	static uint32_t cookie = 0xB1000000u;
 	pgpu_ping_wait (++cookie, 1000);
 	pgpu_link_settle ();
-	if (drain_zero_errors (hw))
+	if (drain_rpi_errors (hw))
 	{
 		p->log = rejected_log;
 		return;
@@ -4460,7 +4460,7 @@ static uint32_t mode_step (GLenum mode)
 
 /* a program draw too large for a PROGRAM_DRAW_INLINE packet: the client
    arrays (vertices lo .. hi) and the indices, rebased to lo, go to temporary
-   buffers on the Zero (re-creating a buffer that earlier draws of the frame
+   buffers on the RPi (re-creating a buffer that earlier draws of the frame
    use keeps their data) */
 static void draw_via_buffers (GLenum mode, GLint first, GLsizei count, const void *indices,
 			      uint32_t index_type, uint32_t buffer_mask, uint32_t client_mask)
@@ -4562,7 +4562,7 @@ static void draw_program (GLenum mode, GLint first, GLsizei count, bool indexed,
 		}
 		if (a->buffer)
 		{
-			buffer_mask |= 1u << i;		/* strides over 255: the Zero copies */
+			buffer_mask |= 1u << i;		/* strides over 255: the RPi copies */
 		}
 		else
 		{
@@ -4685,7 +4685,7 @@ static void stream_reserve (unsigned which, uint32_t bytes)
 	}
 }
 
-/* fixed function: client arrays and indices go to stream buffers (the Zero
+/* fixed function: client arrays and indices go to stream buffers (the RPi
    reads fixed-function vertex data when the draw arrives) */
 static void draw_ff (GLenum mode, GLint first, GLsizei count, bool indexed, uint32_t index_type,
 		     const void *indices)
@@ -4889,7 +4889,7 @@ static bool begin_draw (GLenum mode, GLsizei count)
 	return true;
 }
 
-/* GL has no vertex limit per draw; the Zero takes 65535 vertices. Lists and
+/* GL has no vertex limit per draw; the RPi takes 65535 vertices. Lists and
    strips are split (strips overlapping, triangle strips at even vertices to
    keep the winding); fans and loops would need their first vertex repeated. */
 #define MAX_DRAW_VERTICES	65535
@@ -5256,7 +5256,7 @@ void glLightfv (GLenum light, GLenum pname, const GLfloat *params)
 		float d[4] = {params[0], params[1], params[2], 0.0f};
 		mat_transform (d, S.modelview[S.modelview_depth], d);
 		memcpy (l->spot_direction, d, 3 * sizeof (float));
-		} return;				/* no spot lights on the Zero */
+		} return;				/* no spot lights on the RPi */
 	case GL_SPOT_EXPONENT:
 		if (params[0] < 0.0f || params[0] > 128.0f)
 		{
@@ -5477,7 +5477,7 @@ void glTexEnvfv (GLenum target, GLenum pname, const GLfloat *params)
 	switch (pname)
 	{
 	case GL_TEXTURE_ENV_MODE: {
-		/* ADD and COMBINE aren't supported by the Zero */
+		/* ADD and COMBINE aren't supported by the RPi */
 		GLenum mode = (GLenum) params[0];
 		if (mode != GL_MODULATE && mode != GL_REPLACE && mode != GL_DECAL && mode != GL_BLEND)
 		{
@@ -5757,7 +5757,7 @@ const GLubyte *glGetString (GLenum name)
 	switch (name)
 	{
 	case GL_VENDOR:				return (const GLubyte *) "pico-gpu";
-	case GL_RENDERER:			return (const GLubyte *) "VideoCore IV V3D (Pi Zero, pgpu)";
+	case GL_RENDERER:			return (const GLubyte *) "VideoCore IV V3D (RPi, pgpu)";
 	case GL_VERSION:			return (const GLubyte *) "OpenGL ES 2.0 pgl";
 	case GL_SHADING_LANGUAGE_VERSION:	return (const GLubyte *) "OpenGL ES GLSL ES 1.00 (precompiled, tools/glslc)";
 	case GL_EXTENSIONS:

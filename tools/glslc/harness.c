@@ -180,7 +180,7 @@ int main (int argc, char **argv)
 	eglBindAPI (EGL_OPENGL_ES_API);
 
 	/* render target: an 8888 pbuffer with depth and stencil. A window-system
-	   framebuffer like the Zero's panel (rows top down, so Mesa flips
+	   framebuffer like the RPi's panel (rows top down, so Mesa flips
 	   gl_FragCoord, gl_PointCoord and facing as for a window), with alpha:
 	   the fragment shader keeps the source alpha, which glslc's blend code
 	   needs. Mesa's colour output is BGRA (B in byte 0); glslc reorders it. */
@@ -243,7 +243,7 @@ int main (int argc, char **argv)
 
 	/* stencil test on, two-sided with uncommon write masks: the fragment
 	   shader then writes all three stencil setup words from uniforms (the
-	   Zero sets "always pass, keep" while the test is off) */
+	   RPi sets "always pass, keep" while the test is off) */
 	glEnable (GL_STENCIL_TEST);
 	glStencilFuncSeparate (GL_FRONT, GL_LESS, 1, 0x5A);
 	glStencilFuncSeparate (GL_BACK, GL_GREATER, 2, 0x3C);

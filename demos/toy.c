@@ -58,7 +58,7 @@ int main (void)
 {
 	stdio_init_all ();
 	pgpu_init ();
-	printf ("\ntoy %s: waiting for the Zero (READY)...\n", TOY_CAPTION);
+	printf ("\ntoy %s: waiting for the RPi (READY)...\n", TOY_CAPTION);
 	while (!pgpu_wait_ready (1000))
 	{
 	}
@@ -69,7 +69,7 @@ int main (void)
 	}
 	if (tries == 5)
 	{
-		printf ("toy: no answer from the Zero\n");
+		printf ("toy: no answer from the RPi\n");
 	}
 
 	GLuint prog = glCreateProgram ();

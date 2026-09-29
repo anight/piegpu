@@ -1,7 +1,7 @@
 /*
  * tcuPglPlatform.cpp - the dEQP platform for pgl (pico-gpu): an OpenGL ES 2.0
- * context whose calls go through pgl on the PC to the Zero (the commands of
- * docs/protocol.md over the Zero's USB, transports/pc-usb). The default
+ * context whose calls go through pgl on the PC to the RPi (the commands of
+ * docs/protocol.md over the RPi's USB, transports/pc-usb). The default
  * framebuffer is the panel (window): 320x240 RGB565, 24-bit depth, 8-bit
  * stencil; or a pbuffer (pglInitSurface): RGBA8888, 24-bit depth, 8-bit
  * stencil, --deqp-surface-width/height (Mesa CI runs vc4 on 256x256).
@@ -79,20 +79,20 @@ public:
 		static bool linkUp = false;
 		if (!linkUp)
 		{
-			pgpu_init ();			/* the USB link to the Zero */
+			pgpu_init ();			/* the USB link to the RPi */
 			linkUp = true;
 		}
 		if (pbuffer)
 		{
 			if (!pglInitSurface (width, height))
 			{
-				throw tcu::ResourceError ("pgl: no answer from the Zero");
+				throw tcu::ResourceError ("pgl: no answer from the RPi");
 			}
 			m_renderTarget = tcu::RenderTarget (width, height, tcu::PixelFormat (8, 8, 8, 8), 24, 8, 0);
 		}
 		else if (!pglInit ())
 		{
-			throw tcu::ResourceError ("pgl: no answer from the Zero");
+			throw tcu::ResourceError ("pgl: no answer from the RPi");
 		}
 
 		Loader loader;
@@ -142,7 +142,7 @@ class ContextFactory : public glu::ContextFactory
 {
 public:
 	ContextFactory (void)
-	:	glu::ContextFactory ("pgl", "pico-gpu: pgl on the PC, the Zero over USB")
+	:	glu::ContextFactory ("pgl", "pico-gpu: pgl on the PC, the RPi over USB")
 	{
 	}
 

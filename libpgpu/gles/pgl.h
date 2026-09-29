@@ -12,8 +12,8 @@
  *   PGL_PROGRAM_BINARY_PGPU, &NAME_info, sizeof NAME_info). NAME_info is
  *   defined by the generated header. Attribute locations are those glslc was
  *   given (-a order).
- * - glGetError returns errors found here at once; errors the Zero reports come
- *   in asynchronously (after glFlush, when the Zero has executed the command).
+ * - glGetError returns errors found here at once; errors the RPi reports come
+ *   in asynchronously (after glFlush, when the RPi has executed the command).
  *   After glFinish, all errors of earlier commands are there.
  * - The default framebuffer is the panel: RGB565, 24-bit depth, 8-bit stencil.
  *   Framebuffer objects need a colour attachment (a texture or an RGBA4,
@@ -60,7 +60,7 @@ typedef char		GLchar;
 
 /* ---- pgl ---------------------------------------------------------------------- */
 
-/* after pgpu_init (): RESET the Zero, set the GL defaults; false if the Zero
+/* after pgpu_init (): RESET the RPi, set the GL defaults; false if the RPi
    doesn't answer */
 bool pglInit (void);
 /* pglInit, and the default framebuffer offscreen instead of the panel: a
@@ -72,7 +72,7 @@ bool pglInitSurface (unsigned width, unsigned height);
 void pglSwapBuffers (void);
 /* video: texture (a GL texture name) becomes a video texture of stream (1 or
    2): RGBA, width x height (width a power of two, 32 or more; height a
-   multiple of 16), linear, clamped, one level; the Zero's decoder puts H.264
+   multiple of 16), linear, clamped, one level; the RPi's decoder puts H.264
    of coded_width x coded_height into it, scaled, and it shows the frame that's
    due at each frame (docs/protocol.md 7.12). avcc: the samples are as MP4 has
    them (pgpu_mp4's avcC); NULL: Annex B. Feed it with pgpu_video_sample or
@@ -88,9 +88,9 @@ bool pglVideoResize (GLuint texture, unsigned stream, unsigned width, unsigned h
    (it changes when a monitor is plugged in or out: pgpu_get_display). A
    viewport and scissor box covering the whole screen follow it */
 void pglGetScreenSize (unsigned *width, unsigned *height);
-/* the last ERROR reply of the Zero (code, opcode, detail; docs/protocol.md 9),
-   for finding out what a GL error from the Zero was about */
-void pglGetZeroError (uint32_t error[3]);
+/* the last ERROR reply of the RPi (code, opcode, detail; docs/protocol.md 9),
+   for finding out what a GL error from the RPi was about */
+void pglGetRPiError (uint32_t error[3]);
 
 /* ---- GL ES 2.0 ---------------------------------------------------------------- */
 

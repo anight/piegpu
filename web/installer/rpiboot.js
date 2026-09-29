@@ -1,7 +1,8 @@
-// rpiboot.js - boots a Raspberry Pi Zero over its USB port from the page
-// (WebUSB), as raspberrypi/usbboot's rpiboot does: a Zero without a bootable
-// SD card waits in its boot ROM (USB 0a5c:2763) for bootcode.bin; that then
-// asks for the rest (config.txt, start.elf, fixup.dat, kernel.img, ...) file
+// rpiboot.js - boots an RPi over its USB port from the page (WebUSB), as
+// raspberrypi/usbboot's rpiboot does (verified on a Zero; a Zero 2 W took
+// bootcode.bin, then stopped answering): an RPi without a bootable SD card
+// waits in its boot ROM (USB 0a5c:2763) for bootcode.bin; that then asks for
+// the rest (config.txt, start.elf, fixup.dat, kernel.img, ...) file
 // by file, and the page serves them from memory.
 //
 // The protocol (usbboot main.c): a "write" is a vendor control transfer
@@ -103,7 +104,7 @@ async function sendBootcode (dev, bootcode, log)
 	try
 	{
 		const code = new DataView ((await dev.read (4)).buffer).getInt32 (0, true);
-		// (rpiboot reports a nonzero code as a failure, yet the Zero's ROM
+		// (rpiboot reports a nonzero code as a failure, yet the RPi's ROM
 		// answered 0x400c0 here and ran bootcode.bin: the next stage tells)
 		log (`The boot ROM took it (status 0x${(code >>> 0).toString (16)})`);
 	}
@@ -168,7 +169,7 @@ export async function bootStage (usbDevice, files, log)
 	{
 		if (!usbDevice.serialNumber)
 		{
-			log ('The Zero\'s boot ROM is waiting: sending bootcode.bin');
+			log ('The RPi\'s boot ROM is waiting: sending bootcode.bin');
 			await sendBootcode (dev, files.get ('bootcode.bin'), log);
 			return 'rom';
 		}

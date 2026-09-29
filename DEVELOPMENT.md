@@ -1,11 +1,13 @@
 # Developing pico-gpu
 
-Notes on how the Zero side works inside, for changing it. How to build and
-use it is in the [README](README.md).
+Notes on how the RPi side works inside, for changing it. How to build and
+use it is in the [README](README.md). Supported for now: the Raspberry Pi
+Zero / Zero W and the Zero 2 W; where a model is named below, the fact was
+measured on that one.
 
 ## The run log: a restart explains itself
 
-A Zero that restarts on its own used to leave nothing behind:
+An RPi that restarts on its own used to leave nothing behind:
 
 - **A crash can't report itself.** An exception, a failed assertion or
   `LOGPANIC` halts the CPU. Its message goes through the logger to the USB
@@ -172,7 +174,7 @@ Getters for the page or the installer's INFO: `GetPreviousEnd ()` with
 `GetPreviousLines ()`.
 
 The report covers only the run just before this one. The next restart
-replaces it. In particular, the page restarts a Zero that doesn't answer when
+replaces it. In particular, the page restarts an RPi that doesn't answer when
 it connects, and that restart overwrites a crash report before the page could
 show it.
 

@@ -4,7 +4,7 @@
 //
 //   PCM_CLK  GPIO18  header pin 12   (scope: bit clock)
 //   PCM_FS   GPIO19  header pin 35   (scope: frame sync = bit clock / 64)
-//   PCM_DIN  GPIO20  header pin 38   \ loopback jumper 40 -> 38 lets the Zero
+//   PCM_DIN  GPIO20  header pin 38   \ loopback jumper 40 -> 38 lets the RPi
 //   PCM_DOUT GPIO21  header pin 40   / verify every received word
 //
 // Frames: 64 bit clocks, two 32-bit channels back to back (all bits payload).

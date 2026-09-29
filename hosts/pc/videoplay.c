@@ -1,6 +1,6 @@
 /*
- * videoplay.c - an MP4's H.264 track played by the Zero, through its USB: the
- * samples go to the Zero's decoder as they are in the file (as much as its
+ * videoplay.c - an MP4's H.264 track played by the RPi, through its USB: the
+ * samples go to the RPi's decoder as they are in the file (as much as its
  * buffer takes), the video is a texture (pglVideoTexture) drawn on a quad over
  * the screen, letterboxed. Loops: the next round's times follow on.
  *
@@ -150,7 +150,7 @@ int main (int argc, char **argv)
 	pgpu_init ();
 	if (!pglInit ())
 	{
-		fprintf (stderr, "videoplay: no Zero\n");
+		fprintf (stderr, "videoplay: no RPi\n");
 		return 1;
 	}
 	unsigned screen_w, screen_h;
@@ -205,7 +205,7 @@ int main (int argc, char **argv)
 	unsigned frames = 0, sent = 0;
 	while (pgpu_time_us () - start < seconds * 1000000ull)
 	{
-		/* samples, as many as the Zero's buffer takes, from the "card"
+		/* samples, as many as the RPi's buffer takes, from the "card"
 		   straight into the packets */
 		while (have && pgpu_video_room (STREAM) >= sample.size)
 		{
@@ -237,7 +237,7 @@ int main (int argc, char **argv)
 		frames++;
 
 		/* 60 frames a second (over USB there are no FRAME pulses to pace on;
-		   unpaced, frames would pile up in the Zero's buffer ahead of the
+		   unpaced, frames would pile up in the RPi's buffer ahead of the
 		   video's samples) */
 		static uint64_t next_frame;
 		next_frame = next_frame ? next_frame + 16667 : pgpu_time_us ();

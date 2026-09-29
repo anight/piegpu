@@ -1,6 +1,6 @@
 /*
  * screen.h - the demos follow the screen: its size changes when an HDMI
- * monitor is plugged in or out (the Zero's DISPLAY reply; pgl moves a
+ * monitor is plugged in or out (the RPi's DISPLAY reply; pgl moves a
  * full-screen viewport to the new size at pglSwapBuffers).
  */
 #ifndef SCREEN_H
@@ -12,7 +12,7 @@
 #include "gles/pgl.h"
 #include "pgpu.h"
 
-/* what the Zero shows on, on the console */
+/* what the RPi shows on, on the console */
 static inline void screen_print (const char *name, const pgpu_display_t *d)
 {
 	printf ("%s: screen %ux%u on %s", name, d->width, d->height,
