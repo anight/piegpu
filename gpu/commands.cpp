@@ -198,6 +198,7 @@ CCommands::CCommands (CRenderer *pRenderer, CLink *pLink)
 	m_Geometry.SetJobFullHandler (JobFullHandler, this);
 	m_Textures.SetJobFlush (JobFullHandler, this);
 	m_Programs.SetJobFlush (JobFullHandler, this);
+	m_Textures.SetConverter (ConvertVideoFrame, this);
 
 	DefaultState ();
 }
@@ -1609,6 +1610,16 @@ void CCommands::FlushJob (boolean bForce)
 void CCommands::JobFullHandler (void *pParam)
 {
 	static_cast<CCommands *> (pParam)->FlushJob (FALSE);
+}
+
+// a new video frame into its texture's tiled storage (CTextures::SetExternal,
+// from m_Video.FrameEnd (): between frames, the V3D idle), counted as this
+// frame's rendering
+boolean CCommands::ConvertVideoFrame (void *pParam, u32 nSrcBus, u32 nDstBus, unsigned nWidth,
+				      unsigned nHeight, boolean bT)
+{
+	CCommands *pThis = static_cast<CCommands *> (pParam);
+	return pThis->m_pRenderer->CopyToTiled (nSrcBus, nDstBus, nWidth, nHeight, bT, &pThis->m_FrameStats);
 }
 
 // the job has rendered: storage replaced during it can be freed

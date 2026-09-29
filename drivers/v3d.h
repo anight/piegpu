@@ -39,12 +39,24 @@ public:
 			u32 nOverflowAddress, u32 nOverflowSize,
 			unsigned *pBinUs = nullptr, unsigned *pRenderUs = nullptr);
 
+	/// \brief Run a rendering control list alone (no binning: tiles that only
+	/// load and store), wait for completion
+	/// \param pRenderUs Microseconds spent rendering (may be nullptr)
+	/// \return Operation successful (FALSE on timeout or error)
+	boolean RunRender (u32 nRenderStart, u32 nRenderEnd, unsigned *pRenderUs = nullptr);
+
 	void DumpStatus (void);
+
+	/// \brief Called over and over while a job runs (the gpu app yields to its
+	/// scheduler there, so that VCHIQ's tasks run during long jobs too)
+	static void SetWaitHandler (void (*pHandler) (void))	{ s_pWaitHandler = pHandler; }
 
 	/// \brief Power cycle the V3D (after a job timed out)
 	boolean Reset (void);
 
 private:
+	static void (*s_pWaitHandler) (void);
+
 	static u32 Read (unsigned nOffset);
 	static void Write (unsigned nOffset, u32 nValue);
 };

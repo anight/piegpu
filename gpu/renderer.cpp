@@ -12,6 +12,7 @@
 
 #define BIN_CL_SIZE		(512 * 1024)
 #define RENDER_CL_SIZE		(16 * 1024)
+#define COPY_CL_SIZE		(12 * 1024)	// 11 bytes a tile, 2048x2048
 #define TILE_ALLOC_SIZE		(4 * 1024 * 1024)
 #define OVERFLOW_SIZE		(1 * 1024 * 1024)
 #define MAX_TILES		(32 * 32)
@@ -26,6 +27,9 @@
 #define STORE_DISABLE_COLOR_CLEAR	(1 << 13)
 #define STORE_DISABLE_ZS_CLEAR		(1 << 14)
 #define STORE_DISABLE_VG_MASK_CLEAR	(1 << 15)
+#define MODE_RGBA8888			(1 << 2)	// tile rendering mode config
+#define MODE_TILING_T			(1 << 6)
+#define MODE_TILING_LT			(2 << 6)
 
 
 #define V3D_DEPTH_OFFSET		101
@@ -72,6 +76,7 @@ boolean CRenderer::Initialize (COutput *pOutput)
 
 	m_pBinCL = (u8 *) CV3D::Alloc (BIN_CL_SIZE);
 	m_pRenderCL = (u8 *) CV3D::Alloc (RENDER_CL_SIZE);
+	m_pCopyCL = (u8 *) CV3D::Alloc (COPY_CL_SIZE);
 	m_pRecords = (u8 *) CV3D::Alloc (MaxDraws * 16);
 	m_pRecordPool = (u8 *) CV3D::Alloc (RecordPoolBytes);
 	m_pVertexPool = (u8 *) CV3D::Alloc (VertexPoolBytes);
@@ -563,6 +568,56 @@ boolean CRenderer::RenderJob (const TRenderTarget &rTarget, u32 nLoadColorBus, b
 	m_nUniformWords = 0;
 	m_nRecordBytes = 0;
 	m_nDropped = 0;
+
+	return bOK;
+}
+
+// each tile loaded from the raster image (RGBA8888, the rows the mode's width
+// apart, as the panel's buffer) and stored in the tiled layout of the mode's
+// buffer; the store clips at the image's size
+boolean CRenderer::CopyToTiled (u32 nSrcBus, u32 nDstBus, unsigned nWidth, unsigned nHeight,
+				boolean bT, TRenderStats *pStats)
+{
+	unsigned nTilesX = (nWidth + V3D_TILE_SIZE-1) / V3D_TILE_SIZE;
+	unsigned nTilesY = (nHeight + V3D_TILE_SIZE-1) / V3D_TILE_SIZE;
+	if (11 + nTilesX * nTilesY * 11 > COPY_CL_SIZE)
+	{
+		return FALSE;
+	}
+
+	CControlList Render (m_pCopyCL, COPY_CL_SIZE);
+	Render.Add8 (V3D_TILE_RENDERING_MODE_CONFIG);
+	Render.Add32 (nDstBus);
+	Render.Add16 (nWidth);
+	Render.Add16 (nHeight);
+	Render.Add16 (MODE_RGBA8888 | (bT ? MODE_TILING_T : MODE_TILING_LT));
+
+	for (unsigned y = 0; y < nTilesY; y++)
+	{
+		for (unsigned x = 0; x < nTilesX; x++)
+		{
+			// the load happens when the tile coordinates are processed
+			Render.Add8 (V3D_LOAD_TILE_BUFFER_GENERAL);
+			Render.Add16 (LOADSTORE_BUFFER_COLOR | LOADSTORE_TILING_RASTER);	// RGBA8888
+			Render.Add32 (nSrcBus);
+
+			Render.Add8 (V3D_TILE_COORDINATES);
+			Render.Add8 (x);
+			Render.Add8 (y);
+
+			boolean bLast = x == nTilesX-1 && y == nTilesY-1;
+			Render.Add8 (bLast ? V3D_STORE_MS_TILE_BUFFER_EOF : V3D_STORE_MS_TILE_BUFFER);
+		}
+	}
+	assert (!Render.Overflow ());
+	Render.Flush ();
+
+	unsigned nRenderUs = 0;
+	boolean bOK = m_pV3D->RunRender (Render.GetStartBus (), Render.GetEndBus (), &nRenderUs);
+	if (pStats)
+	{
+		pStats->nRenderUs += nRenderUs;
+	}
 
 	return bOK;
 }

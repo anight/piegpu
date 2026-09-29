@@ -42,6 +42,8 @@ LOGMODULE ("v3d");
 // both together stay below the devlink watchdog (10 s)
 #define JOB_TIMEOUT_US		4000000
 
+void (*CV3D::s_pWaitHandler) (void) = nullptr;
+
 CV3D::CV3D (void)
 {
 }
@@ -123,6 +125,10 @@ boolean CV3D::RunJob (u32 nBinStart, u32 nBinEnd, u32 nRenderStart, u32 nRenderE
 
 	while ((Read (V3D_BFC) & 0xFF) == 0)
 	{
+		if (s_pWaitHandler)
+		{
+			(*s_pWaitHandler) ();
+		}
 		if (CTimer::GetClockTicks () - nStart > JOB_TIMEOUT_US)
 		{
 			LOGERR ("Binning timeout");
@@ -139,6 +145,10 @@ boolean CV3D::RunJob (u32 nBinStart, u32 nBinEnd, u32 nRenderStart, u32 nRenderE
 
 	while ((Read (V3D_RFC) & 0xFF) == 0)
 	{
+		if (s_pWaitHandler)
+		{
+			(*s_pWaitHandler) ();
+		}
 		if (CTimer::GetClockTicks () - nBinDone > JOB_TIMEOUT_US)
 		{
 			LOGERR ("Rendering timeout");
@@ -158,6 +168,40 @@ boolean CV3D::RunJob (u32 nBinStart, u32 nBinEnd, u32 nRenderStart, u32 nRenderE
 	if (pRenderUs)
 	{
 		*pRenderUs = nEnd - nBinDone;
+	}
+
+	return TRUE;
+}
+
+boolean CV3D::RunRender (u32 nRenderStart, u32 nRenderEnd, unsigned *pRenderUs)
+{
+	Write (V3D_L2CACTL, 1 << 2);		// as RunJob
+	Write (V3D_SLCACTL, 0x0F0F0F0F);
+	Write (V3D_RFC, 1);
+
+	unsigned nStart = CTimer::GetClockTicks ();
+
+	Write (V3D_CT1CA, nRenderStart);
+	Write (V3D_CT1EA, nRenderEnd);		// starts rendering
+
+	while ((Read (V3D_RFC) & 0xFF) == 0)
+	{
+		if (s_pWaitHandler)
+		{
+			(*s_pWaitHandler) ();
+		}
+		if (CTimer::GetClockTicks () - nStart > JOB_TIMEOUT_US)
+		{
+			LOGERR ("Rendering timeout");
+			DumpStatus ();
+			Reset ();
+			return FALSE;
+		}
+	}
+
+	if (pRenderUs)
+	{
+		*pRenderUs = CTimer::GetClockTicks () - nStart;
 	}
 
 	return TRUE;

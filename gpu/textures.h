@@ -50,13 +50,22 @@ public:
 	u32 GenerateMipmap (u32 nId);
 	u32 Delete (u32 nId);
 
-	/// \brief A video texture: RGBA, nWidth x nHeight, no storage of its own;
-	///	   its pixels are a video frame's (SetExternal), raster rows
+	/// \brief A video texture: RGBA, nWidth x nHeight; its pixels are a video
+	///	   frame's (SetExternal), raster rows, which the converter (SetConverter)
+	///	   copies into the texture's own tiled storage, once a frame: the TMU
+	///	   reads tiled pixels about four times as fast (without storage or a
+	///	   converter it reads the frame's raster rows)
 	/// \param nWidth a power of two, 32 or more (raster rows), nHeight a multiple of 16
 	u32 CreateExternal (u32 nId, unsigned nWidth, unsigned nHeight);
 	/// \brief The frame a video texture shows from now on (4 KB aligned,
-	///	   nWidth x nHeight RGBA, R in byte 0); nullptr: black
+	///	   nWidth x nHeight RGBA, R in byte 0); nullptr: black. Call between
+	///	   frames (a converted frame replaces the storage's pixels)
 	void SetExternal (u32 nId, const void *pPixels);
+	/// \brief Copies a raster RGBA frame (bus address) into a texture's tiled
+	/// level 0 (bus address, T-format else LT); returns FALSE on failure
+	typedef boolean TConvert (void *pParam, u32 nSrcBus, u32 nDstBus, unsigned nWidth,
+				  unsigned nHeight, boolean bT);
+	void SetConverter (TConvert *pConvert, void *pParam)	{ m_pConvert = pConvert; m_pConvertParam = pParam; }
 	boolean IsExternal (u32 nId) const
 	{
 		return nId >= 1 && nId <= MaxTextures && m_Textures[nId].bValid && m_Textures[nId].bExternal;
@@ -129,6 +138,7 @@ private:
 		boolean bUsed;			// by a draw of the current frame
 		boolean bExternal;		// a video texture: pExternal, raster RGBA
 		const void *pExternal;
+		boolean bConverted;		// pExternal's pixels are in Storage (tiled)
 		u32 nMinFilter, nMagFilter, nWrapS, nWrapT;
 	};
 
@@ -136,7 +146,7 @@ private:
 	u8 *PixelAddress (TTexture *pTexture, unsigned nFace, unsigned nLevel, unsigned x, unsigned y);
 	u32 *TexelAddress (TTexture *pTexture, unsigned nFace, unsigned nLevel, unsigned x, unsigned y);
 	boolean Complete (const TTexture *pTexture) const;
-	void UseExternal (const TTexture &T, TConfig *pConfig);
+	void UseExternal (TTexture &T, TConfig *pConfig);
 	static boolean HasAlpha (u32 nFormat);
 	boolean Alloc (TTexture *pTexture, TStorage *pStorage);
 	void Free (TStorage *pStorage);
@@ -155,6 +165,9 @@ private:
 	void *m_pJobFlushParam;
 
 	u32 *m_pFallback;
+
+	TConvert *m_pConvert;
+	void *m_pConvertParam;
 };
 
 #endif

@@ -21,6 +21,15 @@
 
 LOGMODULE ("gpu");
 
+// while a V3D job runs: VCHIQ's tasks (the video decoder's messages) run too;
+// a few more milliseconds without them at the end of a frame (a frame's
+// conversion into its texture, or a test's 4 ms wait) stalled the decoder for
+// good after four frames
+static void V3DWait (void)
+{
+	CScheduler::Get ()->Yield ();
+}
+
 CKernel::CKernel (void)
 :	m_Timer (&m_Interrupt),
 	m_Logger (m_Options.GetLogLevel (), &m_Timer),
@@ -342,6 +351,8 @@ TShutdownMode CKernel::Run (void)
 
 	SendDisplay (FALSE);
 	m_Commands.SendInfo ();			// once after boot, with DISPLAY (docs/protocol.md 9)
+
+	CV3D::SetWaitHandler (V3DWait);
 
 	unsigned nLastReport = m_Timer.GetUptime ();
 	unsigned nWindowStart = CTimer::GetClockTicks ();	// microseconds

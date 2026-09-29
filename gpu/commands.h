@@ -227,6 +227,8 @@ private:
 	void UpdateTarget (void);
 	void FlushJob (boolean bForce);
 	static void JobFullHandler (void *pParam);
+	static boolean ConvertVideoFrame (void *pParam, u32 nSrcBus, u32 nDstBus, unsigned nWidth,
+					  unsigned nHeight, boolean bT);
 	void EndJob (void);
 	u32 Clear (u32 nMask, u32 nColor, float fDepth, u8 nStencil);
 	u32 ReadRect (s32 x, s32 y, unsigned nWidth, unsigned nHeight, u32 *pOut);

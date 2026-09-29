@@ -149,6 +149,14 @@ public:
 	boolean RenderJob (const TRenderTarget &rTarget, u32 nLoadColorBus, boolean bLoadZS,
 			   const TJobClear &rClear, TRenderStats *pStats);
 
+	/// \brief Copy an RGBA8888 raster image into a tiled one of the same size
+	/// with the tile buffer (a load and a store per tile, nothing drawn): a
+	/// video frame into its texture, which the TMU reads much faster tiled
+	/// \param nSrcBus raster rows nWidth * 4 bytes apart
+	/// \param bT T-format, else LT
+	boolean CopyToTiled (u32 nSrcBus, u32 nDstBus, unsigned nWidth, unsigned nHeight,
+			     boolean bT, TRenderStats *pStats);
+
 	/// \brief Hand the back buffer to the panel (FRAME pulse) and swap buffers
 	void Present (TRenderStats *pStats);
 
@@ -180,6 +188,7 @@ private:
 
 	u8 *m_pBinCL;
 	u8 *m_pRenderCL;
+	u8 *m_pCopyCL;			// CopyToTiled ()
 	u8 *m_pRecords;			// NV shader state records, 16 bytes each
 	u8 *m_pRecordPool;		// GL shader records
 	unsigned m_nRecordBytes;

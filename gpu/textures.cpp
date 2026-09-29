@@ -71,7 +71,9 @@ CTextures::CTextures (void)
 	m_nRetired (0),
 	m_pJobFlush (nullptr),
 	m_pJobFlushParam (nullptr),
-	m_pFallback (nullptr)
+	m_pFallback (nullptr),
+	m_pConvert (nullptr),
+	m_pConvertParam (nullptr)
 {
 	memset (m_Textures, 0, sizeof m_Textures);
 }
@@ -338,6 +340,18 @@ u32 CTextures::CreateExternal (u32 nId, unsigned nWidth, unsigned nHeight)
 	T.nMagFilter = PGPU_LINEAR;
 	T.nWrapS = T.nWrapT = PGPU_CLAMP_TO_EDGE;
 	T.bExternal = TRUE;
+
+	// storage for the frames, tiled (SetExternal); none: the TMU reads the
+	// frames' raster rows
+	Layout (&T);
+	if (Alloc (&T, &T.Storage))
+	{
+		CV3D::Flush (T.Storage.pBase, T.nBytes);	// no dirty ARM lines over the V3D's pixels
+	}
+	else
+	{
+		T.nBytes = 0;
+	}
 	T.bValid = TRUE;
 
 	return 0;
@@ -348,7 +362,12 @@ void CTextures::SetExternal (u32 nId, const void *pPixels)
 	if (IsExternal (nId))
 	{
 		assert (!((uintptr) pPixels & 4095));
-		m_Textures[nId].pExternal = pPixels;
+		TTexture &T = m_Textures[nId];
+		T.pExternal = pPixels;
+		T.bConverted =    pPixels && T.Storage.pBase && m_pConvert
+			       && (*m_pConvert) (m_pConvertParam, CV3D::BusAddress (pPixels),
+						 CV3D::BusAddress (T.Storage.pBase + T.nLevel0),
+						 T.nWidth, T.nHeight, T.Levels[0].bT);
 	}
 }
 
@@ -663,9 +682,10 @@ boolean CTextures::Use (u32 nId, TConfig *pConfig)
 	return TRUE;
 }
 
-// a video texture: its frame as raster RGBA (one level: a mipmap filter samples
-// level 0 as the filter's first part says), or black without a frame
-void CTextures::UseExternal (const TTexture &T, TConfig *pConfig)
+// a video texture: its frame from the tiled storage, or as raster RGBA (one
+// level: a mipmap filter samples level 0 as the filter's first part says), or
+// black without a frame
+void CTextures::UseExternal (TTexture &T, TConfig *pConfig)
 {
 	if (!T.pExternal)
 	{
@@ -676,8 +696,17 @@ void CTextures::UseExternal (const TTexture &T, TConfig *pConfig)
 	boolean bNearest =    T.nMinFilter == PGPU_NEAREST || T.nMinFilter == PGPU_NEAREST_MIPMAP_NEAREST
 			   || T.nMinFilter == PGPU_NEAREST_MIPMAP_LINEAR;
 	boolean bPOT = IsPowerOfTwo (T.nWidth) && IsPowerOfTwo (T.nHeight);
-	pConfig->P0 = CV3D::BusAddress (T.pExternal) | (TEX_TYPE_RGBA32R & 15) << P0_TYPE__SHIFT;
-	pConfig->P1 =   P1_TYPE4
+	if (T.bConverted)
+	{
+		T.bUsed = TRUE;			// storage: retired, not freed, when deleted now
+		pConfig->P0 =   CV3D::BusAddress (T.Storage.pBase + T.nLevel0)
+			      | TEX_TYPE_RGBA8888 << P0_TYPE__SHIFT;
+	}
+	else
+	{
+		pConfig->P0 = CV3D::BusAddress (T.pExternal) | (TEX_TYPE_RGBA32R & 15) << P0_TYPE__SHIFT;
+	}
+	pConfig->P1 =   (T.bConverted ? 0 : P1_TYPE4)
 		      | (T.nHeight & 2047) << P1_HEIGHT__SHIFT
 		      | (T.nWidth & 2047) << P1_WIDTH__SHIFT
 		      | (T.nMagFilter == PGPU_NEAREST ? 1 : 0) << P1_MAGFILT__SHIFT
