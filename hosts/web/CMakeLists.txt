@@ -7,7 +7,7 @@
 # the Pico.
 #
 #   source ~/emsdk/emsdk_env.sh
-#   emcmake cmake -S hosts/web -B hosts/web/build && make -C hosts/web/build
+#   emcmake cmake -S hosts/web -B hosts/web/build && make -C hosts/web/build -j$(($(nproc) - 1))
 #
 # The output (DEMO.js, DEMO.wasm) goes to web/installer/demos/: gears, and
 # video (its MP4 put at /video.mp4 by the page).

@@ -18,6 +18,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 OUT=$HERE/firmware
 BOOT=$ROOT/circle/boot
+JOBS=$(( $(nproc) > 1 ? $(nproc) - 1 : 1 ))	# a core left free
 
 rm -rf "$OUT"
 BOARDS=zero
@@ -63,7 +64,7 @@ if [ -f "$EMSDK_ENV" ]; then
 	# shellcheck disable=SC1090
 	source "$EMSDK_ENV" >/dev/null 2>&1
 	emcmake cmake -S "$ROOT/hosts/web" -B "$ROOT/hosts/web/build" -DCMAKE_BUILD_TYPE=Release >/dev/null
-	make -C "$ROOT/hosts/web/build" >/dev/null
+	make -C "$ROOT/hosts/web/build" -j"$JOBS" >/dev/null
 	echo "demos/: gears, video (WebAssembly)"
 else
 	echo "demos/: none (no Emscripten at $EMSDK_ENV): the page can't run its demos"

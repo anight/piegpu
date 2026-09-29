@@ -17,7 +17,7 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/.." && pwd)
-JOBS=$(nproc)
+JOBS=$(( $(nproc) > 1 ? $(nproc) - 1 : 1 ))	# a core left free
 
 build_zero ()
 {

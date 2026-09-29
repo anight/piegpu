@@ -276,7 +276,7 @@ window (`pglInit`, `pglGetScreenSize`, `pglSwapBuffers`; `pglInitSurface` for
 an off-screen one). `hosts/pc/videoplay.c` is an example program.
 
 ```bash
-cmake -S hosts/pc -B hosts/pc/build && make -C hosts/pc/build
+cmake -S hosts/pc -B hosts/pc/build && make -C hosts/pc/build -j$(($(nproc) - 1))
 ```
 
 - Over USB there is no FRAME line: `pgpu_wait_frame` sends a PING instead,

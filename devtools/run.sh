@@ -137,7 +137,7 @@ APP=$(cd "$1" && pwd)
 SECS=${2:-10}
 
 log "Building $APP"
-make -C "$APP" -s
+make -C "$APP" -s -j"$(( $(nproc) > 1 ? $(nproc) - 1 : 1 ))"
 
 mkdir -p "$BOOTDIR"
 cp "$CIRCLEBOOT"/{bootcode.bin,start.elf,fixup.dat} "$BOOTDIR/"

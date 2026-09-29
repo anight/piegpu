@@ -12,6 +12,7 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 TAG=mesa-26.2.3
 SRC=$ROOT/third_party/mesa
 PREFIX=$ROOT/third_party/mesa-install
+JOBS=$(( $(nproc) > 1 ? $(nproc) - 1 : 1 ))	# a core left free
 
 if [ ! -d "$SRC" ]; then
 	git clone --depth 1 --branch "$TAG" https://gitlab.freedesktop.org/mesa/mesa.git "$SRC"
@@ -24,4 +25,4 @@ cd "$SRC"
 	-Degl=enabled -Dgbm=enabled -Dgles1=disabled -Dgles2=enabled -Dopengl=true \
 	-Dllvm=disabled -Dtools=drm-shim -Dvalgrind=disabled -Dlibunwind=disabled \
 	-Dzstd=disabled
-ninja -C build install
+ninja -C build -j"$JOBS" install

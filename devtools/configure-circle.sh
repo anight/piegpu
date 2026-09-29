@@ -39,6 +39,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$HERE/..
 TOOLCHAINS=$HOME/toolchains
+JOBS=$(( $(nproc) > 1 ? $(nproc) - 1 : 1 ))	# a core left free
 CIRCLE_REPO=${CIRCLE_REPO:-https://github.com/anight/circle.git}
 CIRCLE_BRANCH=${CIRCLE_BRANCH:-piegpu}
 
@@ -68,9 +69,9 @@ cd "$TREE"
 	-d HEAP_BLOCK_BUCKET_SIZES=0x40,0x400,0x1000,0x4000,0x10000,0x40000,0x80000,0x100000,0x200000,0x400000,0x800000,0x1000000,0x2000000,0x4000000 \
 	-d PGPU_HEAP_BUCKETS -d MEM_PERSISTENT_SIZE=0x10000
 ./makeall clean >/dev/null
-./makeall
+MAKE="make -j$JOBS" ./makeall
 # the add-ons the gpu app links (gpu/Makefile: LIBS)
 for addon in addon/SDCard addon/fatfs addon/linux addon/vc4/interface/vcos addon/vc4/vchiq; do
 	make -C "$addon" clean >/dev/null
-	make -C "$addon"
+	make -C "$addon" -j"$JOBS"
 done

@@ -6,6 +6,16 @@ cmake_minimum_required(VERSION 3.13)
 # Pico 2 W (RP2350) at the SDK default 150 MHz: I2S bit clock 75 MHz
 set(PICO_BOARD pico2_w CACHE STRING "Board type")
 
+# ninja (and idf.py, which runs it) at a core fewer than the machine has
+cmake_host_system_information(RESULT PGPU_CORES QUERY NUMBER_OF_LOGICAL_CORES)
+math(EXPR PGPU_JOBS "${PGPU_CORES} - 1")
+if(PGPU_JOBS LESS 1)
+	set(PGPU_JOBS 1)
+endif()
+set_property(GLOBAL PROPERTY JOB_POOLS pgpu_jobs=${PGPU_JOBS})
+set(CMAKE_JOB_POOL_COMPILE pgpu_jobs)
+set(CMAKE_JOB_POOL_LINK pgpu_jobs)
+
 include(pico_sdk_import.cmake)
 
 project(pgpu_pico C CXX ASM)

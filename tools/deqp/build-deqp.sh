@@ -11,6 +11,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 CTS=$ROOT/third_party/VK-GL-CTS
 BUILD=$ROOT/third_party/deqp-build
+JOBS=$(( $(nproc) > 1 ? $(nproc) - 1 : 1 ))	# a core left free
 COMMIT=1d3e8178af79e52d5467b379fad58f221fbe3d40
 HOST=$ROOT/hosts/pc
 
@@ -23,7 +24,7 @@ ln -sfn "$ROOT/tools/deqp/target" "$CTS/targets/pgl"
 
 # pgl
 cmake -S "$HOST" -B "$HOST/build" -DCMAKE_BUILD_TYPE=RelWithDebInfo > /dev/null
-make -C "$HOST/build" -j"$(nproc)" pgl
+make -C "$HOST/build" -j"$JOBS" pgl
 
 # gl* functions of pgl.h for the platform's loader
 mkdir -p "$BUILD/generated"
@@ -39,4 +40,4 @@ cmake -S "$CTS" -B "$BUILD" -DDEQP_TARGET=pgl -DCMAKE_BUILD_TYPE=RelWithDebInfo 
 	-DPGL_INCLUDE_DIRS="$ROOT/libpgpu;$ROOT/libpgpu/gles;$ROOT/protocol" \
 	-DPGL_GENERATED_DIR="$BUILD/generated" \
 	-DPGL_LIBRARY="$HOST/build/libpgl.a"
-make -C "$BUILD" -j"$(nproc)" deqp-gles2
+make -C "$BUILD" -j"$JOBS" deqp-gles2
