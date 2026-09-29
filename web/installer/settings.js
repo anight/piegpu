@@ -25,11 +25,18 @@ export function makeCmdline (s)
 	return options.join (' ') + '\n';
 }
 
-export function makeConfig (s)
+// the boards pico-gpu is built for (web/installer/make-firmware.sh)
+export const BOARDS = {zero: 'Raspberry Pi Zero / Zero W', zero2: 'Raspberry Pi Zero 2 W'};
+
+// board: 'zero' (32 bit, kernel.img), 'zero2' (64 bit, kernel8.img), or 'any'
+// (a blank board started over USB: which it is shows only then; the Pi
+// firmware's [pi02] filter picks the Zero 2 W's lines)
+export function makeConfig (s, board = 'zero')
 {
 	const lines = [
-		'# pico-gpu on a Raspberry Pi Zero (written by the installer page)',
-		'arm_64bit=0',
+		board === 'any' ? '# pico-gpu on a Raspberry Pi Zero or Zero 2 W (the installer page, starting it over USB)'
+				: `# pico-gpu on a ${BOARDS[board]} (written by the installer page)`,
+		...(board === 'zero2' ? ['# 64 bit: the firmware starts kernel8.img', 'arm_64bit=1'] : ['arm_64bit=0']),
 		'initial_turbo=0',
 		'# memory for the VideoCore (its video decoder)',
 		'gpu_mem=128',
@@ -56,6 +63,10 @@ export function makeConfig (s)
 	else
 	{
 		lines.push ('# HDMI mode: the firmware chooses (it prefers TV modes)');
+	}
+	if (board === 'any')
+	{
+		lines.push ('[pi02]', '# a Zero 2 W: 64 bit, kernel8.img', 'arm_64bit=1', '[all]');
 	}
 	return lines.join ('\n') + '\n';
 }

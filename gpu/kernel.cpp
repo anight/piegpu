@@ -27,7 +27,9 @@ CKernel::CKernel (void)
 	m_DevLink (&m_Interrupt, &m_Gadget),
 	m_Installer (&m_Interrupt, &m_Timer, &m_DevLink),
 	m_nHostLine (0),
+#ifdef PGPU_VIDEO
 	m_VCHIQ (CMemorySystem::Get (), &m_Interrupt),
+#endif
 	m_OutputMode (OutputAuto),
 	m_HostMode (HostAuto),
 	m_bGUD (TRUE),
@@ -71,7 +73,9 @@ boolean CKernel::Initialize (void)
 	       && (m_Gadget.SetStream (&m_USBBulkLink), TRUE)
 	       && m_DevLink.Initialize ()
 	       && DetectPanel ()
+#ifdef PGPU_VIDEO
 	       && m_VCHIQ.Initialize ()
+#endif
 	       && (!(m_bPanelPresent || m_OutputMode == OutputPanel) || m_Panel.Initialize ())
 	       && (m_OutputMode == OutputPanel || m_HDMI.Initialize ());
 }

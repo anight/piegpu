@@ -73,6 +73,11 @@ function(pgpu_demo target app)
 		pgpu_glsl_program(TARGET ${target} NAME toy_${name} VS ${PGPU_DEMO_SHADERS}/toy.vert
 			DIR ${PGPU_DEMO_SHADERS} ARGS -a a_pos:float:2 -v triangles)
 
+	elseif(app STREQUAL "video" AND EMSCRIPTEN)	# a page's: the MP4 is the page's file
+		target_sources(${target} PRIVATE ${PGPU_DEMOS}/video.c ${PGPU_DEMOS}/video_mp4_none.c)
+		target_compile_definitions(${target} PRIVATE PGPU_VIDEO_PATH="/video.mp4")
+		program(video -a a_pos:float:2 -v triangles)
+
 	elseif(app STREQUAL "video")		# an MP4 into a video texture (video.c)
 		set(mp4 "${PGPU_VIDEO_MP4}")
 		if(NOT mp4)

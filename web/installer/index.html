@@ -187,13 +187,16 @@ progress
 		<div class="buttons">
 			<button id="connect" class="primary">Connect to pico-gpu</button>
 			<button id="boot">Start a blank Zero</button>
+			<button id="reset" disabled>Reset</button>
 			<button id="continue" class="primary" hidden>Continue</button>
 		</div>
 		<p class="hint" style="margin-top: 12px">
 			<b>Connect to pico-gpu</b> if the card already has pico-gpu (the panel shows it).
 			<b>Start a blank Zero</b> if the card is new or empty: the Zero then waits for this
-			computer, and the page starts pico-gpu on it. If the card holds another system
-			(Raspberry Pi OS, say), take it out first and put it back when the page asks.</p>
+			computer, and the page starts pico-gpu on it (a Zero or a Zero 2 W: the board takes its
+			own build). If the card holds another system
+			(Raspberry Pi OS, say), take it out first and put it back when the page asks.
+			<b>Reset</b> restarts a connected Zero from its card.</p>
 		<div id="connect-status" class="status" hidden></div>
 	</section>
 
@@ -278,19 +281,22 @@ progress
 		<div class="buttons">
 			<button id="install" class="primary" disabled>Install pico-gpu</button>
 			<button id="save-settings" disabled>Save the settings only</button>
-			<button id="run-gears" disabled>Run gears</button>
-			<button id="stop-gears" hidden>Stop gears</button>
-			<button id="reset" disabled>Reset</button>
+			<button id="run-gears" disabled>Test OpenGL</button>
+			<button id="test-video" disabled>Test video</button>
+			<button id="stop-demo" hidden>Stop</button>
 		</div>
 		<progress id="progress" max="1" value="0" hidden></progress>
 		<div id="action-status" class="status" hidden></div>
 		<p class="hint" style="margin-top: 12px">
 			<b>Install pico-gpu</b> writes the firmware and the settings above to the card, then
 			restarts the Zero from it; <b>Save the settings only</b> writes just the settings.
-			<b>Run gears</b> runs glxgears' three gears on the Zero: the demo runs in this page
+			<b>Test OpenGL</b> runs gears (glxgears' three gears) on the Zero: the demo runs in this page
 			(WebAssembly) and sends its OpenGL ES commands over the serial port (it needs the Host
-			setting Auto or USB on the card). While it runs, the Zero takes commands from this page
-			only; stopping it restarts the Zero. <b>Reset</b> restarts the Zero from its card.</p>
+			setting Auto or USB on the card). <b>Test video</b> plays the Sintel trailer (854x480
+			H.264; Blender Foundation, <a href="https://durian.blender.org/">CC BY 3.0</a>) the same
+			way, decoded by the Zero's VideoCore (not on a Zero 2 W: its 64-bit build has no video).
+			While a demo runs, the Zero takes commands from this page only; <b>Stop</b> restarts
+			the Zero.</p>
 	</section>
 
 	<section>

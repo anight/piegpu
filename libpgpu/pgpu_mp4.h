@@ -27,6 +27,7 @@ extern "C" {
 
 #define PGPU_MP4_MAX_AVCC	256		/* bytes: SPS and PPS of any usual stream */
 #define PGPU_MP4_WINDOW		256		/* bytes of a sample table read at a time */
+#define PGPU_MP4_MAX_TITLE	64		/* bytes of the title kept, with its NUL */
 
 typedef struct
 {
@@ -52,6 +53,7 @@ typedef struct
 	int64_t shift;				/* the edit list's start, ticks (subtracted) */
 	uint8_t avcc[PGPU_MP4_MAX_AVCC];	/* the avcC box's payload */
 	uint32_t avcc_size;
+	char title[PGPU_MP4_MAX_TITLE];		/* the metadata's (UTF-8, cut), or "" */
 	bool error;				/* a read failed or the tables are broken */
 
 	pgpu_mp4_table_t stts, ctts, stss, stsz, stsc, stco;

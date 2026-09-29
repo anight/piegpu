@@ -18,6 +18,27 @@ in [docs/protocol.md](docs/protocol.md).
 | `devtools/` | boot the Zero over USB, logs, screenshots (`run.sh`) |
 | `web/installer/` | a page that installs pico-gpu on the Zero's SD card over USB |
 
+## Boards and building
+
+pico-gpu runs on a Raspberry Pi Zero / Zero W (32 bit, `kernel.img`) and is
+built for the Zero 2 W as well (64 bit, `kernel8.img`; not yet tried on
+one). Circle builds in its source tree, so each board has its own: `circle`
+and `circle-zero2` (made from `circle` and `patches/`). Toolchains: Arm GNU
+15.2 in `~/toolchains` (`arm-none-eabi` and `aarch64-none-elf`).
+
+```bash
+devtools/configure-circle.sh zero2
+```
+
+```bash
+devtools/build-gpu.sh all
+```
+
+The Zero 2 W's build has no video decoding: Circle's VideoCore OS layer, which
+MMAL needs, is 32 bit only (video commands answer as without MMAL). Its HDMI
+hot-plug line is GPIO28 (the Zero's: GPIO46). `web/installer/make-firmware.sh`
+puts both builds on the installer page, which picks the one for the board.
+
 ## Wiring
 
 ```
@@ -185,10 +206,14 @@ Then open http://localhost:8765 and follow the steps:
 
 - **A blank or new card:** the Zero's boot ROM finds nothing to start and waits
   for USB. "Start a blank Zero" boots pico-gpu from the page (WebUSB, the
-  rpiboot protocol: `rpiboot.js`). A card without a FAT file system can be
-  formatted there (one FAT32 partition).
+  rpiboot protocol: `rpiboot.js`). The page serves both builds and a
+  `config.txt` whose `[pi02]` lines make a Zero 2 W ask for its 64-bit
+  `kernel8.img` (a Zero: `kernel.img`); once pico-gpu runs it says which board
+  it is, and Install writes that board's files only. A card without a FAT
+  file system can be formatted there (one FAT32 partition).
 - **A card with pico-gpu:** "Connect to pico-gpu" (Web Serial). Install again,
-  or change the settings only.
+  or change the settings only. If pico-gpu doesn't answer (a program left it
+  taking GL commands), the page restarts it; "Reset" restarts it any time.
 - **A card with another system:** take it out, start the Zero from the page,
   and put the card in when the page asks.
 
@@ -197,14 +222,17 @@ then renamed into place. At the end the Zero restarts from the card, and the
 page shows where the screen went. Measured: 3.5 MB in 5.4 s; a 64 GB card
 formatted in 7.3 s.
 
-**Try it: Run gears.** The page runs gears in the browser: `demos/gears.c`
-with libpgpu compiled to WebAssembly (`hosts/web`, Emscripten), its GL
-commands going over the same Web Serial port as the installer's (the PC's
-serial transport; `web/installer/gl.js` moves the bytes). No driver or udev
-rule is needed. Stop restarts the Zero, which takes commands from the serial
-port until then. `make-firmware.sh` builds the demo when Emscripten is
-installed (`EMSDK`, default `~/emsdk`); measured from Node against the
-Zero: 60 fps, render 1.2 ms, as `gears_host`.
+**Test OpenGL, Test video.** The page runs demos in the browser, with
+libpgpu compiled to WebAssembly (`hosts/web`, Emscripten), their GL commands
+going over the same Web Serial port as the installer's (the PC's serial
+transport; `web/installer/gl.js` moves the bytes). No driver or udev rule is
+needed. Test OpenGL runs `demos/gears.c` (60 fps, render 1.2 ms, as
+`gears_host`); Test video runs `demos/video.c` on the Sintel trailer (854x480
+H.264, Blender Foundation, CC BY 3.0; the MP4's title is the bottom line),
+decoded by the Zero's VideoCore: 24 fps, 0 dropped. Stop restarts the Zero,
+which takes commands from the serial port until then. `make-firmware.sh`
+builds the demos when Emscripten is installed (`EMSDK`, default `~/emsdk`)
+and downloads the trailer (Blender's server doesn't let a page fetch it).
 
 ## The Zero as a USB monitor for Linux
 

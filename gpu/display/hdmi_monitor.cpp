@@ -9,7 +9,10 @@
 #include <circle/logger.h>
 #include <circle/util.h>
 
-#define HPD_PIN			46		// low: connected (Pi Zero)
+// the hot-plug line, low while connected: GPIO46 on a Zero (seen on ours),
+// GPIO28 on a Zero 2 W (Raspberry Pi's bcm2710-rpi-zero-2-w.dts: hpd-gpios)
+#define HPD_PIN_ZERO		46
+#define HPD_PIN_ZERO2		28
 
 #define SAMPLE_US		20000		// hot-plug line
 #define STABLE_SAMPLES		10		// a change counts after 200 ms
@@ -46,7 +49,8 @@
 LOGMODULE ("hdmi");
 
 CHDMIMonitor::CHDMIMonitor (void)
-:	m_bLastSample (FALSE),
+:	m_nHPDPin (HPD_PIN_ZERO),
+	m_bLastSample (FALSE),
 	m_nSameSamples (0),
 	m_nLastSampleTicks (0),
 	m_nLastEDIDTicks (0)
@@ -56,6 +60,8 @@ CHDMIMonitor::CHDMIMonitor (void)
 
 void CHDMIMonitor::Initialize (void)
 {
+	m_nHPDPin =   CMachineInfo::Get ()->GetMachineModel () == MachineModelZero2W
+		    ? HPD_PIN_ZERO2 : HPD_PIN_ZERO;
 	m_bLastSample = ReadHPD ();
 	m_nSameSamples = STABLE_SAMPLES;
 	m_nLastSampleTicks = CTimer::GetClockTicks ();
@@ -122,7 +128,7 @@ boolean CHDMIMonitor::Update (void)
 
 boolean CHDMIMonitor::ReadHPD (void)
 {
-	return !(read32 (ARM_GPIO_GPLEV0 + HPD_PIN / 32 * 4) & 1 << (HPD_PIN % 32));
+	return !(read32 (ARM_GPIO_GPLEV0 + m_nHPDPin / 32 * 4) & 1 << (m_nHPDPin % 32));
 }
 
 // a monitor has appeared: its EDID now (at boot: the firmware is done with

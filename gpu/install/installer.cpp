@@ -15,10 +15,18 @@ LOGMODULE ("install");
 #define DRIVE		"SD:"
 #define BUFFER_BYTES	(12 * 1024)
 
+// this build's kernel on the card (the firmware's default name: Zero 32 bit,
+// Zero 2 W 64 bit)
+#if AARCH == 64
+	#define KERNEL		"kernel8.img"
+#else
+	#define KERNEL		"kernel.img"
+#endif
+
 // the files INFO reports
 static const char *const Files[] =
 {
-	"bootcode.bin", "start.elf", "fixup.dat", "kernel.img", "config.txt", "cmdline.txt"
+	"bootcode.bin", "start.elf", "fixup.dat", "kernel.img", "kernel8.img", "config.txt", "cmdline.txt"
 };
 
 static u32 CRCTable[256];
@@ -252,13 +260,14 @@ void CInstaller::Info (void)
 	       Build.GetLength () ? " " : "", (const char *) Build);
 }
 
-// the build line in the card's kernel.img (build_info.h: "fw=... fwbuilt=...
-// fwconfig=..."), or "" (none there, or an older build without it)
+// the build line in the card's kernel for this board (KERNEL; build_info.h:
+// "fw=... fwbuilt=... fwconfig=..."), or "" (none there, or an older build
+// without it)
 CString CInstaller::CardBuildInfo (void)
 {
 	CString Line;
 	FIL File;
-	if (f_open (&File, DRIVE "/kernel.img", FA_READ) != FR_OK)
+	if (f_open (&File, DRIVE "/" KERNEL, FA_READ) != FR_OK)
 	{
 		return Line;
 	}

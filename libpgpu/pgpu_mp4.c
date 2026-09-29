@@ -266,6 +266,30 @@ static bool video_track (pgpu_mp4_t *m, uint64_t trak, uint64_t trak_end)
 	       && !m->error;
 }
 
+/* the title in the metadata: udta, meta, ilst, (c)nam, data (as ffmpeg and
+   iTunes write it); meta has a version and flags in that layout, none in
+   QuickTime's */
+static void read_title (pgpu_mp4_t *m, uint64_t moov, uint64_t moov_end)
+{
+	uint64_t udta, udta_size, meta, meta_size, ilst, ilst_size, nam, nam_size, data, data_size;
+	if (   !find (m, moov, moov_end, TYPE ('u', 'd', 't', 'a'), &udta, &udta_size)
+	    || !find (m, udta, udta + udta_size, TYPE ('m', 'e', 't', 'a'), &meta, &meta_size)
+	    || (   !find (m, meta + 4, meta + meta_size, TYPE ('i', 'l', 's', 't'), &ilst, &ilst_size)
+		&& !find (m, meta, meta + meta_size, TYPE ('i', 'l', 's', 't'), &ilst, &ilst_size))
+	    || !find (m, ilst, ilst + ilst_size, TYPE (0xA9, 'n', 'a', 'm'), &nam, &nam_size)
+	    || !find (m, nam, nam + nam_size, TYPE ('d', 'a', 't', 'a'), &data, &data_size)
+	    || data_size <= 8)
+	{
+		return;
+	}
+	uint32_t n = data_size - 8 < sizeof m->title - 1 ? (uint32_t) data_size - 8 : sizeof m->title - 1;
+	if (!pgpu_mp4_read (m, data + 8, m->title, n))	/* (type and locale first) */
+	{
+		n = 0;
+	}
+	m->title[n] = '\0';
+}
+
 static bool open_file (pgpu_mp4_t *m)
 {
 	uint64_t moov, moov_size;
@@ -273,6 +297,8 @@ static bool open_file (pgpu_mp4_t *m)
 	{
 		return false;
 	}
+	read_title (m, moov, moov + moov_size);
+	m->error = false;			/* (a file without a title is fine) */
 	uint64_t p = moov, end = moov + moov_size, trak, trak_size;
 	while (find (m, p, end, TYPE ('t', 'r', 'a', 'k'), &trak, &trak_size))
 	{

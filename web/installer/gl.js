@@ -92,9 +92,10 @@ export class GLStream
 	}
 }
 
-// run demos/NAME.js with this stream; print (line): its output. Resolves
-// with its exit code when it ends (stopped: 0).
-export async function runDemo (name, stream, print)
+// run demos/NAME.js with this stream; print (line): its output; files: path
+// -> bytes, put in its file system first (the video demo's /video.mp4).
+// Resolves with its exit code when it ends (stopped: 0).
+export async function runDemo (name, stream, print, files = {})
 {
 	const createDemo = (await import (new URL (`./demos/${name}.js`, import.meta.url))).default;
 	return new Promise ((resolve, reject) =>
@@ -103,6 +104,7 @@ export async function runDemo (name, stream, print)
 			glIO: stream,
 			print,
 			printErr: print,
+			preRun: [module => Object.entries (files).forEach (([path, bytes]) => module.FS.writeFile (path, bytes))],
 			onExit: resolve,
 			onAbort: what => reject (new Error (`${name}: ${what}`)),
 		}).catch (reject);

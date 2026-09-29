@@ -1,8 +1,9 @@
 //
 // hdmi_monitor.h
 //
-// Watches the mini-HDMI connector: the hot-plug line (HPD, GPIO46, low while
-// a monitor is connected - read only, the firmware owns the pin) and, when a
+// Watches the mini-HDMI connector: the hot-plug line (HPD, low while a
+// monitor is connected: GPIO46 on a Zero, GPIO28 on a Zero 2 W - read only,
+// the firmware owns the pin) and, when a
 // monitor appears, its EDID, read over the DDC bus (BSC2, I2C address 0x50)
 // directly. The firmware's EDID property tag can't be used: it keeps
 // answering with the EDID read at boot after the monitor is gone.
@@ -51,6 +52,7 @@ private:
 private:
 	THDMIState m_State;
 
+	unsigned m_nHPDPin;
 	boolean m_bLastSample;
 	unsigned m_nSameSamples;
 	unsigned m_nLastSampleTicks;

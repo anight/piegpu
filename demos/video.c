@@ -13,6 +13,7 @@
  * at most AHEAD_US of video ahead of the frame on screen.
  */
 #include <stdio.h>
+#include <ctype.h>
 #include <string.h>
 #include "pico/stdlib.h"
 #include "gles/pgl.h"
@@ -113,9 +114,19 @@ int main (void)
 		printf ("video: the linked-in file isn't an MP4 with an H.264 track\n");
 		return 1;
 	}
-	printf ("video: %s: %ux%u H.264, %u samples, %.2f s, %u MB\n", source, (unsigned) mp4.width,
+	printf ("video: %s: %ux%u H.264, %u samples, %.2f s, %u MB%s%s\n", source, (unsigned) mp4.width,
 		(unsigned) mp4.height, (unsigned) mp4.samples, mp4.duration_us / 1e6,
-		(unsigned) (mp4.size >> 20));
+		(unsigned) (mp4.size >> 20), mp4.title[0] ? ", title " : "", mp4.title);
+
+	/* the bottom line: the file's title, in the HUD's capitals */
+	char label[sizeof mp4.title] = "VIDEO";
+	if (mp4.title[0])
+	{
+		for (size_t i = 0; i < sizeof label; i++)
+		{
+			label[i] = (char) toupper ((unsigned char) mp4.title[i]);
+		}
+	}
 
 	GLuint prog = glCreateProgram ();
 	glProgramBinaryOES (prog, PGL_PROGRAM_BINARY_PGPU, &video_info, sizeof video_info);
@@ -223,7 +234,7 @@ int main (void)
 		{
 			hud_begin ();
 			hud_perf (vp[2] - hud_perf_width (0.5f) - 2, 2, 0.5f, &m);
-			hud_text_scaled (4, vp[3] - 12, "VIDEO", HUD_RGBA (255, 255, 255, 200), 0.5f);
+			hud_text_scaled (4, vp[3] - 12, label, HUD_RGBA (255, 255, 255, 200), 0.5f);
 			hud_end ();
 			if (++windows % 5 == 0)
 			{

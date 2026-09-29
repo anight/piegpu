@@ -4,15 +4,14 @@
 
 import {USB_FILTERS, bootStage, waitForBootDevice} from './rpiboot.js';
 import {SERIAL_FILTERS, Installer, crc32} from './pgi.js';
-import {DEFAULTS, makeCmdline, makeConfig, parseSettings} from './settings.js';
+import {BOARDS, DEFAULTS, makeCmdline, makeConfig, parseSettings} from './settings.js';
 import {GLStream, runDemo} from './gl.js';
 
 const $ = id => document.getElementById (id);
-const FIRMWARE = ['bootcode.bin', 'start.elf', 'fixup.dat', 'kernel.img'];
 const STORE = 'pico-gpu-installer-settings';
 
 let manifest = null;
-let firmware = null;			// Map name -> Uint8Array (fetched once)
+let firmware = {};			// board -> Map name -> Uint8Array (fetched once)
 let installer = null;			// the connection to pico-gpu
 let card = null;			// the last INFO
 let cardHost = null;			// host= in the card's cmdline.txt (null: not read)
@@ -95,7 +94,7 @@ function settingsChanged ()
 		$(id).disabled = !custom;
 	}
 	$('preview-cmdline').textContent = '# cmdline.txt\n' + makeCmdline (s);
-	$('preview-config').textContent = '# config.txt\n' + makeConfig (s);
+	$('preview-config').textContent = '# config.txt\n' + makeConfig (s, currentBoard () ?? 'any');
 	try
 	{
 		localStorage.setItem (STORE, JSON.stringify (s));
@@ -120,7 +119,8 @@ async function loadManifest ()
 	try
 	{
 		manifest = await (await fetch ('firmware/manifest.json', {cache: 'no-cache'})).json ();
-		$('version').textContent = `Firmware ${manifest.version}, built ${manifest.built}.`;
+		const boards = Object.keys (manifest.boards || {}).map (b => BOARDS[b]).join (' and ');
+		$('version').textContent = `Firmware ${manifest.version} for the ${boards}, built ${manifest.built}.`;
 	}
 	catch (e)
 	{
@@ -128,37 +128,67 @@ async function loadManifest ()
 	}
 }
 
-async function loadFirmware ()
+// 'zero' or 'zero2': the board a running pico-gpu reports (INFO; an older one
+// doesn't say: a Zero); null before one has answered
+function currentBoard ()
 {
-	if (firmware)
+	if (!card)
 	{
-		return firmware;
+		return null;
 	}
-	if (!manifest)
+	return /Zero 2/.test (card.board) ? 'zero2' : 'zero';
+}
+
+// the firmware's files for a board (its kernel: kernel.img or kernel8.img)
+function firmwareNames (board)
+{
+	return manifest?.boards?.[board]?.files.map (f => f.name)
+	       ?? ['bootcode.bin', 'start.elf', 'fixup.dat', board === 'zero2' ? 'kernel8.img' : 'kernel.img'];
+}
+
+async function loadFirmware (board)
+{
+	if (firmware[board])
 	{
-		throw new Error ('No firmware on this page (firmware/manifest.json)');
+		return firmware[board];
+	}
+	const set = manifest?.boards?.[board];
+	if (!set)
+	{
+		throw new Error (manifest ? `This page has no firmware for the ${BOARDS[board]} (make-firmware.sh)`
+					  : 'No firmware on this page (firmware/manifest.json)');
 	}
 	const files = new Map ();
-	for (const f of manifest.files)
+	for (const f of set.files)
 	{
-		const bytes = new Uint8Array (await (await fetch (`firmware/${f.name}`, {cache: 'no-cache'})).arrayBuffer ());
+		const path = `firmware/${board}/${f.name}`;
+		const bytes = new Uint8Array (await (await fetch (path, {cache: 'no-cache'})).arrayBuffer ());
 		const crc = crc32 (bytes).toString (16).padStart (8, '0');
 		if (bytes.length !== f.size || crc !== f.crc32)
 		{
-			throw new Error (`firmware/${f.name} doesn't match the manifest`);
+			throw new Error (`${path} doesn't match the manifest`);
 		}
 		files.set (f.name, bytes);
 	}
-	firmware = files;
+	firmware[board] = files;
 	return files;
 }
 
-// the boot files plus this page's settings
+// the files to start a blank board over USB: every board's (the Pi firmware
+// asks for its own kernel: kernel.img, or kernel8.img on a Zero 2 W with the
+// config.txt's [pi02] lines), plus this page's settings
 async function bootFiles ()
 {
-	const files = new Map (await loadFirmware ());
+	const files = new Map ();
+	for (const board of Object.keys (manifest?.boards || {zero: null}))
+	{
+		for (const [name, bytes] of await loadFirmware (board))
+		{
+			files.set (name, bytes);
+		}
+	}
 	const s = readForm ();
-	files.set ('config.txt', new TextEncoder ().encode (makeConfig (s)));
+	files.set ('config.txt', new TextEncoder ().encode (makeConfig (s, 'any')));
 	files.set ('cmdline.txt', new TextEncoder ().encode (makeCmdline (s)));
 	return files;
 }
@@ -191,7 +221,24 @@ async function openInstaller (port)
 {
 	await attach (port);
 	status ('connect-status', 'Connected to pico-gpu.', 'ok');
-	await refreshCard (true);
+	try
+	{
+		await refreshCard (true);
+	}
+	catch (e)
+	{
+		// no answer: pico-gpu may be taking GL commands from the serial port
+		// (a program ended without restarting it): restart it, ask again
+		if (!/^No answer/.test (e.message))
+		{
+			throw e;
+		}
+		status ('connect-status', 'pico-gpu doesn\'t answer (busy with GL commands?): restarting it…', 'warn');
+		const connection = installer;
+		await restartZero (() => connection.restart ());
+		await refreshCard (true);
+		status ('connect-status', 'Connected to pico-gpu (restarted).', 'ok');
+	}
 }
 
 async function connect ()
@@ -303,6 +350,7 @@ function mb (n)
 async function refreshCard (loadSettings)
 {
 	card = await installer.info ();
+	settingsChanged ();			// (config.txt for this board)
 	const facts = $('card-facts');
 	facts.innerHTML = '';
 	const add = (k, v) =>
@@ -357,8 +405,9 @@ async function refreshCard (loadSettings)
 // of it is there
 function describeInstalled ()
 {
-	const have = FIRMWARE.filter (n => card.files.has (n));
-	if (have.length < FIRMWARE.length)
+	const names = firmwareNames (currentBoard ());
+	const have = names.filter (n => card.files.has (n));
+	if (have.length < names.length)
 	{
 		return have.length ? `partly on the card (${have.join (', ')})` : 'not on the card';
 	}
@@ -402,9 +451,10 @@ async function install (settingsOnly)
 	}
 	await run (async () =>
 	{
-		const files = settingsOnly ? new Map () : await loadFirmware ();
+		const board = currentBoard ();
+		const files = settingsOnly ? new Map () : await loadFirmware (board);
 		const all = [...files.entries (),
-			     ['config.txt', new TextEncoder ().encode (makeConfig (s))],
+			     ['config.txt', new TextEncoder ().encode (makeConfig (s, board))],
 			     ['cmdline.txt', new TextEncoder ().encode (makeCmdline (s))]];
 		const total = all.reduce ((n, [, b]) => n + b.length, 0);
 		const bar = $('progress');
@@ -454,11 +504,37 @@ async function restartZero (how)
 	return seen.pop ();
 }
 
-// ---- gears ----------------------------------------------------------------------
+// ---- demos on the Zero -----------------------------------------------------------
 
-let gears = null;			// the running demo's GLStream
+// the video the Test video button plays (web/installer/make-firmware.sh puts
+// it here: the Sintel trailer, Blender Foundation, CC BY 3.0)
+const TEST_VIDEO = 'videos/sintel_trailer-480p.mp4';
 
-async function runGears ()
+let demo = null;			// the running demo's GLStream
+
+async function testOpenGL ()
+{
+	await runOnZero ('gears', 'The OpenGL test', async () => ({}));
+}
+
+async function testVideo ()
+{
+	await runOnZero ('video', 'The video', async () =>
+	{
+		status ('action-status', 'Fetching the test video…');
+		const response = await fetch (TEST_VIDEO);
+		if (!response.ok)
+		{
+			throw new Error (`No test video on this page (${TEST_VIDEO}: web/installer/make-firmware.sh)`);
+		}
+		return {'/video.mp4': new Uint8Array (await response.arrayBuffer ())};
+	});
+}
+
+// run demos/NAME.js (WebAssembly) on the Zero over the serial port; files ():
+// its files. Then the Zero restarts: it keeps taking commands from the
+// serial port until it does.
+async function runOnZero (name, title, files)
 {
 	if (cardHost === 'i2s')
 	{
@@ -469,38 +545,38 @@ async function runGears ()
 	await run (async () =>
 	{
 		const connection = installer;
-		gears = new GLStream (bytes => connection.writeRaw (bytes));
-		connection.rawSink = chunk => gears.push (chunk);
-		$('stop-gears').hidden = false;
+		const demoFiles = await files ();
+		demo = new GLStream (bytes => connection.writeRaw (bytes));
+		connection.rawSink = chunk => demo.push (chunk);
+		$('stop-demo').hidden = false;
 		status ('action-status', 'Starting…');
 		let code;
 		try
 		{
-			code = await runDemo ('gears', gears, line =>
+			code = await runDemo (name, demo, line =>
 			{
 				if (line.trim ())
 				{
-					log (`(gears) ${line}`);
+					log (`(${name}) ${line}`);
 				}
-				const m = line.match (/^gears: (.*fps.*)$/);
+				const m = line.match (new RegExp (`^${name}: (.*fps.*)$`));
 				if (m || / running$/.test (line))
 				{
 					status ('action-status', m ? `Running: ${m[1]}.` : 'Running.', 'ok');
 				}
-			});
+			}, demoFiles);
 		}
 		finally
 		{
 			connection.rawSink = null;
-			gears = null;
-			$('stop-gears').hidden = true;
+			demo = null;
+			$('stop-demo').hidden = true;
 		}
 
-		// the Zero keeps taking commands from the serial port until it restarts
-		status ('action-status', code ? 'Gears ended with an error (see the log). Restarting the Zero…'
+		status ('action-status', code ? `${title} ended with an error (see the log). Restarting the Zero…`
 				       : 'Stopped. Restarting the Zero…', code ? 'bad' : '');
 		await restartZero (() => connection.restart ());
-		status ('action-status', code ? 'Gears ended with an error (see the log); the Zero restarted.'
+		status ('action-status', code ? `${title} ended with an error (see the log); the Zero restarted.`
 				       : 'Stopped; the Zero restarted.', code ? 'bad' : 'ok');
 		status ('connect-status', 'Connected to pico-gpu.', 'ok');
 	}, 'action-status');
@@ -514,12 +590,11 @@ async function reset ()
 {
 	await run (async () =>
 	{
-		status ('action-status', 'Restarting the Zero from its card…');
+		status ('connect-status', 'Restarting the Zero from its card…');
 		const connection = installer;
 		const screen = await restartZero (() => connection.restart ());
-		status ('action-status', `The Zero restarted.${screen ? ' ' + screen + '.' : ''}`, 'ok');
-		status ('connect-status', 'Connected to pico-gpu.', 'ok');
-	}, 'action-status');
+		status ('connect-status', `The Zero restarted; connected.${screen ? ' ' + screen + '.' : ''}`, 'ok');
+	});
 }
 
 // ---- plumbing -------------------------------------------------------------------
@@ -556,12 +631,14 @@ function updateButtons ()
 {
 	const fat = !!(installer && card?.card && card.fs.startsWith ('FAT'));
 	$('install').disabled = busy || !fat;
-	$('save-settings').disabled = busy || !fat || !FIRMWARE.every (n => card.files.has (n));
+	$('save-settings').disabled = busy || !fat || !firmwareNames (currentBoard ()).every (n => card.files.has (n));
 	$('connect').disabled = busy;
 	$('boot').disabled = busy;
 	$('format').disabled = busy;
 	$('card-retry').disabled = busy;
 	$('run-gears').disabled = busy || !installer;
+	// (the Zero 2 W's 64-bit build has no video decoder)
+	$('test-video').disabled = busy || !installer || currentBoard () === 'zero2';
 	$('reset').disabled = busy || !installer;
 
 	// the board, its settings and the actions: while a board is connected
@@ -596,8 +673,9 @@ function init ()
 	$('card-retry').onclick = () => run (() => refreshCard (true));
 	$('install').onclick = () => install (false);
 	$('save-settings').onclick = () => install (true);
-	$('run-gears').onclick = runGears;
-	$('stop-gears').onclick = () => gears?.stop ();
+	$('run-gears').onclick = testOpenGL;
+	$('test-video').onclick = testVideo;
+	$('stop-demo').onclick = () => demo?.stop ();
 	$('reset').onclick = reset;
 	loadManifest ();
 	updateButtons ();

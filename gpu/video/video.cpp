@@ -173,6 +173,11 @@ u32 CVideo::Open (unsigned nStream, u32 nCodec, u32 nTexture, unsigned nWidth, u
 	}
 	s = mmal_port_format_commit (pIn);
 	CHECK (s, "decoder input format");
+	// its pictures go to the ISP in the VideoCore's own format: as I420 the
+	// ISP returned empty frames whenever the decoder's row (the width rounded
+	// up to 32) wasn't a multiple of 64 (720, 800, 854 wide: the chroma rows
+	// not a multiple of 32)
+	S.pDecoder->output[0]->format->encoding = MMAL_ENCODING_OPAQUE;
 	s = mmal_port_format_commit (S.pDecoder->output[0]);
 	CHECK (s, "decoder output format");
 
