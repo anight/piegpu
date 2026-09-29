@@ -3,7 +3,7 @@
 # GLSL compiled at run time (tools/glslc). For tests: libpgl.a for dEQP
 # (tools/deqp), gltest_host (self test 8), compile_test.
 cmake_minimum_required(VERSION 3.13)
-project(pgpu_pc C)
+project(pgpu_pc C ASM)	# ASM: the video demo links its MP4 in (demos/video_mp4.S.in)
 set(CMAKE_C_STANDARD 11)
 
 set(ROOT ${CMAKE_CURRENT_LIST_DIR}/../..)
@@ -56,7 +56,7 @@ target_link_libraries(linktest_host pgl)
 # pgpu is in pgl already); frames paced by pgpu_wait_frame (the PC transport:
 # a PING after each frame)
 include(${ROOT}/demos/demos.cmake)
-foreach(app gears breakout flight toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids)
+foreach(app gears breakout flight toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids video)
 	add_executable(${app}_host $<TARGET_OBJECTS:pgpu_hud>)
 	target_include_directories(${app}_host PRIVATE ${PGPU_COMPAT_INCLUDE_DIR} ${ROOT}/libpgpu/hud
 		${CMAKE_BINARY_DIR}/glsl)
