@@ -1,16 +1,25 @@
 # pigpu
 
-An OpenGL ES 2.0 GPU for microcontrollers: a Raspberry Pi (RPi) runs bare
-metal (Circle) and renders with its VideoCore IV V3D. The host sends GL
-commands over a link:
+A toy GPU for OpenGL and video rendering. A Raspberry Pi (RPi) runs bare
+metal (Circle) as the graphics card of a microcontroller: the microcontroller
+sends OpenGL ES 2.0 commands (and 1.1's fixed function), and the RPi renders
+them with its VideoCore IV V3D, to an ST7789 panel or to HDMI. Video (H.264,
+e.g. from an MP4) is decoded by the VideoCore into textures that any draw can
+use.
 
-- a Raspberry Pi Pico 2 W or an ESP32-P4, over I2S;
-- a Linux PC, or a page in Chrome, over the RPi's USB port.
+The host can be any microcontroller board capable of the link: I2S as the
+master (DATA, BCLK and FS out, the replies back on REPLY), a READY input and
+optionally FRAME, at 3.3 V ([docs/protocol.md](docs/protocol.md) §2–3). The
+host library (`libpgpu`: the protocol, pgl for the GL ES API, an MP4 reader,
+a HUD, in C) and the demos are shared by every board; a board adds only a
+transport, the few functions of `libpgpu/pgpu_link.h`. Tested on:
 
-The frames go to an ST7789 panel or to HDMI. Video (H.264, e.g. from an MP4)
-is decoded by the VideoCore into textures that any draw can use. Over the same
-USB port the RPi also installs itself on its SD card (from a web page) and
-serves as a monitor for a Linux desktop.
+- a Raspberry Pi Pico 2 W (RP2350), over I2S;
+- an ESP32-P4 (Waveshare ESP32-P4-Module-DEV-KIT), over I2S.
+
+A Linux PC, or a page in Chrome, can be the host too, over the RPi's USB port.
+Over the same port the RPi also installs itself on its SD card (from a web
+page) and serves as a monitor for a Linux desktop.
 
 **Supported for now: the Raspberry Pi Zero / Zero W and the Zero 2 W.** More
 RPi boards are to come; "RPi" below means the board pigpu runs on, and a
@@ -109,9 +118,9 @@ four); the Zero not yet. How it works: [DEVELOPMENT.md](DEVELOPMENT.md).
 ```
                   I2S link + READY/FRAME            SPI0
    ┌────────────┐  (6 signals + GND)   ┌────────────┐   ┌────────────────┐
-   │    host    │ ───────────────────► │    RPi     │──►│ ST7789 320x240 │
-   │ Pico 2 W   │ ◄─────────────────── │   (GPU)    │   └────────────────┘
-   │ or ESP32-P4│                      │            │ mini-HDMI ┌─────────┐
+   │  host MCU  │ ───────────────────► │    RPi     │──►│ ST7789 320x240 │
+   │ (Pico 2 W, │ ◄─────────────────── │   (GPU)    │   └────────────────┘
+   │  ESP32-P4) │                      │            │ mini-HDMI ┌─────────┐
    └────────────┘                      │            │──────────►│ monitor │
                                        └─────┬──────┘           └─────────┘
                                              │ "USB" port, one cable:
@@ -218,8 +227,10 @@ With `devtools/run.sh`, pass these as `CMDLINE="output=panel" devtools/run.sh gp
 
 ## Host boards (`hosts/pico`, `hosts/esp32p4`)
 
-Both host builds make the self tests and the demos (`demos/demos.cmake`), plus
-the Jet demos (`demos/jet`).
+The two tested boards. Both builds make the self tests and the demos
+(`demos/demos.cmake`), plus the Jet demos (`demos/jet`). Another board needs
+its own transport (`libpgpu/pgpu_link.h`; `transports/pico-i2s` and
+`transports/esp32p4-i2s` are the examples) and a build like these.
 
 **Raspberry Pi Pico 2 W:** the Pico SDK (2.2.0 here, `PICO_SDK_PATH`). The
 build makes one `.uf2` per program in `hosts/pico/build`:
