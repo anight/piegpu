@@ -40,3 +40,10 @@ target_link_libraries(compile_test pgl)
 # video: an MP4's H.264 track played by the Zero into a texture (videoplay FILE.mp4)
 add_executable(videoplay videoplay.c)
 target_link_libraries(videoplay pgl)
+
+# the link at full speed both ways, checked word by word (libpgpu/test/linktest.c:
+# over USB here, where the Pico and the P4 use I2S)
+add_executable(linktest_host ${ROOT}/libpgpu/test/linktest.c)
+target_include_directories(linktest_host PRIVATE ${PGPU_COMPAT_INCLUDE_DIR})
+target_compile_definitions(linktest_host PRIVATE LINKTEST_SECONDS=30)
+target_link_libraries(linktest_host pgl)

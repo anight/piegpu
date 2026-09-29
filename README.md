@@ -86,9 +86,10 @@ there. Without the SDO wire it can't tell: set `panel=yes` (see below).
   hot-plug line and reads the monitor's EDID for its resolution.
   `devtools/config.txt` has `hdmi_force_hotplug=1` so that HDMI stays on when
   the Zero boots without a monitor.
-- **PC:** the Zero's "USB" port (not "PWR IN"), with no SD card. The Zero
-  boots over USB from `rpiboot`. The same cable powers it and carries its log;
-  `devtools/run.sh gpu` builds, boots and logs.
+- **PC:** the Zero's "USB" port (not "PWR IN"). Without a card that holds
+  pico-gpu the Zero boots over USB from `rpiboot`; `devtools/run.sh gpu`
+  builds, boots and logs. The same cable powers it and carries its log, the
+  PC's GL commands (below) and the USB monitor.
 
 ### Kernel command line (`cmdline.txt`)
 
@@ -101,6 +102,55 @@ there. Without the SDO wire it can't tell: set `panel=yes` (see below).
 | `hdmi_pixels=N` | cap the screen on HDMI to N pixels (default: the monitor's native resolution, up to 1920x1200) |
 
 With `devtools/run.sh`, pass these as `CMDLINE="output=panel" devtools/run.sh gpu`.
+
+## OpenGL ES from a PC (`hosts/pc`)
+
+A Linux PC can be the host too: the same GL ES 2.0 API (`pgl`, with the GL ES
+1.1 fixed-function calls) and the same command packets, over the Zero's USB
+serial port instead of I2S (`transports/pc-usb`). GLSL is compiled at run
+time on the PC by `tools/glslc` (Mesa's vc4 compiler, offline; results
+cached in `~/.cache/pgpu-glslc`). There is no EGL: the Zero's screen is the
+window (`pglInit`, `pglGetScreenSize`, `pglSwapBuffers`; `pglInitSurface` for
+an off-screen one). `hosts/pc/videoplay.c` is an example program.
+
+```bash
+cmake -S hosts/pc -B hosts/pc/build && make -C hosts/pc/build
+```
+
+- Over USB there is no FRAME pulse: a program paces its frames itself
+  (videoplay: 60 a second), or they pile up in the Zero's queue.
+- While a PC's desktop uses the Zero as a monitor (below), GL frames are
+  rendered off screen: turn that monitor off first.
+- The port is found by name (`/dev/serial/by-id/usb-pico-gpu_pico-gpu_*`);
+  `PGPU_TTY` overrides it.
+
+Measured with `hosts/pc/build/linktest_host` (libpgpu/test/linktest.c: 64 KB
+uploads of random data, and random 256x256 textures read back and compared
+word by word; 30 s):
+
+| | PC, USB | ESP32-P4, I2S 31.25 MHz |
+|---|---|---|
+| to the Zero | 5.57 MB/s | 3.9 MB/s |
+| back from it | 4.77 MB/s | 2.37 MB/s |
+| errors | 0 of 4.3M words | 0 |
+
+Tests from the PC:
+
+- `hosts/pc/build/gltest_host`: self test 8 (83 checks through `gl*` calls).
+- dEQP-GLES2 (the Khronos conformance tests): `tools/deqp/build-deqp.sh`
+  builds it with a `pgl` platform; `tools/deqp/run-deqp.py --pbuffer
+  PATTERN...` runs cases as Mesa's CI does (a 256x256 RGBA8888 off-screen
+  surface), in batches that go on after a crash; `compare-vc4.py` puts the
+  results next to Mesa's vc4 on a Raspberry Pi 3 and marks the cases outside
+  Khronos' mustpass list. The runner reboots the Zero at the end: not while a
+  desktop uses it as a monitor.
+
+Results (2026-09-29): self test 8, 83 of 83. dEQP-GLES2, 2015 cases (clears,
+depth/stencil, texture filtering, wrap and mipmaps, shader structs and
+functions, FBOs, vertex arrays, random draws; 9.5 minutes): 1999 pass, 16
+fail, the same as the full run of 2026-09-27 (17485 cases: 17163 pass, 24
+fail, 290 not supported). Of the 16, 11 fail with Mesa's vc4 too (the V3D),
+5 are ETC1 wrap cases outside mustpass; on mustpass, 1946 of 1957 pass.
 
 ## Installing on an SD card (`web/installer`)
 

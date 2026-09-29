@@ -12,7 +12,13 @@ line per case: name status) and prints a summary per group.
 """
 import argparse, collections, fnmatch, os, re, subprocess, sys, time
 
-TTY = '/dev/serial/by-id/usb-Circle_CDC_Gadget-if00'
+# the Zero's serial port: the gpu app's (devtools/pgpugadget: "pico-gpu" and
+# the board's serial number), or an older one's (Circle's CDC gadget); the
+# transport (transports/pc-usb) is told which by PGPU_TTY
+import glob
+TTY = (glob.glob('/dev/serial/by-id/usb-pico-gpu_pico-gpu_*-if00')
+       or ['/dev/serial/by-id/usb-Circle_CDC_Gadget-if00'])[0]
+os.environ.setdefault('PGPU_TTY', TTY)
 STALL_SECONDS = 120		# no log output for this long: the case hangs
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
