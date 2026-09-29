@@ -1,9 +1,9 @@
 //
 // video_none.cpp
 //
-// CVideo for builds without the VideoCore's services (the Zero 2 W's 64-bit
-// build: Circle's vcos, which MMAL needs, is 32 bit only). Opening a stream
-// answers as video.cpp does when MMAL isn't there; the rest has nothing to do.
+// CVideo for builds without the VideoCore's services (gpu/Makefile: VIDEO=0).
+// Opening a stream answers as video.cpp does when MMAL isn't there; the rest
+// has nothing to do.
 //
 #include "video.h"
 #include <pgpu_protocol.h>

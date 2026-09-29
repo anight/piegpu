@@ -60,6 +60,9 @@ typedef struct MMAL_VC_CLIENT_BUFFER_CONTEXT_T
    struct mmal_worker_buffer_from_host msg;
 } MMAL_VC_CLIENT_BUFFER_CONTEXT_T;
 
+/* pico-gpu: a buffer's context from its 32-bit field (mmal_vc_msgs.h) */
+#define MMAL_VC_CONTEXT(v)   MMAL_VC_PTR(MMAL_VC_CLIENT_BUFFER_CONTEXT_T, v)
+
 
 MMAL_CLIENT_T *mmal_vc_get_client(void);
 

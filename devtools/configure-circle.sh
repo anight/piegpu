@@ -30,6 +30,7 @@ ROOT=$HERE/..
 TOOLCHAINS=$HOME/toolchains
 PATCHES="circle-cdc-endpoint-gadget circle-cdc-rx-overrun circle-cdc-short-packets
 	 circle-ep0-vendor-in circle-fatfs-mkfs circle-cdc-throughput"	# (in this order)
+PATCHES64="circle-vcos-aarch64"		# and for a 64-bit tree
 
 case "${1:-zero}" in
 zero)
@@ -44,7 +45,7 @@ zero2)
 	if [ ! -d "$TREE" ]; then
 		git clone -q "$ROOT/circle" "$TREE"
 		git -C "$TREE" checkout -q "$(git -C "$ROOT/circle" rev-parse HEAD)"
-		for p in $PATCHES; do
+		for p in $PATCHES $PATCHES64; do
 			git -C "$TREE" apply "$ROOT/patches/$p.patch"
 		done
 	fi

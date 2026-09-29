@@ -56,6 +56,7 @@ private:
 	void ShowText (COutput *pOutput, const char *pTitle, const char *pLine1, const char *pLine2);
 	void ShowSplash (COutput *pOutput);
 	void ShowPanelNotice (void);
+	static u32 GetThrottled (void);
 	void DumpScreenshot (void);
 
 private:

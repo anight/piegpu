@@ -637,8 +637,7 @@ function updateButtons ()
 	$('format').disabled = busy;
 	$('card-retry').disabled = busy;
 	$('run-gears').disabled = busy || !installer;
-	// (the Zero 2 W's 64-bit build has no video decoder)
-	$('test-video').disabled = busy || !installer || currentBoard () === 'zero2';
+	$('test-video').disabled = busy || !installer;
 	$('reset').disabled = busy || !installer;
 
 	// the board, its settings and the actions: while a board is connected

@@ -46,3 +46,4 @@ web/installer/videos/
 # the Zero 2 W: its Circle (devtools/configure-circle.sh zero2) and build
 /circle-zero2/
 /build/
+gpu/.video-*

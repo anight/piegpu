@@ -20,9 +20,8 @@ in [docs/protocol.md](docs/protocol.md).
 
 ## Boards and building
 
-pico-gpu runs on a Raspberry Pi Zero / Zero W (32 bit, `kernel.img`) and is
-built for the Zero 2 W as well (64 bit, `kernel8.img`; not yet tried on
-one). Circle builds in its source tree, so each board has its own: `circle`
+pico-gpu runs on a Raspberry Pi Zero / Zero W (32 bit, `kernel.img`) and on a
+Zero 2 W (64 bit, `kernel8.img`; render 0.9 ms a gears frame, the Zero's 1.2). Circle builds in its source tree, so each board has its own: `circle`
 and `circle-zero2` (made from `circle` and `patches/`). Toolchains: Arm GNU
 15.2 in `~/toolchains` (`arm-none-eabi` and `aarch64-none-elf`).
 
@@ -34,9 +33,16 @@ devtools/configure-circle.sh zero2
 devtools/build-gpu.sh all
 ```
 
-The Zero 2 W's build has no video decoding: Circle's VideoCore OS layer, which
-MMAL needs, is 32 bit only (video commands answer as without MMAL). Its HDMI
-hot-plug line is GPIO28 (the Zero's: GPIO46). `web/installer/make-firmware.sh`
+Video decoding works the same in both: MMAL's messages to the VideoCore have
+the VideoCore's 32-bit layout on any client (`gpu/video/userland/interface/
+mmal/vc/mmal_vc_msgs.h`, checked against the 32-bit compiler's by
+`devtools/mmal-layout.py`); Circle's vcos is used in 64 bit too
+(`patches/circle-vcos-aarch64.patch`), and the MMAL sources are built with
+`-mstrict-align` there (they read VCHIQ's messages in place, in Circle's
+coherent region: Device memory in 64 bit, where unaligned accesses fault).
+Verified on both boards: 640x360 to 1280x720, 0 dropped. `VIDEO=0` builds
+without it. The Zero 2 W's HDMI hot-plug line is GPIO28 (the
+Zero's: GPIO46). `web/installer/make-firmware.sh`
 puts both builds on the installer page, which picks the one for the board.
 
 ## Wiring
@@ -207,10 +213,15 @@ Then open http://localhost:8765 and follow the steps:
 - **A blank or new card:** the Zero's boot ROM finds nothing to start and waits
   for USB. "Start a blank Zero" boots pico-gpu from the page (WebUSB, the
   rpiboot protocol: `rpiboot.js`). The page serves both builds and a
-  `config.txt` whose `[pi02]` lines make a Zero 2 W ask for its 64-bit
+  `config.txt` whose `[pi02]` lines would make a Zero 2 W ask for its 64-bit
   `kernel8.img` (a Zero: `kernel.img`); once pico-gpu runs it says which board
   it is, and Install writes that board's files only. A card without a FAT
-  file system can be formatted there (one FAT32 partition).
+  file system can be formatted there (one FAT32 partition). **A Zero 2 W**
+  didn't start over USB here, with Raspberry Pi's own `rpiboot` either (its
+  boot ROM took `bootcode.bin`, then stopped answering): write its card on a
+  PC instead (one FAT32 partition, type 0x0c; the files of
+  `web/installer/firmware/zero2`, a `config.txt` with `arm_64bit=1`, a
+  `cmdline.txt`), then Connect and Install work as on a Zero.
 - **A card with pico-gpu:** "Connect to pico-gpu" (Web Serial). Install again,
   or change the settings only. If pico-gpu doesn't answer (a program left it
   taking GL commands), the page restarts it; "Reset" restarts it any time.

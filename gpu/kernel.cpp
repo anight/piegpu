@@ -9,6 +9,7 @@
 #include "build_info.h"
 #include <circle/2dgraphics.h>
 #include <circle/machineinfo.h>
+#include <circle/bcmpropertytags.h>
 #include <circle/string.h>
 #include <circle/util.h>
 #include <circle/synchronize.h>
@@ -290,6 +291,8 @@ TShutdownMode CKernel::Run (void)
 	LOGNOTE ("Compile time: " __DATE__ " " __TIME__);
 	LOGNOTE ("Build: %s", GetBuildInfo ());
 	LOGNOTE ("Core clock %u MHz", CMachineInfo::Get ()->GetClockRate (CLOCK_ID_CORE) / 1000000);
+	// the firmware's throttle flags (under-voltage and so on, since boot)
+	LOGNOTE ("Throttled %05X", GetThrottled ());
 	LOGNOTE ("Host: %s", m_HostMode == HostUSB ? "USB only (host=usb)"
 			     : m_HostMode == HostI2S ? "I2S only (host=i2s)" : "USB when a PC streams, else I2S (host=auto)");
 	LOGNOTE ("USB: %s", m_bGUD ? "serial port, GL interface and monitor (GUD)" : "serial port and GL interface, no monitor (gud=off)");
@@ -440,11 +443,37 @@ TShutdownMode CKernel::Run (void)
 				 (unsigned) (CMemorySystem::Get ()->GetHeapFreeSpace (HEAP_LOW) / 1024),
 				 m_Commands.GetTextureBytes () / 1024);
 
+			// under-voltage, capping, throttling, temperature limit: now
+			// (bits 0-3) or since boot (16-19)
+			u32 nThrottled = GetThrottled ();
+			if (nThrottled)
+			{
+				LOGWARN ("Throttled %05X:%s%s%s%s", nThrottled,
+					 nThrottled & 0x10001 ? " under-voltage" : "",
+					 nThrottled & 0x20002 ? " frequency capped" : "",
+					 nThrottled & 0x40004 ? " throttled" : "",
+					 nThrottled & 0x80008 ? " soft temperature limit" : "");
+			}
+
 			nLastReport = nNow;
 		}
 	}
 
 	return ShutdownHalt;
+}
+
+// the firmware's throttle flags (0 if it doesn't say)
+u32 CKernel::GetThrottled (void)
+{
+	CBcmPropertyTags Tags;
+	TPropertyTagSimple Throttled;
+	Throttled.nValue = 0;
+	if (!Tags.GetTag (PROPTAG_GET_THROTTLED, &Throttled, sizeof Throttled, 4))
+	{
+		return 0;
+	}
+
+	return Throttled.nValue;
 }
 
 // the frame on screen (the output's copy - HDMI's page - or else the last

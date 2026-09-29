@@ -60,6 +60,102 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   */
 #define MMAL_WORKER_MSG_LEN  28
 
+/* pico-gpu: the messages as the VideoCore (32-bit ARM) lays them out, for 32
+ * and 64-bit clients alike: fixed-width fields only (enums too: 32-bit ARM
+ * bare metal makes some of them 1 byte, AArch64 4).
+ *
+ * A pointer the VideoCore passes back to the client (the control service,
+ * a waiter, a component, a buffer's context) is a 32-bit field: Circle maps
+ * memory 1:1, so every pointer is below 4 GB (mmal_vc_ptr32 checks). The
+ * pointers in the host structures the messages used to carry whole (a
+ * port's, a format's, a buffer header's) go as 0: the VideoCore has its own.
+ * The offsets are the 32-bit ARM compiler's (devtools/mmal-layout.py): the
+ * asserts at the end check them. */
+typedef uint32_t MMAL_VC_PTR32_T;
+
+static inline MMAL_VC_PTR32_T mmal_vc_ptr32(const void *p)
+{
+   vcos_assert((uintptr_t)p <= 0xFFFFFFFFu);
+   return (MMAL_VC_PTR32_T)(uintptr_t)p;
+}
+#define MMAL_VC_PTR(type, v)   ((type *)(uintptr_t)(v))
+
+/** MMAL_PORT_T on the wire (64 bytes) */
+typedef struct
+{
+   MMAL_VC_PTR32_T priv, name;
+   uint32_t type;
+   uint16_t index, index_all;
+   uint32_t is_enabled;
+   MMAL_VC_PTR32_T format;
+   uint32_t buffer_num_min, buffer_size_min, buffer_alignment_min;
+   uint32_t buffer_num_recommended, buffer_size_recommended;
+   uint32_t buffer_num, buffer_size;
+   MMAL_VC_PTR32_T component, userdata;
+   uint32_t capabilities;
+} MMAL_VC_PORT_WIRE_T;
+
+/** MMAL_ES_FORMAT_T on the wire (32 bytes; type: 1 byte and padding on the
+ * VideoCore's side) */
+typedef struct
+{
+   uint32_t type;
+   uint32_t encoding, encoding_variant;
+   MMAL_VC_PTR32_T es;
+   uint32_t bitrate, flags, extradata_size;
+   MMAL_VC_PTR32_T extradata;
+} MMAL_VC_ES_FORMAT_WIRE_T;
+
+/** MMAL_BUFFER_HEADER_T on the wire (56 bytes) */
+typedef struct
+{
+   MMAL_VC_PTR32_T next, priv;
+   uint32_t cmd;
+   MMAL_VC_PTR32_T data;
+   uint32_t alloc_size, length, offset, flags;
+   int64_t pts, dts;
+   MMAL_VC_PTR32_T type, user_data;
+} MMAL_VC_BUFFER_HEADER_WIRE_T;
+
+static inline void mmal_vc_port_to_wire(MMAL_VC_PORT_WIRE_T *w, const MMAL_PORT_T *p)
+{
+   memset(w, 0, sizeof(*w));
+   w->type = p->type;
+   w->index = p->index;
+   w->index_all = p->index_all;
+   w->is_enabled = p->is_enabled;
+   w->buffer_num_min = p->buffer_num_min;
+   w->buffer_size_min = p->buffer_size_min;
+   w->buffer_alignment_min = p->buffer_alignment_min;
+   w->buffer_num_recommended = p->buffer_num_recommended;
+   w->buffer_size_recommended = p->buffer_size_recommended;
+   w->buffer_num = p->buffer_num;
+   w->buffer_size = p->buffer_size;
+   w->capabilities = p->capabilities;
+}
+
+static inline void mmal_vc_format_to_wire(MMAL_VC_ES_FORMAT_WIRE_T *w, const MMAL_ES_FORMAT_T *f)
+{
+   memset(w, 0, sizeof(*w));
+   w->type = f->type;
+   w->encoding = f->encoding;
+   w->encoding_variant = f->encoding_variant;
+   w->bitrate = f->bitrate;
+   w->flags = f->flags;
+   w->extradata_size = f->extradata_size;
+}
+
+/** into a host format: its es and extradata stay */
+static inline void mmal_vc_format_from_wire(MMAL_ES_FORMAT_T *f, const MMAL_VC_ES_FORMAT_WIRE_T *w)
+{
+   f->type = (MMAL_ES_TYPE_T)(w->type & 0xFF);
+   f->encoding = w->encoding;
+   f->encoding_variant = w->encoding_variant;
+   f->bitrate = w->bitrate;
+   f->flags = w->flags;
+   f->extradata_size = w->extradata_size;
+}
+
 /** Maximum size of the format extradata.
  * FIXME: should probably be made bigger and maybe be passed separately from the info.
  */
@@ -112,10 +208,10 @@ typedef struct
 {
    uint32_t magic;
    uint32_t msgid;
-   struct MMAL_CONTROL_SERVICE_T *control_service;       /** Handle to the control service */
+   MMAL_VC_PTR32_T control_service;    /** Handle to the control service */
 
    union {
-      struct MMAL_WAITER_T *waiter;    /** User-land wait structure, passed back */
+      MMAL_VC_PTR32_T waiter;          /** User-land wait structure, passed back */
    } u;
 
    MMAL_STATUS_T status;            /** Result code, passed back */
@@ -152,7 +248,7 @@ typedef struct
 typedef struct
 {
    mmal_worker_msg_header header;
-   void *client_component;             /** Client component */
+   MMAL_VC_PTR32_T client_component;   /** Client component */
    char name[128];
    uint32_t pid;                       /**< For debug */
 } mmal_worker_component_create;
@@ -214,8 +310,8 @@ typedef struct
    uint32_t component_handle;          /**< Which component */
    MMAL_PORT_TYPE_T port_type;         /**< Type of port */
    uint32_t index;                     /**< Which port of given type to get */
-   MMAL_PORT_T port;
-   MMAL_ES_FORMAT_T format;
+   MMAL_VC_PORT_WIRE_T port;
+   MMAL_VC_ES_FORMAT_WIRE_T format;
    MMAL_ES_SPECIFIC_FORMAT_T es;
    uint8_t  extradata[MMAL_FORMAT_EXTRADATA_MAX_SIZE];
 } mmal_worker_port_info_set;
@@ -231,8 +327,8 @@ typedef struct
    uint32_t index;                     /**< Which port of given type to get */
    int32_t found;                      /**< Did we find anything? */
    uint32_t port_handle;               /**< Handle to use for this port */
-   MMAL_PORT_T port;
-   MMAL_ES_FORMAT_T format;
+   MMAL_VC_PORT_WIRE_T port;
+   MMAL_VC_ES_FORMAT_WIRE_T format;
    MMAL_ES_SPECIFIC_FORMAT_T es;
    uint8_t  extradata[MMAL_FORMAT_EXTRADATA_MAX_SIZE];
 } mmal_worker_port_info;
@@ -285,7 +381,7 @@ typedef struct
    /** Action parameter */
    union {
       struct {
-         MMAL_PORT_T port;
+         MMAL_VC_PORT_WIRE_T port;
       } enable;
       struct {
          uint32_t component_handle;
@@ -357,7 +453,7 @@ struct MMAL_DRIVER_BUFFER_T
    uint32_t port_handle;         /**< Index into array of ports for this component */
 
    /** Client side uses this to get back to its context structure. */
-   struct MMAL_VC_CLIENT_BUFFER_CONTEXT_T *client_context;
+   MMAL_VC_PTR32_T client_context;     /* MMAL_VC_CLIENT_BUFFER_CONTEXT_T */
 };
 
 /** Receive a buffer from the host.
@@ -382,7 +478,7 @@ typedef struct mmal_worker_buffer_from_host
    struct MMAL_DRIVER_BUFFER_T drvbuf_ref;
 
    /** the buffer header itself */
-   MMAL_BUFFER_HEADER_T buffer_header;
+   MMAL_VC_BUFFER_HEADER_WIRE_T buffer_header;
    MMAL_BUFFER_HEADER_TYPE_SPECIFIC_T buffer_header_type_specific;
 
    MMAL_BOOL_T is_zero_copy;
@@ -411,14 +507,14 @@ typedef struct mmal_worker_event_to_host
 {
    mmal_worker_msg_header header;
 
-   struct MMAL_COMPONENT_T *client_component;
+   MMAL_VC_PTR32_T client_component;   /* MMAL_COMPONENT_T */
    uint32_t port_type;
    uint32_t port_num;
 
    uint32_t cmd;
    uint32_t length;
    uint8_t data[MMAL_WORKER_EVENT_SPACE];
-   MMAL_BUFFER_HEADER_T *delayed_buffer;  /* Only used to remember buffer for bulk rx */
+   MMAL_VC_PTR32_T delayed_buffer;     /* MMAL_BUFFER_HEADER_T: only used to remember buffer for bulk rx */
 } mmal_worker_event_to_host;
 vcos_static_assert(sizeof(mmal_worker_event_to_host) <= MMAL_WORKER_MAX_MSG_LEN);
 
@@ -515,7 +611,7 @@ static inline void mmal_vc_buffer_header_to_msg(mmal_worker_buffer_from_host *ms
    msg->buffer_header.pts           = header->pts;
    msg->buffer_header.dts           = header->dts;
    msg->buffer_header.alloc_size    = header->alloc_size;
-   msg->buffer_header.data          = header->data;
+   msg->buffer_header.data          = mmal_vc_ptr32(header->data);
    msg->buffer_header_type_specific = *header->type;
 }
 
@@ -530,6 +626,61 @@ static inline void mmal_vc_msg_to_buffer_header(MMAL_BUFFER_HEADER_T *header,
    header->dts    = msg->buffer_header.dts;
    *header->type  = msg->buffer_header_type_specific;
 }
+
+
+/* pico-gpu: the 32-bit ARM layout (devtools/mmal-layout.py), on any client */
+#include <stddef.h>
+#define MMAL_VC_WIRE_AT(type, field, at) vcos_static_assert(offsetof(type, field) == (at))
+vcos_static_assert(sizeof(mmal_worker_msg_header) == 24);
+MMAL_VC_WIRE_AT(mmal_worker_msg_header, control_service, 8);
+MMAL_VC_WIRE_AT(mmal_worker_msg_header, u.waiter, 12);
+MMAL_VC_WIRE_AT(mmal_worker_msg_header, status, 16);
+vcos_static_assert(sizeof(MMAL_VC_PORT_WIRE_T) == 64);
+MMAL_VC_WIRE_AT(MMAL_VC_PORT_WIRE_T, index, 12);
+MMAL_VC_WIRE_AT(MMAL_VC_PORT_WIRE_T, buffer_num_min, 24);
+MMAL_VC_WIRE_AT(MMAL_VC_PORT_WIRE_T, capabilities, 60);
+vcos_static_assert(sizeof(MMAL_VC_ES_FORMAT_WIRE_T) == 32);
+MMAL_VC_WIRE_AT(MMAL_VC_ES_FORMAT_WIRE_T, extradata_size, 24);
+vcos_static_assert(sizeof(MMAL_VC_BUFFER_HEADER_WIRE_T) == 56);
+MMAL_VC_WIRE_AT(MMAL_VC_BUFFER_HEADER_WIRE_T, pts, 32);
+MMAL_VC_WIRE_AT(MMAL_VC_BUFFER_HEADER_WIRE_T, user_data, 52);
+vcos_static_assert(sizeof(MMAL_ES_SPECIFIC_FORMAT_T) == 44);
+vcos_static_assert(sizeof(MMAL_BUFFER_HEADER_TYPE_SPECIFIC_T) == 40);
+vcos_static_assert(sizeof(MMAL_PARAMETER_HEADER_T) == 8);
+vcos_static_assert(sizeof(struct MMAL_DRIVER_BUFFER_T) == 16);
+vcos_static_assert(sizeof(mmal_worker_version) == 40);
+vcos_static_assert(sizeof(mmal_worker_component_create) == 160);
+MMAL_VC_WIRE_AT(mmal_worker_component_create, name, 28);
+vcos_static_assert(sizeof(mmal_worker_component_create_reply) == 44);
+vcos_static_assert(sizeof(mmal_worker_port_info_get) == 36);
+vcos_static_assert(sizeof(mmal_worker_port_info_set) == 304);
+MMAL_VC_WIRE_AT(mmal_worker_port_info_set, port, 36);
+MMAL_VC_WIRE_AT(mmal_worker_port_info_set, format, 100);
+MMAL_VC_WIRE_AT(mmal_worker_port_info_set, es, 132);
+MMAL_VC_WIRE_AT(mmal_worker_port_info_set, extradata, 176);
+vcos_static_assert(sizeof(mmal_worker_port_info) == 316);
+MMAL_VC_WIRE_AT(mmal_worker_port_info, port_handle, 44);
+MMAL_VC_WIRE_AT(mmal_worker_port_info, port, 48);
+MMAL_VC_WIRE_AT(mmal_worker_port_info, format, 112);
+MMAL_VC_WIRE_AT(mmal_worker_port_info, es, 144);
+MMAL_VC_WIRE_AT(mmal_worker_port_info, extradata, 188);
+vcos_static_assert(sizeof(mmal_worker_reply) == 28);
+vcos_static_assert(sizeof(mmal_worker_port_action) == 100);
+MMAL_VC_WIRE_AT(mmal_worker_port_action, param, 36);
+vcos_static_assert(sizeof(mmal_worker_port_param_set) == 424);
+MMAL_VC_WIRE_AT(mmal_worker_port_param_set, space, 40);
+vcos_static_assert(sizeof(mmal_worker_port_param_get_reply) == 420);
+vcos_static_assert(sizeof(mmal_worker_buffer_from_host) == 296);
+MMAL_VC_WIRE_AT(mmal_worker_buffer_from_host, drvbuf_ref, 40);
+MMAL_VC_WIRE_AT(mmal_worker_buffer_from_host, buffer_header, 56);
+MMAL_VC_WIRE_AT(mmal_worker_buffer_from_host, buffer_header_type_specific, 112);
+MMAL_VC_WIRE_AT(mmal_worker_buffer_from_host, is_zero_copy, 152);
+MMAL_VC_WIRE_AT(mmal_worker_buffer_from_host, payload_in_message, 160);
+MMAL_VC_WIRE_AT(mmal_worker_buffer_from_host, short_data, 164);
+vcos_static_assert(sizeof(mmal_worker_event_to_host) == 304);
+MMAL_VC_WIRE_AT(mmal_worker_event_to_host, cmd, 36);
+MMAL_VC_WIRE_AT(mmal_worker_event_to_host, data, 44);
+MMAL_VC_WIRE_AT(mmal_worker_event_to_host, delayed_buffer, 300);
 
 #endif
 
