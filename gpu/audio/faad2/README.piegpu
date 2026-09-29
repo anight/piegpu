@@ -1,0 +1,7 @@
+FAAD2's decoder library (libfaad), vendored for the RPi's AAC decoding
+(gpu/audio/aac.c): https://github.com/knik0/faad2, version 2.11.3 (commit
+9426109), unchanged: libfaad/ (without its pkg-config
+and Windows files), include/neaacdec.h, COPYING, AUTHORS.
+
+License: GNU GPL version 2 or (at your option) any later version.
+Code from FAAD2 is copyright (c) Nero AG, www.nero.com
