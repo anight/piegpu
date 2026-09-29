@@ -2,6 +2,7 @@
 // video.cpp
 //
 #include "video.h"
+#include <v3d.h>
 #include <pgpu_protocol.h>
 #include <circle/logger.h>
 #include <circle/timer.h>
@@ -76,7 +77,7 @@ void CVideo::OutputCallback (MMAL_PORT_T *pPort, MMAL_BUFFER_HEADER_T *pBuffer)
 // start kept in the word before
 static void *AllocFrame (void *pContext, uint32_t nSize)
 {
-	u8 *pRaw = new u8[nSize + 4096 + sizeof (u8 *)];
+	u8 *pRaw = CV3D::NewBlock (nSize + 4096 + sizeof (u8 *));
 	if (!pRaw)
 	{
 		return nullptr;
@@ -91,7 +92,7 @@ static void FreeFrame (void *pContext, void *pMem)
 {
 	if (pMem)
 	{
-		delete [] ((u8 **) pMem)[-1];
+		CV3D::DeleteBlock (((u8 **) pMem)[-1]);
 	}
 }
 

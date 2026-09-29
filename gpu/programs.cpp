@@ -35,7 +35,7 @@ void CPrograms::Free (TProgram *p, boolean bKeepCode)
 		if (bKeepCode && p->bUsed && m_nRetired == MaxRetired && m_pJobFlush)
 		{
 			(*m_pJobFlush) (m_pJobFlushParam);	// renders the job: the code is free
-			delete [] p->pCode;
+			CV3D::DeleteBlock (p->pCode);
 		}
 		else if (bKeepCode && p->bUsed && m_nRetired < MaxRetired)
 		{
@@ -43,7 +43,7 @@ void CPrograms::Free (TProgram *p, boolean bKeepCode)
 		}
 		else if (!(bKeepCode && p->bUsed))
 		{
-			delete [] p->pCode;
+			CV3D::DeleteBlock (p->pCode);
 		}
 	}
 
@@ -255,7 +255,7 @@ u32 CPrograms::Load (TProgram *p, u32 *pDetail)
 #undef CHECK
 
 	// code into V3D-accessible memory (8-byte instructions)
-	p->pCode = new u8[nCodeWords * 4 + 16];
+	p->pCode = CV3D::NewBlock (nCodeWords * 4 + 16);
 	if (!p->pCode)
 	{
 		return PGPU_ERR_MEMORY;
@@ -376,7 +376,7 @@ void CPrograms::EndFrame (void)
 {
 	for (unsigned i = 0; i < m_nRetired; i++)
 	{
-		delete [] m_Retired[i];
+		CV3D::DeleteBlock (m_Retired[i]);
 	}
 	m_nRetired = 0;
 

@@ -6,6 +6,7 @@
 #include <circle/timer.h>
 #include <circle/bcm2835.h>
 #include <circle/memio.h>
+#include <v3d.h>
 
 // the display scaler (HVS) channel HDMI uses on the Zero: its status has the
 // frame count in bits 17:12 (6 bits); measured: 60 a second on HDMI
@@ -27,6 +28,10 @@ CHDMIOutput::CHDMIOutput (void)
 
 CHDMIOutput::~CHDMIOutput (void)
 {
+	if (m_pFrameBuffer)
+	{
+		CV3D::RemoveRegion ((const void *) (uintptr) m_pFrameBuffer->GetBuffer ());
+	}
 	delete m_pFrameBuffer;
 }
 
@@ -43,6 +48,10 @@ boolean CHDMIOutput::SetSize (unsigned nWidth, unsigned nHeight)
 	// halted the board: "assertion failed: m_nChannel != DMA_CHANNEL_NONE")
 	unsigned nOldWidth = m_pFrameBuffer ? m_nWidth : 0;
 	unsigned nOldHeight = m_nHeight;
+	if (m_pFrameBuffer)
+	{
+		CV3D::RemoveRegion ((const void *) (uintptr) m_pFrameBuffer->GetBuffer ());
+	}
 	delete m_pFrameBuffer;
 	m_pFrameBuffer = nullptr;
 
@@ -64,6 +73,8 @@ boolean CHDMIOutput::SetSize (unsigned nWidth, unsigned nHeight)
 	}
 
 	m_pFrameBuffer = pFrameBuffer;
+	CV3D::AddRegion ((const void *) (uintptr) m_pFrameBuffer->GetBuffer (),	// the V3D draws into it
+			 nWidth * nHeight * 2 * Pages);
 	m_nWidth = nWidth;
 	m_nHeight = nHeight;
 	m_nShown = 0;

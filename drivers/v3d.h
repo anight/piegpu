@@ -51,11 +51,41 @@ public:
 	/// scheduler there, so that VCHIQ's tasks run during long jobs too)
 	static void SetWaitHandler (void (*pHandler) (void))	{ s_pWaitHandler = pHandler; }
 
+	/// \brief Memory the V3D may read or write, for the job check (v3dcheck.h):
+	/// Alloc () adds its blocks, the app its own (textures, buffers, frames);
+	/// a block added again takes the new size, removing an unknown one does
+	/// nothing
+	static void AddRegion (const void *p, size_t nBytes);
+	static void RemoveRegion (const void *p);
+	/// \brief new u8[nBytes] and delete [], the block registered as the V3D's
+	static u8 *NewBlock (size_t nBytes);
+	static void DeleteBlock (u8 *p);
+	/// \return The nBytes at bus address nBus are inside one region (TRUE also
+	/// if there were more regions than the table holds: then it can't tell)
+	static boolean InRegion (u32 nBus, u32 nBytes);
+
+	/// \brief Checks a job's control lists before RunJob () or RunRender ()
+	/// starts it (nBinStart 0: rendering only); FALSE: the job isn't run
+	typedef boolean TJobCheck (u32 nBinStart, u32 nBinEnd, u32 nRenderStart, u32 nRenderEnd);
+	static void SetJobCheck (TJobCheck *pCheck)	{ s_pJobCheck = pCheck; }
+
 	/// \brief Power cycle the V3D (after a job timed out)
 	boolean Reset (void);
 
 private:
 	static void (*s_pWaitHandler) (void);
+	static TJobCheck *s_pJobCheck;
+
+	struct TRegion
+	{
+		u32 nBus;
+		u32 nBytes;
+	};
+	static const unsigned MaxRegions = 1024;
+	static TRegion s_Regions[MaxRegions];	// by bus address
+	static unsigned s_nRegions;
+	static boolean s_bRegionsFull;
+	static unsigned FindRegion (u32 nBus);	// the last with nBus at or below, or s_nRegions
 
 	static u32 Read (unsigned nOffset);
 	static void Write (unsigned nOffset, u32 nValue);

@@ -7,6 +7,7 @@
 //
 #include "kernel.h"
 #include "build_info.h"
+#include <v3dcheck.h>
 #include <circle/2dgraphics.h>
 #include <circle/machineinfo.h>
 #include <circle/bcmpropertytags.h>
@@ -41,6 +42,7 @@ CKernel::CKernel (void)
 	m_OutputMode (OutputAuto),
 	m_HostMode (HostAuto),
 	m_bGUD (TRUE),
+	m_bJobCheck (TRUE),
 	m_bPanelPresent (TRUE),
 	m_nHDMIPixels (CRenderer::MaxPixels),
 	m_Panel (&m_Interrupt),
@@ -68,6 +70,7 @@ boolean CKernel::Initialize (void)
 	m_OutputMode =   strcmp (pOutput, "panel") == 0 ? OutputPanel
 		       : strcmp (pOutput, "hdmi") == 0 ? OutputHDMI : OutputAuto;
 	m_bGUD = strcmp (m_Options.GetAppOptionString ("gud", "on"), "off") != 0;
+	m_bJobCheck = strcmp (m_Options.GetAppOptionString ("clcheck", "on"), "off") != 0;
 	m_nHDMIPixels = m_Options.GetAppOptionDecimal ("hdmi_pixels", m_nHDMIPixels);
 	if (m_nHDMIPixels < 320 * 240 || m_nHDMIPixels > CRenderer::MaxPixels)
 	{
@@ -353,6 +356,10 @@ TShutdownMode CKernel::Run (void)
 	m_Commands.SendInfo ();			// once after boot, with DISPLAY (docs/protocol.md 9)
 
 	CV3D::SetWaitHandler (V3DWait);
+	if (m_bJobCheck)
+	{
+		CV3D::SetJobCheck (V3DCheckJob);	// each job's control lists checked before it runs
+	}
 
 	unsigned nLastReport = m_Timer.GetUptime ();
 	unsigned nWindowStart = CTimer::GetClockTicks ();	// microseconds

@@ -224,3 +224,96 @@ starting the board over USB with the card taken out, or on a PC.
   back in gave "Run 1 since power-on" (three times, verified). A cut of a
   fraction of a second might leave the header in the RAM; the report would
   then say "stopped without a word".
+
+## The control list checker
+
+A V3D job is two control lists that the renderer writes byte by byte: a
+binning list (the draws) and a rendering list (per 64x64 tile: loads, the
+tile's sublist, stores). A wrong address, size or stride in them makes the
+V3D write over other memory or hang, with no message. Since the V3D reads
+the lists by DMA, nothing on the ARM side notices until something else
+breaks. The checker (`drivers/v3dcheck.{h,cpp}`) reads both lists before each
+job runs, in the spirit of Mesa's vc4 kernel validator (`vc4_validate.c`),
+and refuses a job that fails: the job isn't run, the log says which list,
+which packet and why.
+
+| Code | What it does |
+|---|---|
+| `drivers/v3dcheck.{h,cpp}` | `V3DCheckJob`: the checks |
+| `drivers/v3d.{h,cpp}` | the region table (`AddRegion`, `RemoveRegion`, `InRegion`), `NewBlock`/`DeleteBlock`, the hook (`SetJobCheck`) that `RunJob` and `RunRender` call first |
+| `gpu/kernel.cpp` | sets the hook, unless `clcheck=off` |
+| `gpu/textures.cpp`, `programs.cpp`, `commands.cpp`, `video/video.cpp` | allocate what the V3D reads or writes with `CV3D::NewBlock` (textures, shader code, GL buffers, depth/stencil buffers, video frames) |
+| `gpu/display/hdmi_output.cpp` | registers the firmware's framebuffer |
+
+### What it checks
+
+- **Packets:** only the ones this renderer emits, each whole and inside its
+  list. Anything else is "not a packet this renderer emits": a change to the
+  renderer that adds a packet has to add it here too.
+- **Shape:** binning: the binning mode, `START_TILE_BINNING`, then draws,
+  `FLUSH` last. Rendering: the rendering mode first, tile coordinates inside
+  the frame, stores after tile coordinates, one end-of-frame store, last.
+- **Every address, with its extent, inside one registered block of memory:**
+  - the render target (the rendering mode's buffer: raster, T or LT, 16 or 32
+    bits a pixel) and every general tile load and store;
+  - the binner's tile memory and tile state;
+  - the sublists the rendering list branches to;
+  - shader records (GL and NV), the shaders' code and uniform streams;
+  - index buffers, and each vertex attribute over the vertices a draw really
+    uses. For an indexed draw that means reading the index buffer for the
+    smallest and largest index: pigpu points converted vertex data below its
+    start (the V3D adds index x stride), so the range can't start at 0. The
+    largest index must not exceed the draw's max index.
+
+Not checked: texture addresses. They are in the uniform streams, and only the
+shader code says which words are texture configs (Mesa's kernel parses the
+shader for that).
+
+### The region table
+
+Every block the V3D may touch is registered, by its bus address and size, in
+a table sorted by address (1024 entries, binary search). `CV3D::Alloc` adds
+its blocks itself; the rest come from `CV3D::NewBlock`/`DeleteBlock`, which
+replace `new u8[]`/`delete []` wherever the V3D reads or writes the memory;
+the HDMI framebuffer, which the firmware allocates, is added and removed by
+`CHDMIOutput`. A new kind of V3D memory must be registered the same way, or
+its jobs are refused ("not the V3D's"). If the table ever fills up, the
+checker logs it once and stops judging addresses rather than refuse valid
+jobs.
+
+### When a job is refused
+
+`RunJob` or `RunRender` returns FALSE, as after a timeout: that job's pixels
+are missing, everything else goes on. The first ten refusals are logged, then
+every 1000th, e.g.:
+
+```
+v3dcheck: Job refused (1 so far): rendering list +43, packet 28: store Z/stencil at C4000000 (2490368 bytes): not the V3D's
+```
+
+(That one is real: a test build that put the depth buffer's store 9 MB past
+its start, the kind of bug that corrupts memory silently. The job wasn't run,
+the board went on at 60 fps with nothing rendered, and only the first ten
+refusals were logged.) The run log keeps these lines across a restart.
+
+### Cost and verification
+
+Measured on the Zero 2 W, HDMI 1024x600 (one job a frame):
+
+| Demo | Check time per job |
+|---|---|
+| gears | 170 us |
+| flight | 260 us |
+| toy-voronoi | 240 us |
+| video (the frame copy is a second, smaller job) | 130 us |
+
+Nearly all of it is the rendering list (160 tiles, about 1,400 packets, 6.9
+KB); the binning list takes about 10 us. That's 1-2% of a 60 fps frame, on an
+ARM that runs at 600 MHz: the firmware starts it there and pigpu doesn't
+raise it (a plain byte-by-byte read of the same 6.9 KB takes 45 us). A job
+refused costs nothing more.
+
+Verified with the check on: the demos, the video, gltest (the same 19 known
+failures on HDMI as without it) and dEQP-GLES2's 2015-case subset (1999 pass,
+16 fail: the same cases as before), with no job refused; and the refusal above.
+`clcheck=off` turns it off.

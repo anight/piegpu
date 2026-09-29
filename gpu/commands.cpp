@@ -222,7 +222,7 @@ void CCommands::Reset (void)
 	m_Programs.EndFrame ();
 	for (unsigned i = 0; i < m_nRetiredBuffers; i++)
 	{
-		delete [] m_RetiredBuffers[i];
+		CV3D::DeleteBlock (m_RetiredBuffers[i]);
 	}
 	m_nRetiredBuffers = 0;
 
@@ -232,7 +232,7 @@ void CCommands::Reset (void)
 	}
 	for (unsigned i = 1; i <= MaxSharedZS; i++)
 	{
-		delete [] m_SharedZS[i].p;
+		CV3D::DeleteBlock (m_SharedZS[i].p);
 		memset (&m_SharedZS[i], 0, sizeof m_SharedZS[i]);
 	}
 	m_nFramebuffer = 0;
@@ -1117,7 +1117,7 @@ u32 CCommands::BufferCreate (u32 nId, unsigned nSize)
 	}
 
 	TBuffer &B = m_Buffers[nId];
-	B.pData = new u8[nSize ? nSize : 4];
+	B.pData = CV3D::NewBlock (nSize ? nSize : 4);
 	if (!B.pData)
 	{
 		return PGPU_ERR_MEMORY;
@@ -1162,7 +1162,7 @@ u32 CCommands::BufferData (const u32 *p, unsigned nLength)
 
 	if (B.bUsed)
 	{
-		u8 *pNew = new u8[B.nSize ? B.nSize : 4];
+		u8 *pNew = CV3D::NewBlock (B.nSize ? B.nSize : 4);
 		if (!pNew)
 		{
 			return PGPU_ERR_MEMORY;
@@ -1186,7 +1186,7 @@ void CCommands::RetireBuffer (TBuffer *pBuffer)
 		// too many in one frame: render the job (frees the retired ones);
 		// nothing reads this one any more
 		FlushJob (FALSE);
-		delete [] pBuffer->pData;
+		CV3D::DeleteBlock (pBuffer->pData);
 	}
 	else
 	{
@@ -1211,7 +1211,7 @@ u32 CCommands::BufferDelete (u32 nId)
 	}
 	else
 	{
-		delete [] B.pData;
+		CV3D::DeleteBlock (B.pData);
 		B.pData = nullptr;
 	}
 	m_nBufferBytes -= B.nSize;
@@ -1572,8 +1572,8 @@ void CCommands::FlushJob (boolean bForce)
 			TZSBuffer &ZS = ZSOf (F);
 			if (ZS.nBytes != nBytes)
 			{
-				delete [] ZS.p;
-				ZS.p = new u8[nBytes + 4096];
+				CV3D::DeleteBlock (ZS.p);
+				ZS.p = CV3D::NewBlock (nBytes + 4096);
 				ZS.nBytes = nBytes;
 				ZS.bValid = FALSE;
 			}
@@ -1629,7 +1629,7 @@ void CCommands::EndJob (void)
 	m_Programs.EndFrame ();
 	for (unsigned i = 0; i < m_nRetiredBuffers; i++)
 	{
-		delete [] m_RetiredBuffers[i];
+		CV3D::DeleteBlock (m_RetiredBuffers[i]);
 	}
 	m_nRetiredBuffers = 0;
 	for (unsigned i = 1; i <= MaxBuffers; i++)
@@ -1829,7 +1829,7 @@ u32 CCommands::FramebufferCreate (u32 nId, u32 nTexture, u32 nFlags)
 
 void CCommands::FramebufferFree (TFramebuffer *F)
 {
-	delete [] F->ZS.p;
+	CV3D::DeleteBlock (F->ZS.p);
 	memset (F, 0, sizeof *F);
 }
 

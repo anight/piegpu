@@ -8,6 +8,7 @@
 #include <circle/synchronize.h>
 #include <circle/timer.h>
 #include <circle/logger.h>
+#include <circle/util.h>
 #include <assert.h>
 
 LOGMODULE ("v3d");
@@ -43,6 +44,10 @@ LOGMODULE ("v3d");
 #define JOB_TIMEOUT_US		4000000
 
 void (*CV3D::s_pWaitHandler) (void) = nullptr;
+CV3D::TJobCheck *CV3D::s_pJobCheck = nullptr;
+CV3D::TRegion CV3D::s_Regions[MaxRegions];
+unsigned CV3D::s_nRegions = 0;
+boolean CV3D::s_bRegionsFull = FALSE;
 
 CV3D::CV3D (void)
 {
@@ -89,7 +94,100 @@ void *CV3D::Alloc (size_t nSize, size_t nAlign)
 	u8 *p = new u8[nSize + nAlign];
 	assert (p != 0);
 
-	return (void *) (((uintptr) p + nAlign-1) & ~(uintptr) (nAlign-1));
+	void *pAligned = (void *) (((uintptr) p + nAlign-1) & ~(uintptr) (nAlign-1));
+	AddRegion (pAligned, nSize);
+
+	return pAligned;
+}
+
+u8 *CV3D::NewBlock (size_t nBytes)
+{
+	u8 *p = new u8[nBytes];
+	if (p)
+	{
+		AddRegion (p, nBytes);
+	}
+
+	return p;
+}
+
+void CV3D::DeleteBlock (u8 *p)
+{
+	RemoveRegion (p);
+	delete [] p;
+}
+
+// the last region that starts at or below nBus, or s_nRegions if none
+unsigned CV3D::FindRegion (u32 nBus)
+{
+	unsigned nLow = 0, nHigh = s_nRegions;		// the answer is below nHigh
+	while (nLow < nHigh)
+	{
+		unsigned nMid = (nLow + nHigh) / 2;
+		if (s_Regions[nMid].nBus <= nBus)
+		{
+			nLow = nMid + 1;
+		}
+		else
+		{
+			nHigh = nMid;
+		}
+	}
+
+	return nLow ? nLow - 1 : s_nRegions;
+}
+
+void CV3D::AddRegion (const void *p, size_t nBytes)
+{
+	u32 nBus = BusAddress (p);
+	unsigned i = FindRegion (nBus);
+	if (i < s_nRegions && s_Regions[i].nBus == nBus)
+	{
+		s_Regions[i].nBytes = (u32) nBytes;
+		return;
+	}
+	if (s_nRegions == MaxRegions)
+	{
+		if (!s_bRegionsFull)
+		{
+			LOGWARN ("More than %u regions: the job check can't tell addresses any more", MaxRegions);
+			s_bRegionsFull = TRUE;
+		}
+		return;
+	}
+
+	i = i < s_nRegions ? i + 1 : 0;			// the first above nBus
+	memmove (&s_Regions[i + 1], &s_Regions[i], (s_nRegions - i) * sizeof s_Regions[0]);
+	s_Regions[i].nBus = nBus;
+	s_Regions[i].nBytes = (u32) nBytes;
+	s_nRegions++;
+}
+
+void CV3D::RemoveRegion (const void *p)
+{
+	if (!p)
+	{
+		return;
+	}
+	u32 nBus = BusAddress (p);
+	unsigned i = FindRegion (nBus);
+	if (i < s_nRegions && s_Regions[i].nBus == nBus)
+	{
+		memmove (&s_Regions[i], &s_Regions[i + 1], (s_nRegions - i - 1) * sizeof s_Regions[0]);
+		s_nRegions--;
+	}
+}
+
+boolean CV3D::InRegion (u32 nBus, u32 nBytes)
+{
+	if (s_bRegionsFull)
+	{
+		return TRUE;
+	}
+	unsigned i = FindRegion (nBus);
+
+	return    i < s_nRegions
+	       && (u64) nBus + nBytes <= (u64) s_Regions[i].nBus + s_Regions[i].nBytes;
 }
 
 u32 CV3D::BusAddress (const void *p)
@@ -106,6 +204,11 @@ boolean CV3D::RunJob (u32 nBinStart, u32 nBinEnd, u32 nRenderStart, u32 nRenderE
 		      u32 nOverflowAddress, u32 nOverflowSize,
 		      unsigned *pBinUs, unsigned *pRenderUs)
 {
+	if (s_pJobCheck && !(*s_pJobCheck) (nBinStart, nBinEnd, nRenderStart, nRenderEnd))
+	{
+		return FALSE;
+	}
+
 	// clear V3D caches (texture/uniform L2C and the slices' caches)
 	Write (V3D_L2CACTL, 1 << 2);
 	Write (V3D_SLCACTL, 0x0F0F0F0F);
@@ -175,6 +278,11 @@ boolean CV3D::RunJob (u32 nBinStart, u32 nBinEnd, u32 nRenderStart, u32 nRenderE
 
 boolean CV3D::RunRender (u32 nRenderStart, u32 nRenderEnd, unsigned *pRenderUs)
 {
+	if (s_pJobCheck && !(*s_pJobCheck) (0, 0, nRenderStart, nRenderEnd))
+	{
+		return FALSE;
+	}
+
 	Write (V3D_L2CACTL, 1 << 2);		// as RunJob
 	Write (V3D_SLCACTL, 0x0F0F0F0F);
 	Write (V3D_RFC, 1);

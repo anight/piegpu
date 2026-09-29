@@ -203,7 +203,7 @@ boolean CTextures::Alloc (TTexture *T, TStorage *pStorage)
 		return FALSE;
 	}
 
-	pStorage->pRaw = new u8[T->nBytes + 4096];
+	pStorage->pRaw = CV3D::NewBlock (T->nBytes + 4096);
 	if (!pStorage->pRaw)
 	{
 		return FALSE;
@@ -216,7 +216,7 @@ boolean CTextures::Alloc (TTexture *T, TStorage *pStorage)
 
 void CTextures::Free (TStorage *pStorage)
 {
-	delete [] pStorage->pRaw;
+	CV3D::DeleteBlock (pStorage->pRaw);
 	pStorage->pRaw = nullptr;
 	pStorage->pBase = nullptr;
 }

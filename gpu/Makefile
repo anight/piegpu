@@ -6,7 +6,7 @@ AARCH ?= 32
 
 OBJS = main.o build_info.o kernel.o commands.o geometry.o textures.o programs.o renderer.o \
        link/i2s_link.o link/byte_stream_link.o link/usb_link.o link/usb_bulk_link.o display/panel_output.o display/hdmi_output.o display/hdmi_monitor.o display/gud_display.o video/video.o install/installer.o \
-       ../drivers/v3d.o ../drivers/st7789dma.o ../devtools/devlink.o ../devtools/runlog.o ../devtools/pgpugadget.o \
+       ../drivers/v3d.o ../drivers/v3dcheck.o ../drivers/st7789dma.o ../devtools/devlink.o ../devtools/runlog.o ../devtools/pgpugadget.o \
        video/compat/circle_vcos.o video/compat/circle_micros.o $(MMAL)
 
 # MMAL (video/userland, BSD-3): the client of the VideoCore's video components

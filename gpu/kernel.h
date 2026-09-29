@@ -86,6 +86,7 @@ private:
 	enum THostMode {HostAuto, HostUSB, HostI2S};
 	THostMode		m_HostMode;
 	boolean			m_bGUD;			// gud=off: no USB monitor
+	boolean			m_bJobCheck;		// clcheck=on (the default): control lists checked (v3dcheck.h)
 	boolean			m_bPanelPresent;
 	unsigned		m_nHDMIPixels;		// the largest screen on HDMI (default: native)
 	CPanelOutput		m_Panel;
