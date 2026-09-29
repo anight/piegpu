@@ -2,7 +2,7 @@
 #
 # Build the host Mesa used by tools/glslc: the vc4 gallium driver (the
 # VideoCore IV shader compiler) and its no-hardware DRM shim, with the
-# pigpu dump hook (patches/mesa-vc4-dump.patch).
+# piegpu dump hook (patches/mesa-vc4-dump.patch).
 #
 # Result: third_party/mesa-install (not in git).
 #

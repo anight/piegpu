@@ -21,12 +21,12 @@ max_framebuffers=2
 otg_mode=1
 
 [all]
-# pigpu: memory for the VideoCore (firmware OpenGL ES needs it)
+# piegpu: memory for the VideoCore (firmware OpenGL ES needs it)
 gpu_mem=128
-# pigpu: core clock 300 MHz so that SPI0 can run at 75 MHz (300 / 4)
+# piegpu: core clock 300 MHz so that SPI0 can run at 75 MHz (300 / 4)
 core_freq=300
 core_freq_min=300
-# pigpu: keep HDMI (not composite) as the output when no monitor is
+# piegpu: keep HDMI (not composite) as the output when no monitor is
 # connected at boot, so that one plugged in later gets a picture; the gpu app
 # watches the hot-plug line itself. No overscan borders.
 hdmi_force_hotplug=1

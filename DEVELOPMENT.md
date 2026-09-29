@@ -1,4 +1,4 @@
-# Developing pigpu
+# Developing piegpu
 
 Notes on how the RPi side works inside, for changing it. How to build and
 use it is in the [README](README.md). Supported for now: the Raspberry Pi
@@ -24,7 +24,7 @@ run says how the previous one ended and shows its last lines.
 | Code | What it does |
 |---|---|
 | `devtools/runlog.{h,cpp}` | `CRunLog`: the ring, the event hook, the report |
-| pigpu's fork of Circle (github.com/anight/circle, branch `pigpu`) | Circle leaves the top of the ARM memory to the app (the commit "Memory: MEM_PERSISTENT_SIZE …") |
+| piegpu's fork of Circle (github.com/anight/circle, branch `piegpu`) | Circle leaves the top of the ARM memory to the app (the commit "Memory: MEM_PERSISTENT_SIZE …") |
 | `devtools/configure-circle.sh` | `-d MEM_PERSISTENT_SIZE=0x10000` |
 | `gpu/kernel.cpp` | `m_RunLog.Initialize ()` right after the logger's; `Report ()` after the boot lines |
 | `gpu/main.cpp`, `gpu/install/installer.cpp`, `devtools/devlink.cpp` | Mark the restarts that were asked for |
@@ -53,7 +53,7 @@ with `gpu_mem=128`, so the ARM gets 384 MB up to 0x18000000:
 ### Keeping the top of the ARM memory out of Circle's hands
 
 Circle hands all the ARM memory the firmware reports
-(`PROPTAG_GET_ARM_MEMORY`) to its heap and page allocator. pigpu's fork
+(`PROPTAG_GET_ARM_MEMORY`) to its heap and page allocator. piegpu's fork
 subtracts `MEM_PERSISTENT_SIZE` from that size in `CMemorySystem`
 (`lib/memory.cpp` and `lib/memory64.cpp`). The top 64 KB is then the app's:
 no allocator ever returns it. The run log finds it with the same property
@@ -261,7 +261,7 @@ which packet and why.
   - shader records (GL and NV), the shaders' code and uniform streams;
   - index buffers, and each vertex attribute over the vertices a draw really
     uses. For an indexed draw that means reading the index buffer for the
-    smallest and largest index: pigpu points converted vertex data below its
+    smallest and largest index: piegpu points converted vertex data below its
     start (the V3D adds index x stride), so the range can't start at 0. The
     largest index must not exceed the draw's max index.
 
@@ -309,7 +309,7 @@ Measured on the Zero 2 W, HDMI 1024x600 (one job a frame):
 
 Nearly all of it is the rendering list (160 tiles, about 1,400 packets, 6.9
 KB); the binning list takes about 10 us. That's 1-2% of a 60 fps frame, on an
-ARM that runs at 600 MHz: the firmware starts it there and pigpu doesn't
+ARM that runs at 600 MHz: the firmware starts it there and piegpu doesn't
 raise it (a plain byte-by-byte read of the same 6.9 KB takes 45 us). A job
 refused costs nothing more.
 

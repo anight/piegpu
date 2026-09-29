@@ -1,5 +1,5 @@
 /*
- * pgpu.c - command encoding and reply parsing of the pigpu link, on top of
+ * pgpu.c - command encoding and reply parsing of the piegpu link, on top of
  * a transport (pgpu_link.h). Board independent: a new host board only needs
  * its transport.
  *

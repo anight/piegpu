@@ -1,4 +1,4 @@
-// pgi.js - the pigpu installer protocol (gpu/install/installer.h) over the
+// pgi.js - the piegpu installer protocol (gpu/install/installer.h) over the
 // RPi's USB serial port (Web Serial): text lines, the RPi's log between its
 // answers (#PGI ...). File data goes as base64 lines of 4.5 KB, each answered
 // (the RPi's text path has no flow control). A GL demo can take the port's
@@ -200,7 +200,7 @@ export class Installer
 
 	// {board, revision, ramMB, card, sizeMB, fs, freeKB, files: Map name -> bytes,
 	// build, error}; board: its name as the firmware says ("Raspberry Pi Zero
-	// W"; '' from an older pigpu); build: the card's kernel.img's
+	// W"; '' from an older piegpu); build: the card's kernel.img's
 	// {version, built, config} (gpu/build_info.h), or null
 	async info ()
 	{
@@ -275,6 +275,6 @@ export class Installer
 	// the RPi starts from its card again)
 	async restart ()
 	{
-		await this.writeRaw (new TextEncoder ().encode ('\npigpu-reboot\n'));
+		await this.writeRaw (new TextEncoder ().encode ('\npiegpu-reboot\n'));
 	}
 }

@@ -2,7 +2,7 @@
 // installer.h
 //
 // Puts files on the RPi's SD card for the host (web/installer: the page that
-// installs pigpu), over the USB serial link (devtools/devlink) in text
+// installs piegpu), over the USB serial link (devtools/devlink) in text
 // lines, between the log's lines:
 //
 //   PGI INFO                     #PGI INFO board=<name, _ for spaces> rev=<hex>
@@ -22,7 +22,7 @@
 //   PGI REBOOT                   #PGI OK, then a reboot (from the card)
 //
 // Errors: #PGI ERR <what>. The data is base64 so that it can't hold the link's
-// magic strings (pigpu-reboot, pigpu-stream: kernel.img has them), and
+// magic strings (piegpu-reboot, piegpu-stream: kernel.img has them), and
 // each line waits for its answer: the text path has no flow control.
 //
 #ifndef _gpu_install_installer_h

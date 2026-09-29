@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Configure Circle (not in git) for the pigpu apps on one board, then
+# Configure Circle (not in git) for the piegpu apps on one board, then
 # rebuild its libraries:
 #
 #   devtools/configure-circle.sh [zero|zero2]
@@ -8,13 +8,13 @@
 #   zero    Pi Zero / Zero W: ./circle, RASPPI=1, 32 bit (kernel.img)
 #   zero2   Pi Zero 2 W: ./circle-zero2, RASPPI=3, 64 bit (kernel8.img)
 #
-# A tree that isn't there is cloned from pigpu's fork of Circle: the branch
-# "pigpu" of github.com/anight/circle, Circle Step51.1 with pigpu's changes
+# A tree that isn't there is cloned from piegpu's fork of Circle: the branch
+# "piegpu" of github.com/anight/circle, Circle Step51.1 with piegpu's changes
 # as commits (the CDC and EP0 gadget, FatFs' f_mkfs, MEM_PERSISTENT_SIZE,
 # vcos in 64 bit). CIRCLE_REPO and CIRCLE_BRANCH pick another. A tree that
 # is there is used as it is.
 #
-# These two are the boards pigpu supports for now; more RPi boards are to
+# These two are the boards piegpu supports for now; more RPi boards are to
 # come.
 #
 # Circle builds in its source tree, so each board has its own. Toolchains:
@@ -40,7 +40,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$HERE/..
 TOOLCHAINS=$HOME/toolchains
 CIRCLE_REPO=${CIRCLE_REPO:-https://github.com/anight/circle.git}
-CIRCLE_BRANCH=${CIRCLE_BRANCH:-pigpu}
+CIRCLE_BRANCH=${CIRCLE_BRANCH:-piegpu}
 
 case "${1:-zero}" in
 zero)

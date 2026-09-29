@@ -22,7 +22,7 @@
 class CUSBBulkLink : public CByteStreamLink, public CGadgetStream
 {
 public:
-	CUSBBulkLink (CPiGPUGadget *pGadget);
+	CUSBBulkLink (CPieGPUGadget *pGadget);
 	~CUSBBulkLink (void);
 
 	boolean Initialize (void);
@@ -50,7 +50,7 @@ private:
 	unsigned GetTxFree (void) const		{ return TxBytes - (m_nTxIn - m_nTxOut); }
 
 private:
-	CPiGPUGadget *m_pGadget;
+	CPieGPUGadget *m_pGadget;
 	CSpinLock m_SpinLock;
 	volatile boolean m_bActive;
 

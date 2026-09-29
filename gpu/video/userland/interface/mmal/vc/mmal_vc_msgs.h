@@ -60,7 +60,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   */
 #define MMAL_WORKER_MSG_LEN  28
 
-/* pigpu: the messages as the VideoCore (32-bit ARM) lays them out, for 32
+/* piegpu: the messages as the VideoCore (32-bit ARM) lays them out, for 32
  * and 64-bit clients alike: fixed-width fields only (enums too: 32-bit ARM
  * bare metal makes some of them 1 byte, AArch64 4).
  *
@@ -628,7 +628,7 @@ static inline void mmal_vc_msg_to_buffer_header(MMAL_BUFFER_HEADER_T *header,
 }
 
 
-/* pigpu: the 32-bit ARM layout (devtools/mmal-layout.py), on any client */
+/* piegpu: the 32-bit ARM layout (devtools/mmal-layout.py), on any client */
 #include <stddef.h>
 #define MMAL_VC_WIRE_AT(type, field, at) vcos_static_assert(offsetof(type, field) == (at))
 vcos_static_assert(sizeof(mmal_worker_msg_header) == 24);

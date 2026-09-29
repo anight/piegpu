@@ -69,11 +69,11 @@ public:
 	virtual void OnStreamDisconnect (void) = 0;
 };
 
-class CPiGPUGadget : public CDWUSBGadget
+class CPieGPUGadget : public CDWUSBGadget
 {
 public:
-	CPiGPUGadget (CInterruptSystem *pInterrupt);
-	~CPiGPUGadget (void);
+	CPieGPUGadget (CInterruptSystem *pInterrupt);
+	~CPieGPUGadget (void);
 
 	// before the gadget starts (CDevLink::Initialize): the vendor interface is
 	// there only with a function
@@ -110,7 +110,7 @@ private:
 	class CBulkOutEndpoint : public CDWUSBGadgetEndpoint
 	{
 	public:
-		CBulkOutEndpoint (const TUSBEndpointDescriptor *pDesc, CPiGPUGadget *pGadget);
+		CBulkOutEndpoint (const TUSBEndpointDescriptor *pDesc, CPieGPUGadget *pGadget);
 
 		boolean Receive (void *pBuffer, size_t nLength);
 		void Cancel (void);
@@ -120,7 +120,7 @@ private:
 		void OnTransferComplete (boolean bIn, size_t nLength) override;
 
 	private:
-		CPiGPUGadget *m_pGadget;
+		CPieGPUGadget *m_pGadget;
 		u8 *m_pBuffer;
 		size_t m_nLength;		// asked for
 		size_t m_nDone;			// received so far
@@ -132,7 +132,7 @@ private:
 	class CStreamEndpoint : public CDWUSBGadgetEndpoint	// one transfer at a time
 	{
 	public:
-		CStreamEndpoint (const TUSBEndpointDescriptor *pDesc, CPiGPUGadget *pGadget);
+		CStreamEndpoint (const TUSBEndpointDescriptor *pDesc, CPieGPUGadget *pGadget);
 
 		boolean Begin (void *pBuffer, size_t nLength);
 
@@ -141,7 +141,7 @@ private:
 		void OnTransferComplete (boolean bIn, size_t nLength) override;
 
 	private:
-		CPiGPUGadget *m_pGadget;
+		CPieGPUGadget *m_pGadget;
 		boolean m_bActive;
 	};
 

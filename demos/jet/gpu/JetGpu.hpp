@@ -11,7 +11,7 @@
 //     or solid quads, alpha or additive
 //   * the CRT post-effect: scanlines as a blended overlay
 //
-// The hooks in Jet are marked "pigpu" (Scene.cpp, under JET_GPU).
+// The hooks in Jet are marked "piegpu" (Scene.cpp, under JET_GPU).
 #pragma once
 
 #include <cstdint>

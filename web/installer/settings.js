@@ -1,4 +1,4 @@
-// settings.js - the pigpu settings as the RPi reads them: config.txt (the
+// settings.js - the piegpu settings as the RPi reads them: config.txt (the
 // firmware's: memory, clocks, the HDMI mode) and cmdline.txt (the gpu app's
 // options, docs/protocol.md 14 / README "Kernel command line"), and back
 // from the files on a card.
@@ -25,7 +25,7 @@ export function makeCmdline (s)
 	return options.join (' ') + '\n';
 }
 
-// the boards pigpu supports for now, and is built for (web/installer/
+// the boards piegpu supports for now, and is built for (web/installer/
 // make-firmware.sh); more RPi boards are to come
 export const BOARDS = {zero: 'Raspberry Pi Zero / Zero W', zero2: 'Raspberry Pi Zero 2 W'};
 
@@ -40,8 +40,8 @@ const V3D_400 = ['# the GPU (V3D) at 400 MHz, not 300: 13-24% faster (tested)', 
 export function makeConfig (s, board = 'zero')
 {
 	const lines = [
-		board === 'any' ? '# pigpu on a Raspberry Pi Zero or Zero 2 W (the installer page, starting it over USB)'
-				: `# pigpu on a ${BOARDS[board]} (written by the installer page)`,
+		board === 'any' ? '# piegpu on a Raspberry Pi Zero or Zero 2 W (the installer page, starting it over USB)'
+				: `# piegpu on a ${BOARDS[board]} (written by the installer page)`,
 		...(board === 'zero2' ? ['# 64 bit: the firmware starts kernel8.img', 'arm_64bit=1', ...V3D_400] : ['arm_64bit=0']),
 		'initial_turbo=0',
 		'# memory for the VideoCore (its video decoder)',
@@ -50,7 +50,7 @@ export function makeConfig (s, board = 'zero')
 		'core_freq=300',
 		'core_freq_min=300',
 		'# HDMI stays on without a monitor at boot, so one plugged in later gets',
-		'# a picture (pigpu watches the hot-plug line); no overscan borders',
+		'# a picture (piegpu watches the hot-plug line); no overscan borders',
 		'hdmi_force_hotplug=1',
 		'disable_overscan=1',
 	];

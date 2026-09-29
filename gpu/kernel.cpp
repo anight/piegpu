@@ -1,5 +1,5 @@
 //
-// gpu: the RPi side of pigpu (docs/protocol.md).
+// gpu: the RPi side of piegpu (docs/protocol.md).
 // Receives the command stream from the host over a link (link/: the Pico's
 // I2S, or a PC over USB) and renders with the V3D to an output (display/: the
 // ST7789 panel, or HDMI: by default HDMI while a monitor is connected, else
@@ -570,7 +570,7 @@ void CKernel::DumpScreenshot (void)
 
 void CKernel::ShowSplash (COutput *pOutput)
 {
-	ShowText (pOutput, "pigpu", "waiting for the host", "build " __TIME__);
+	ShowText (pOutput, "piegpu", "waiting for the host", "build " __TIME__);
 }
 
 // a title and two lines in the middle of an output (not while it shows frames)

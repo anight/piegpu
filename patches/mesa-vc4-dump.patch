@@ -7,7 +7,7 @@ index c5559b4..0a0e97e 100644
  
          const struct vc4_fs_inputs *fs_inputs;
 +
-+        /* pigpu: copy of the code for the dump hook */
++        /* piegpu: copy of the code for the dump hook */
 +        uint64_t *pgpu_code;
 +        uint32_t pgpu_code_count;
 +        /* the state tracker's VS inputs: vattr (driver location) k is the
@@ -34,7 +34,7 @@ index d9d51f2..ac46d1e 100644
  {
 -        c->inputs[attr * 4 + 0] = qir_ITOF(c, qir_reg(QFILE_FRAG_X, 0));
 -        c->inputs[attr * 4 + 1] = qir_ITOF(c, qir_reg(QFILE_FRAG_Y, 0));
-+        /* pigpu: the pixel centre is at + 0.5 (the screen advertises
++        /* piegpu: the pixel centre is at + 0.5 (the screen advertises
 +         * fs_coord_pixel_center_half_integer, and FRAG_X/Y are the integer
 +         * pixel coordinates; measured on the hardware)
 +         */
@@ -50,7 +50,7 @@ index d9d51f2..ac46d1e 100644
  }
  
 -static const nir_shader_compiler_options nir_options = {
-+/* pigpu: not const - PGPU_NO_UNROLL (below) keeps loops as loops, for
++/* piegpu: not const - PGPU_NO_UNROLL (below) keeps loops as loops, for
 + * glslc to retry shaders whose unrolled form fails register allocation */
 +static nir_shader_compiler_options nir_options = {
          .lower_extract_byte = true,
@@ -70,7 +70,7 @@ index d9d51f2..ac46d1e 100644
                                                   c->qpu_inst_count *
                                                   sizeof(uint64_t));
 +
-+                /* pigpu: keep the code for the dump hook (vc4_uniforms.c) */
++                /* piegpu: keep the code for the dump hook (vc4_uniforms.c) */
 +                shader->pgpu_code = ralloc_array(shader, uint64_t,
 +                                                 c->qpu_inst_count);
 +                memcpy(shader->pgpu_code, c->qpu_insts,
@@ -85,7 +85,7 @@ index d9d51f2..ac46d1e 100644
                  key->point_coord_upper_left =
                          (vc4->rasterizer->base.sprite_coord_mode ==
                           PIPE_SPRITE_COORD_UPPER_LEFT);
-+                /* pigpu: tools/glslc compiles the fragment shader for
++                /* piegpu: tools/glslc compiles the fragment shader for
 +                 * points a second time for texture targets (rows bottom up),
 +                 * where the state tracker would choose the lower left origin
 +                 */
@@ -103,7 +103,7 @@ index efc9832..db0eff8 100644
                  caps->max_outputs = i == MESA_SHADER_FRAGMENT ? 1 : 8;
                  caps->max_temps = 256; /* GL_MAX_PROGRAM_TEMPORARIES_ARB */
 -                caps->max_const_buffer0_size = 16 * 1024 * sizeof(float);
-+                /* pigpu: pgl's limits, so the shaders' gl_Max* constants
++                /* piegpu: pgl's limits, so the shaders' gl_Max* constants
 +                 * match glGetIntegerv: 512 uniform vectors per stage (the
 +                 * RPi's uniform storage is 4096 words). st_extensions.c
 +                 * reserves room for lowered state out of this - 8 clip
@@ -115,7 +115,7 @@ index efc9832..db0eff8 100644
                  caps->max_const_buffers = 1;
                  caps->indirect_const_addr = true;
                  caps->integers = true;
-+                /* pigpu: 8 texture units (PGPU_MAX_TEXTURE_UNITS) */
++                /* piegpu: 8 texture units (PGPU_MAX_TEXTURE_UNITS) */
                  caps->max_texture_samplers =
 -                caps->max_sampler_views = VC4_MAX_TEXTURE_SAMPLERS;
 +                caps->max_sampler_views = 8;
@@ -131,9 +131,9 @@ index f63bbcd..f405779 100644
  }
  
 +
-+/* pigpu: dump each compiled shader used by a draw (code, uniform stream
++/* piegpu: dump each compiled shader used by a draw (code, uniform stream
 + * layout and the values written for it) when PGPU_VC4_DUMP names a file.
-+ * Used by pigpu/tools/glslc to precompile programs offline.
++ * Used by piegpu/tools/glslc to precompile programs offline.
 + */
 +#include <stdio.h>
 +#include <stdlib.h>
@@ -213,7 +213,7 @@ index 4759c34..1f5a126 100644
     st_make_bound_samplers_resident(st, prog);
     st_make_bound_images_resident(st, prog);
  
-+   /* pigpu: dump where the built-in state variables and the uniforms are
++   /* piegpu: dump where the built-in state variables and the uniforms are
 +    * in the constant buffer, when PGPU_VC4_DUMP names a file (tools/glslc)
 +    */
 +   if (params && getenv("PGPU_VC4_DUMP") &&
@@ -252,7 +252,7 @@ index 577ca92..dda0c8d 100644
     c->MaxCombinedTextureImageUnits =
        MAX2(c->MaxCombinedTextureImageUnits,
             mesh_pipeline_max_combined_texture_image_units);
-+   /* pigpu: 8 texture units in all (PGPU_MAX_TEXTURE_UNITS), as pgl reports */
++   /* piegpu: 8 texture units in all (PGPU_MAX_TEXTURE_UNITS), as pgl reports */
 +   c->MaxCombinedTextureImageUnits = MIN2(c->MaxCombinedTextureImageUnits, 8);
  
     /* This depends on program constants. */

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>pigpu installer</title>
+<title>piegpu installer</title>
 <style>
 :root
 {
@@ -176,8 +176,8 @@ progress
 </head>
 <body>
 <main>
-	<h1>pigpu installer</h1>
-	<p class="sub">Puts pigpu on the Raspberry Pi's (RPi's) microSD card from this page, over the
+	<h1>piegpu installer</h1>
+	<p class="sub">Puts piegpu on the Raspberry Pi's (RPi's) microSD card from this page, over the
 		RPi's USB port. <span id="version"></span></p>
 	<p class="note"><b>Supported for now: the Raspberry Pi Zero / Zero W and the Zero 2 W.</b>
 		More RPi boards are to come.</p>
@@ -198,9 +198,9 @@ progress
 			<button id="continue" class="primary" hidden>Continue</button>
 		</div>
 		<p class="hint" style="margin-top: 12px">
-			<b>Connect</b> if the card already has pigpu (the panel shows it).
+			<b>Connect</b> if the card already has piegpu (the panel shows it).
 			<b>Start a blank RPi</b> if the card is new or empty: the RPi then waits for this
-			computer, and the page starts pigpu on it (a Zero or a Zero 2 W: the board takes its
+			computer, and the page starts piegpu on it (a Zero or a Zero 2 W: the board takes its
 			own build). If the card holds another system
 			(Raspberry Pi OS, say), take it out first and put it back when the page asks.
 			<b>Reset</b> restarts a connected RPi from its card.</p>
@@ -286,7 +286,7 @@ progress
 	<section id="actions-section" hidden>
 		<h2><span class="step">4</span>Actions</h2>
 		<div class="buttons">
-			<button id="install" class="primary" disabled>Install pigpu</button>
+			<button id="install" class="primary" disabled>Install piegpu</button>
 			<button id="save-settings" disabled>Save the settings only</button>
 			<button id="run-gears" disabled>Test OpenGL</button>
 			<button id="test-video" disabled>Test video</button>
@@ -295,7 +295,7 @@ progress
 		<progress id="progress" max="1" value="0" hidden></progress>
 		<div id="action-status" class="status" hidden></div>
 		<p class="hint" style="margin-top: 12px">
-			<b>Install pigpu</b> writes the firmware and the settings above to the card, then
+			<b>Install piegpu</b> writes the firmware and the settings above to the card, then
 			restarts the RPi from it; <b>Save the settings only</b> writes just the settings.
 			<b>Test OpenGL</b> runs gears (glxgears' three gears) on the RPi: the demo runs in this page
 			(WebAssembly) and sends its OpenGL ES commands over the serial port (it needs the Host

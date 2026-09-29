@@ -1,5 +1,5 @@
 /*
- * pgpu.h - Pico side of the pigpu link (docs/protocol.md)
+ * pgpu.h - Pico side of the piegpu link (docs/protocol.md)
  *
  * Commands are appended to a staging buffer and sent in batches by the
  * transport (pgpu_link.h: the I2S link on the Pico, pgpu_pico.c; the RPi's

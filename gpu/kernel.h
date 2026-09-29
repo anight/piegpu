@@ -72,7 +72,7 @@ private:
 	CLogger			m_Logger;
 	CRunLog			m_RunLog;
 	CScheduler		m_Scheduler;		// VCHIQ's tasks (video) run when the main loop yields
-	CPiGPUGadget		m_Gadget;		// USB: serial port + monitor (GUD)
+	CPieGPUGadget		m_Gadget;		// USB: serial port + monitor (GUD)
 	CDevLink		m_DevLink;
 	CInstaller		m_Installer;
 	char			m_HostLine[CInstaller::MaxLine + 1];	// a line from the host (HostInput)

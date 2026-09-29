@@ -18,7 +18,7 @@ using Update = void (*)(float seconds);
 using RenderEffects = unsigned (*)(Renderer::Scene& scene);
 void start(Init init, Update update, Update afterRender = nullptr,
            RenderEffects renderEffects = nullptr);
-// pigpu: a line for the bottom band after the title, or nullptr (the
+// piegpu: a line for the bottom band after the title, or nullptr (the
 // scene may change it; it is read about once a second)
 extern const char* caption;
 }

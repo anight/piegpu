@@ -1,6 +1,6 @@
 /*
  * pgl.h - an OpenGL ES 2.0 API (with the GL ES 1.1 fixed-function calls) for
- * pigpu, on top of pgpu (docs/protocol.md).
+ * piegpu, on top of pgpu (docs/protocol.md).
  *
  * The GL state lives here (for glGet*, glIsEnabled, name allocation); every
  * call is encoded into the command stream. Differences to a desktop driver:

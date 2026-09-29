@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Puts the files the installer page serves into web/installer/firmware/, a
-# set per board (the ones pigpu supports for now: the Zero / Zero W and the
+# set per board (the ones piegpu supports for now: the Zero / Zero W and the
 # Zero 2 W): the Raspberry Pi firmware (Circle's boot/: bootcode.bin,
 # start.elf, fixup.dat) and the gpu app built for it (devtools/build-gpu.sh:
 # firmware/zero/kernel.img; firmware/zero2/kernel8.img if Circle is
@@ -44,7 +44,7 @@ for board in boards:
 		files.append({'name': name, 'size': len(data), 'crc32': '%08x' % (zlib.crc32(data) & 0xffffffff)})
 	manifest['boards'][board] = {'kernel': kernels[board], 'files': files}
 json.dump(manifest, open(os.path.join(out, 'manifest.json'), 'w'), indent=1)
-print('firmware/: pigpu %s for %s' % (version, ', '.join(boards)))
+print('firmware/: piegpu %s for %s' % (version, ', '.join(boards)))
 PY
 
 # the test video (the Test video button): the Sintel trailer, 854x480 H.264,

@@ -33,7 +33,7 @@ public:
 	static const unsigned MaxWidth = 1920, MaxHeight = 1200;
 	static const unsigned BandBytes = 256 * 1024;
 
-	CGUDDisplay (CPiGPUGadget *pGadget);
+	CGUDDisplay (CPieGPUGadget *pGadget);
 	~CGUDDisplay (void);
 
 	boolean Initialize (void);
@@ -71,7 +71,7 @@ private:
 	void Draw (const TBand &rBand);
 	void ShowPicture (COutput *pOutput);
 
-	CPiGPUGadget *m_pGadget;
+	CPieGPUGadget *m_pGadget;
 	CSpinLock m_SpinLock;
 
 	volatile unsigned m_nScreenWidth, m_nScreenHeight;

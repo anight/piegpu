@@ -1,5 +1,5 @@
-# Circle is a separate clone per board (pigpu's fork, github.com/anight/circle,
-# branch pigpu: devtools/configure-circle.sh)
+# Circle is a separate clone per board (piegpu's fork, github.com/anight/circle,
+# branch piegpu: devtools/configure-circle.sh)
 /circle/
 
 # Circle build outputs

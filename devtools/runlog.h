@@ -8,7 +8,7 @@
 // has none.
 //
 // The ring is the top of the ARM memory, which Circle keeps out of its heap
-// and pages (MEM_PERSISTENT_SIZE: pigpu's fork of Circle, devtools/configure-
+// and pages (MEM_PERSISTENT_SIZE: piegpu's fork of Circle, devtools/configure-
 // circle.sh): the firmware leaves it alone at a restart
 // (the low memory it clears: the Zero 2 W's first ~4 MB). It's written from the
 // logger's event hook, before the logger's own target (so a panic's message
