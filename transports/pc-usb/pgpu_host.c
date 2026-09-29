@@ -22,6 +22,9 @@
  *			the serial port (the log; DEBUG_SCREENSHOT dumps, for
  *			devtools/screenshot.py)
  *	PGPU_WINDOW	the serial port's flow-control window, bytes (tests)
+ *	PGPU_SHOT_FRAME	after this many frames (pgpu_wait_frame), ask the RPi once
+ *			for a screenshot (DEBUG_SCREENSHOT: it goes to the log, so
+ *			with PGPU_TEXT_LOG over the serial port)
  */
 #define _GNU_SOURCE
 #include "pgpu_link.h"
@@ -627,6 +630,19 @@ bool pgpu_wait_frame (uint32_t timeout_ms)
 		return false;
 	}
 	frames_waited++;
+
+	/* PGPU_SHOT_FRAME: between two frames, no packet is half sent */
+	static long shot_frame = -1;
+	if (shot_frame == -1)
+	{
+		shot_frame = getenv ("PGPU_SHOT_FRAME") ? strtol (getenv ("PGPU_SHOT_FRAME"), NULL, 0) : 0;
+	}
+	if (shot_frame > 0 && frames_waited == (uint32_t) shot_frame)
+	{
+		uint32_t shot[2] = {PGPU_HEADER (PGPU_SYNC_COMMAND, PGPU_OP_DEBUG_SCREENSHOT, 0), 0};
+		shot[1] = pgpu_crc32 (shot, 1);
+		send_bytes ((const uint8_t *) shot, sizeof shot);
+	}
 	return true;
 }
 
