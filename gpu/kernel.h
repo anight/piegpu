@@ -13,9 +13,7 @@
 #include <circle/types.h>
 #include <devlink.h>
 #include <pgpugadget.h>
-#ifdef PGPU_VIDEO
 #include <vc4/vchiq/vchiqdevice.h>
-#endif
 #include <v3d.h>
 #include "link/i2s_link.h"
 #include "link/usb_link.h"
@@ -75,9 +73,7 @@ private:
 	CInstaller		m_Installer;
 	char			m_HostLine[CInstaller::MaxLine + 1];	// a line from the host (HostInput)
 	unsigned		m_nHostLine;
-#ifdef PGPU_VIDEO
-	CVCHIQDevice		m_VCHIQ;		// the VideoCore's services (video; 32-bit builds)
-#endif
+	CVCHIQDevice		m_VCHIQ;		// the VideoCore's services (video)
 
 	// the outputs (docs/protocol.md 14): output=auto|panel|hdmi, panel=none,
 	// hdmi_pixels=N in cmdline.txt

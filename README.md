@@ -40,8 +40,7 @@ mmal/vc/mmal_vc_msgs.h`, checked against the 32-bit compiler's by
 (`patches/circle-vcos-aarch64.patch`), and the MMAL sources are built with
 `-mstrict-align` there (they read VCHIQ's messages in place, in Circle's
 coherent region: Device memory in 64 bit, where unaligned accesses fault).
-Verified on both boards: 640x360 to 1280x720, 0 dropped. `VIDEO=0` builds
-without it. The Zero 2 W's HDMI hot-plug line is GPIO28 (the
+Verified on both boards: 640x360 to 1280x720, 0 dropped. The Zero 2 W's HDMI hot-plug line is GPIO28 (the
 Zero's: GPIO46). `web/installer/make-firmware.sh`
 puts both builds on the installer page, which picks the one for the board.
 

@@ -6,8 +6,7 @@
 #   devtools/build-gpu.sh [zero|zero2|all]
 #
 #   zero    Pi Zero / Zero W, 32 bit: gpu/kernel.img (in place, as make -C gpu)
-#   zero2   Pi Zero 2 W, 64 bit: build/zero2/gpu/kernel8.img, without video
-#           (Circle's vcos is 32 bit only: gpu/video/video_none.cpp)
+#   zero2   Pi Zero 2 W, 64 bit: build/zero2/gpu/kernel8.img
 #
 # Circle's builds put the objects next to the sources, so the Zero 2 W's is
 # made in a copy of them (build/zero2: gpu, drivers, devtools, protocol,
