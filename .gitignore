@@ -1,5 +1,5 @@
-# Circle is a separate clone (github.com/rsta2/circle, 51.1); our local change
-# is kept in patches/
+# Circle is a separate clone per board (pigpu's fork, github.com/anight/circle,
+# branch pigpu: devtools/configure-circle.sh)
 /circle/
 
 # Circle build outputs

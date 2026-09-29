@@ -6,9 +6,13 @@
 #   devtools/configure-circle.sh [zero|zero2]
 #
 #   zero    Pi Zero / Zero W: ./circle, RASPPI=1, 32 bit (kernel.img)
-#   zero2   Pi Zero 2 W: ./circle-zero2, RASPPI=3, 64 bit (kernel8.img). The
-#           tree is made from ./circle (the same commit) and patches/ if it
-#           isn't there.
+#   zero2   Pi Zero 2 W: ./circle-zero2, RASPPI=3, 64 bit (kernel8.img)
+#
+# A tree that isn't there is cloned from pigpu's fork of Circle: the branch
+# "pigpu" of github.com/anight/circle, Circle Step51.1 with pigpu's changes
+# as commits (the CDC and EP0 gadget, FatFs' f_mkfs, MEM_PERSISTENT_SIZE,
+# vcos in 64 bit). CIRCLE_REPO and CIRCLE_BRANCH pick another. A tree that
+# is there is used as it is.
 #
 # These two are the boards pigpu supports for now; more RPi boards are to
 # come.
@@ -27,18 +31,16 @@
 # within minutes. PGPU_HEAP_BUCKETS tells the gpu app it was built this way
 # (gpu/textures.cpp).
 #
-# MEM_PERSISTENT_SIZE (patches/circle-persistent-memory.patch): Circle leaves
-# the top 64 KB of the ARM memory to the app, for the log that survives a
-# restart (devtools/runlog.h).
+# MEM_PERSISTENT_SIZE (the fork's "Memory: MEM_PERSISTENT_SIZE ..." commit):
+# Circle leaves the top 64 KB of the ARM memory to the app, for the log that
+# survives a restart (devtools/runlog.h).
 #
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$HERE/..
 TOOLCHAINS=$HOME/toolchains
-PATCHES="circle-cdc-endpoint-gadget circle-cdc-rx-overrun circle-cdc-short-packets
-	 circle-ep0-vendor-in circle-fatfs-mkfs circle-cdc-throughput
-	 circle-persistent-memory"	# (in this order)
-PATCHES64="circle-vcos-aarch64"		# and for a 64-bit tree
+CIRCLE_REPO=${CIRCLE_REPO:-https://github.com/anight/circle.git}
+CIRCLE_BRANCH=${CIRCLE_BRANCH:-pigpu}
 
 case "${1:-zero}" in
 zero)
@@ -50,19 +52,16 @@ zero2)
 	TREE=$ROOT/circle-zero2
 	RASPPI=3
 	PREFIX=$TOOLCHAINS/arm-gnu-toolchain-15.2.rel1-x86_64-aarch64-none-elf/bin/aarch64-none-elf-
-	if [ ! -d "$TREE" ]; then
-		git clone -q "$ROOT/circle" "$TREE"
-		git -C "$TREE" checkout -q "$(git -C "$ROOT/circle" rev-parse HEAD)"
-		for p in $PATCHES $PATCHES64; do
-			git -C "$TREE" apply "$ROOT/patches/$p.patch"
-		done
-	fi
 	;;
 *)
 	echo "usage: $0 [zero|zero2]" >&2
 	exit 1
 	;;
 esac
+
+if [ ! -d "$TREE" ]; then
+	git clone -q --branch "$CIRCLE_BRANCH" "$CIRCLE_REPO" "$TREE"
+fi
 
 cd "$TREE"
 ./configure -r "$RASPPI" -f -p "$PREFIX" \

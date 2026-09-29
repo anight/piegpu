@@ -30,7 +30,7 @@ side works inside are in [DEVELOPMENT.md](DEVELOPMENT.md).
 | `protocol/` | the wire format header, shared by both sides |
 | `devtools/` | Circle setup and builds per board, the RPi's USB device (serial port, GL interface, monitor), the run log, `run.sh` (boot an RPi over USB, logs, screenshots) |
 | `tools/` | `glslc` (GLSL compiler: Mesa's vc4, offline), `deqp` (the conformance tests) |
-| `patches/` | local changes to Circle (and Mesa, for `tools/glslc`) |
+| `patches/` | a local change to Mesa, for `tools/glslc` (Circle's are in its fork, below) |
 | `web/installer/` | a page that installs pigpu on the RPi's SD card over USB and runs demos on it |
 | `experiments/` | the early probes and demos that led here (links, displays, V3D, video) |
 
@@ -42,21 +42,16 @@ pigpu supports two boards for now:
   gears frame;
 - a Zero 2 W: 64 bit, `kernel8.img`, 0.9 ms.
 
-Circle builds in its source tree, so each board has its own copy:
-
-- `circle`: Circle Step51.1 with the patches in `patches/`;
-- `circle-zero2`: made from `circle` by `configure-circle.sh zero2`.
+pigpu builds with its fork of Circle: the branch `pigpu` of
+[github.com/anight/circle](https://github.com/anight/circle/tree/pigpu),
+Circle Step51.1 with pigpu's changes as commits (the USB gadget's CDC and
+EP0, FatFs' `f_mkfs`, `MEM_PERSISTENT_SIZE`, vcos in 64 bit). Circle builds
+in its source tree, so each board has its own copy, `circle` and
+`circle-zero2`: `configure-circle.sh` clones the fork into the one it's
+given if it isn't there, then configures and builds it.
 
 Toolchains: Arm GNU 15.2 in `~/toolchains` (`arm-none-eabi` and
 `aarch64-none-elf`).
-
-```bash
-git clone https://github.com/rsta2/circle.git && git -C circle checkout Step51.1
-```
-
-```bash
-for p in cdc-endpoint-gadget cdc-rx-overrun cdc-short-packets ep0-vendor-in fatfs-mkfs cdc-throughput persistent-memory; do git -C circle apply ../patches/circle-$p.patch; done
-```
 
 ```bash
 devtools/configure-circle.sh zero
@@ -79,7 +74,8 @@ Video decoding works the same on both boards:
 - MMAL's messages to the VideoCore have the VideoCore's 32-bit layout on any
   client (`gpu/video/userland/interface/mmal/vc/mmal_vc_msgs.h`).
   `devtools/mmal-layout.py` checks the layout against the 32-bit compiler's.
-- Circle's vcos is used in 64 bit too (`patches/circle-vcos-aarch64.patch`).
+- Circle's vcos is used in 64 bit too (the fork's "vcos: build for AArch64
+  too").
 - In 64 bit, the MMAL sources are built with `-mstrict-align`. They read
   VCHIQ's messages in place, in Circle's coherent region, which is Device
   memory in 64 bit, where unaligned accesses fault.
@@ -90,7 +86,7 @@ Verified on both boards: 640x360 to 1280x720, 0 dropped.
 
 A restart explains itself (`devtools/runlog.h`): the RPi keeps its log in
 the top 64 KB of the ARM memory, which Circle leaves to the app
-(`patches/circle-persistent-memory.patch`, `MEM_PERSISTENT_SIZE`) and the
+(`MEM_PERSISTENT_SIZE`, in pigpu's fork of Circle) and the
 firmware doesn't clear at a restart (the low memory it does: the Zero 2 W's
 first ~4 MB). At boot the log says how the previous run ended, with its last
 lines unless it restarted as asked:

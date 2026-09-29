@@ -24,8 +24,8 @@ run says how the previous one ended and shows its last lines.
 | Code | What it does |
 |---|---|
 | `devtools/runlog.{h,cpp}` | `CRunLog`: the ring, the event hook, the report |
-| `patches/circle-persistent-memory.patch` | Circle leaves the top of the ARM memory to the app |
-| `devtools/configure-circle.sh` | Applies the patch; `-d MEM_PERSISTENT_SIZE=0x10000` |
+| pigpu's fork of Circle (github.com/anight/circle, branch `pigpu`) | Circle leaves the top of the ARM memory to the app (the commit "Memory: MEM_PERSISTENT_SIZE …") |
+| `devtools/configure-circle.sh` | `-d MEM_PERSISTENT_SIZE=0x10000` |
 | `gpu/kernel.cpp` | `m_RunLog.Initialize ()` right after the logger's; `Report ()` after the boot lines |
 | `gpu/main.cpp`, `gpu/install/installer.cpp`, `devtools/devlink.cpp` | Mark the restarts that were asked for |
 
@@ -53,15 +53,14 @@ with `gpu_mem=128`, so the ARM gets 384 MB up to 0x18000000:
 ### Keeping the top of the ARM memory out of Circle's hands
 
 Circle hands all the ARM memory the firmware reports
-(`PROPTAG_GET_ARM_MEMORY`) to its heap and page allocator. The patch
+(`PROPTAG_GET_ARM_MEMORY`) to its heap and page allocator. pigpu's fork
 subtracts `MEM_PERSISTENT_SIZE` from that size in `CMemorySystem`
 (`lib/memory.cpp` and `lib/memory64.cpp`). The top 64 KB is then the app's:
 no allocator ever returns it. The run log finds it with the same property
 tag, at `nBaseAddress + nSize - MEM_PERSISTENT_SIZE`.
 
-`configure-circle.sh` applies the patch to `circle-zero2` when it creates
-that tree. The `circle` tree has the patches applied in place, like the
-others in `patches/`. Without `MEM_PERSISTENT_SIZE`, `runlog.cpp` stops the
+`configure-circle.sh` clones the fork into a board's tree when it isn't
+there, and configures it with `MEM_PERSISTENT_SIZE`. Without `MEM_PERSISTENT_SIZE`, `runlog.cpp` stops the
 build with an `#error`, rather than writing to memory the heap might use.
 
 How the reserved memory is mapped differs between the boards, because the
