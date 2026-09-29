@@ -1,7 +1,8 @@
 // pgi.js - the pico-gpu installer protocol (gpu/install/installer.h) over the
 // Zero's USB serial port (Web Serial): text lines, the Zero's log between its
 // answers (#PGI ...). File data goes as base64 lines of 4.5 KB, each answered
-// (the Zero's text path has no flow control).
+// (the Zero's text path has no flow control). A GL demo can take the port's
+// bytes over (rawSink, writeRaw: gl.js).
 
 // the gpu app (devtools/pgpugadget.h: serial port + monitor), and older ones
 // (devtools/devlink.h: Circle's CDC gadget)
@@ -66,11 +67,14 @@ export class Installer
 		this.onClose = onClose;
 		this.waiting = null;			// {resolve, reject, timer}
 		this.replies = [];
+		this.rawSink = null;			// (chunk): all bytes go there instead
+		this.lastError = '';			// the port's last read error
 	}
 
 	async open ()
 	{
-		await this.port.open ({baudRate: 115200});
+		// (the Zero sends up to 16 KB at a time: its boot log when the port opens)
+		await this.port.open ({baudRate: 115200, bufferSize: 65536});
 		this.writer = this.port.writable.getWriter ();
 		this.reading = this.readLoop ();
 	}
@@ -91,49 +95,68 @@ export class Installer
 		}
 	}
 
+	// until the port is gone (the Zero restarted or was unplugged) or closed;
+	// after other read errors (e.g. a buffer overrun) the port has a new stream
 	async readLoop ()
 	{
 		const decoder = new TextDecoder ();
 		let text = '';
-		try
+		while (this.port.readable && !this.closing)
 		{
 			this.reader = this.port.readable.getReader ();
-			for (;;)
+			try
 			{
-				const {value, done} = await this.reader.read ();
-				if (done)
+				for (;;)
 				{
-					break;
-				}
-				text += decoder.decode (value, {stream: true});
-				let nl;
-				while ((nl = text.indexOf ('\n')) >= 0)
-				{
-					const line = text.slice (0, nl).replace (/\r$/, '');
-					text = text.slice (nl + 1);
-					if (line.startsWith ('#PGI '))
+					const {value, done} = await this.reader.read ();
+					if (done)
 					{
-						this.deliver (line.slice (5));
+						break;
 					}
-					else if (line)
+					if (this.rawSink)
 					{
-						this.onLog?.(line);
+						this.rawSink (value);
+						continue;
+					}
+					text += decoder.decode (value, {stream: true});
+					let nl;
+					while ((nl = text.indexOf ('\n')) >= 0)
+					{
+						const line = text.slice (0, nl).replace (/\r$/, '');
+						text = text.slice (nl + 1);
+						if (line.startsWith ('#PGI '))
+						{
+							this.deliver (line.slice (5));
+						}
+						else if (line)
+						{
+							this.onLog?.(line);
+						}
 					}
 				}
 			}
-		}
-		catch (e)
-		{
-			// the device went away (a reboot)
-		}
-		finally
-		{
-			this.reader?.releaseLock ();
-			this.fail (new Error ('The Zero went away'));
-			if (!this.closing)
+			catch (e)
 			{
-				this.onClose?.();
+				if (!this.closing)
+				{
+					this.lastError = `${e.name}: ${e.message}`;
+					this.onLog?.(`(page) serial port: ${this.lastError}`);
+					await new Promise (r => setTimeout (r, 20));
+				}
 			}
+			finally
+			{
+				this.reader.releaseLock ();
+			}
+			if (this.closing)
+			{
+				break;
+			}
+		}
+		this.fail (new Error ('The Zero went away' + (this.lastError ? ` (${this.lastError})` : '')));
+		if (!this.closing)
+		{
+			this.onClose?.();
 		}
 	}
 
@@ -175,7 +198,10 @@ export class Installer
 		return reply;
 	}
 
-	// {card, sizeMB, fs, freeKB, files: Map name -> bytes, error}
+	// {board, revision, ramMB, card, sizeMB, fs, freeKB, files: Map name -> bytes,
+	// build, error}; board: its name as the firmware says ("Raspberry Pi Zero
+	// W"; '' from an older pico-gpu); build: the card's kernel.img's
+	// {version, built, config} (gpu/build_info.h), or null
 	async info ()
 	{
 		const reply = await this.command ('PGI INFO', 30000);	// the card's first use: its setup
@@ -183,14 +209,18 @@ export class Installer
 		{
 			throw new Error (reply);
 		}
-		const f = Object.fromEntries (reply.slice (5).split (' ').map (kv => kv.split ('=')));
+		// key=value, split at the first "=" (fwconfig=RASPPI=1,...)
+		const f = Object.fromEntries (reply.slice (5).split (' ').map (kv => [kv.slice (0, kv.indexOf ('=')),
+										  kv.slice (kv.indexOf ('=') + 1)]));
 		const files = new Map ();
 		for (const entry of (f.files && f.files !== '-' ? f.files.split (',') : []))
 		{
 			const [name, size] = entry.split (':');
 			files.set (name, Number (size));
 		}
-		return {card: f.card === '1', sizeMB: Number (f.size || 0), fs: f.fs || 'none',
+		return {board: (f.board || '').replace (/_/g, ' '), revision: f.rev || '', ramMB: Number (f.ram || 0),
+			build: f.fw ? {version: f.fw, built: f.fwbuilt || '', config: f.fwconfig || ''} : null,
+			card: f.card === '1', sizeMB: Number (f.size || 0), fs: f.fs || 'none',
 			freeKB: Number (f.free || 0), files, error: f.error || null};
 	}
 
@@ -234,5 +264,17 @@ export class Installer
 	async reboot ()
 	{
 		return this.command ('PGI REBOOT', 5000).catch (() => 'OK');	// it may go first
+	}
+
+	async writeRaw (bytes)
+	{
+		await this.writer.write (bytes);
+	}
+
+	// a restart that works in any mode (devtools/devlink.h: the reboot magic;
+	// the Zero starts from its card again)
+	async restart ()
+	{
+		await this.writeRaw (new TextEncoder ().encode ('\npico-gpu-reboot\n'));
 	}
 }

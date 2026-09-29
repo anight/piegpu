@@ -6,6 +6,7 @@
 // the panel).
 //
 #include "kernel.h"
+#include "build_info.h"
 #include <circle/2dgraphics.h>
 #include <circle/machineinfo.h>
 #include <circle/string.h>
@@ -28,16 +29,19 @@ CKernel::CKernel (void)
 	m_nHostLine (0),
 	m_VCHIQ (CMemorySystem::Get (), &m_Interrupt),
 	m_OutputMode (OutputAuto),
+	m_HostMode (HostAuto),
+	m_bGUD (TRUE),
 	m_bPanelPresent (TRUE),
 	m_nHDMIPixels (CRenderer::MaxPixels),
 	m_Panel (&m_Interrupt),
 	m_pScreen (nullptr),
 	m_GUD (&m_Gadget),
 	m_bOutputPending (FALSE),
+	m_USBBulkLink (&m_Gadget),
 	m_USBLink (&m_DevLink),
 	m_Renderer (&m_V3D),
 	m_Commands (&m_Renderer, &m_I2SLink),
-	m_pLinks {&m_USBLink, &m_I2SLink}
+	m_pLinks {&m_USBBulkLink, &m_USBLink, &m_I2SLink}
 {
 }
 
@@ -47,9 +51,13 @@ CKernel::~CKernel (void)
 
 boolean CKernel::Initialize (void)
 {
+	const char *pHost = m_Options.GetAppOptionString ("host", "auto");
+	m_HostMode =   strcmp (pHost, "usb") == 0 ? HostUSB
+		     : strcmp (pHost, "i2s") == 0 ? HostI2S : HostAuto;
 	const char *pOutput = m_Options.GetAppOptionString ("output", "auto");
 	m_OutputMode =   strcmp (pOutput, "panel") == 0 ? OutputPanel
 		       : strcmp (pOutput, "hdmi") == 0 ? OutputHDMI : OutputAuto;
+	m_bGUD = strcmp (m_Options.GetAppOptionString ("gud", "on"), "off") != 0;
 	m_nHDMIPixels = m_Options.GetAppOptionDecimal ("hdmi_pixels", m_nHDMIPixels);
 	if (m_nHDMIPixels < 320 * 240 || m_nHDMIPixels > CRenderer::MaxPixels)
 	{
@@ -59,7 +67,8 @@ boolean CKernel::Initialize (void)
 	return    m_Logger.Initialize (&m_Null)
 	       && m_Interrupt.Initialize ()
 	       && m_Timer.Initialize ()
-	       && m_GUD.Initialize ()			// (before the gadget starts)
+	       && (!m_bGUD || m_GUD.Initialize ())	// (before the gadget starts)
+	       && (m_Gadget.SetStream (&m_USBBulkLink), TRUE)
 	       && m_DevLink.Initialize ()
 	       && DetectPanel ()
 	       && m_VCHIQ.Initialize ()
@@ -275,7 +284,11 @@ void CKernel::SendDisplay (boolean bSend)
 TShutdownMode CKernel::Run (void)
 {
 	LOGNOTE ("Compile time: " __DATE__ " " __TIME__);
+	LOGNOTE ("Build: %s", GetBuildInfo ());
 	LOGNOTE ("Core clock %u MHz", CMachineInfo::Get ()->GetClockRate (CLOCK_ID_CORE) / 1000000);
+	LOGNOTE ("Host: %s", m_HostMode == HostUSB ? "USB only (host=usb)"
+			     : m_HostMode == HostI2S ? "I2S only (host=i2s)" : "USB when a PC streams, else I2S (host=auto)");
+	LOGNOTE ("USB: %s", m_bGUD ? "serial port, GL interface and monitor (GUD)" : "serial port and GL interface, no monitor (gud=off)");
 
 	m_Monitor.Initialize ();
 	COutput *pOutput;
@@ -323,14 +336,18 @@ TShutdownMode CKernel::Run (void)
 		m_DevLink.Update ();
 		HostInput ();
 
-		// commands from the first active link (a PC over USB once it has
-		// switched to its binary stream, else the Pico); the others' input
-		// is discarded
+		// commands from the first active link that host= allows (a PC over
+		// USB once it has sent on the GL interface or switched the serial
+		// port to its binary stream, else the Pico or the P4 over I2S); the
+		// others' input is discarded
 		CLink *pLink = nullptr;
 		for (unsigned k = 0; k < Links; k++)
 		{
 			m_pLinks[k]->Update ();
-			if (!pLink && m_pLinks[k]->IsActive ())
+			boolean bAllowed =    m_HostMode == HostAuto
+					   || (m_HostMode == HostUSB && m_pLinks[k] != &m_I2SLink)
+					   || (m_HostMode == HostI2S && m_pLinks[k] == &m_I2SLink);
+			if (!pLink && bAllowed && m_pLinks[k]->IsActive ())
 			{
 				pLink = m_pLinks[k];
 			}

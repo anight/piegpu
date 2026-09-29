@@ -198,7 +198,7 @@ progress
 	</section>
 
 	<section id="card-section" hidden>
-		<h2><span class="step">2</span>The card</h2>
+		<h2><span class="step">2</span>The board</h2>
 		<dl class="card-facts" id="card-facts"></dl>
 		<div id="card-status" class="status" hidden></div>
 		<div class="buttons">
@@ -207,9 +207,25 @@ progress
 		</div>
 	</section>
 
-	<section>
+	<section id="settings-section" hidden>
 		<h2><span class="step">3</span>Settings</h2>
 		<p id="settings-source" class="hint">The defaults.</p>
+		<fieldset>
+			<legend>Host</legend>
+			<label class="choice"><input type="radio" name="host" value="auto">
+				Auto <span>a PC over USB once it connects, else a Pico or ESP32-P4 over I2S</span></label>
+			<label class="choice"><input type="radio" name="host" value="usb">
+				USB <span>only a PC</span></label>
+			<label class="choice"><input type="radio" name="host" value="i2s">
+				I2S <span>only a Pico or ESP32-P4 (a PC's GL commands are ignored)</span></label>
+		</fieldset>
+		<fieldset>
+			<legend>USB monitor</legend>
+			<label class="choice"><input type="radio" name="gud" value="on">
+				On <span>a Linux PC can show its desktop on the Zero's screen (GUD)</span></label>
+			<label class="choice"><input type="radio" name="gud" value="off">
+				Off <span>no monitor for the PC (GL commands, the log and this page work as before)</span></label>
+		</fieldset>
 		<fieldset>
 			<legend>Screen</legend>
 			<label class="choice"><input type="radio" name="output" value="auto">
@@ -257,14 +273,24 @@ progress
 		</details>
 	</section>
 
-	<section>
-		<h2><span class="step">4</span>Install</h2>
+	<section id="actions-section" hidden>
+		<h2><span class="step">4</span>Actions</h2>
 		<div class="buttons">
 			<button id="install" class="primary" disabled>Install pico-gpu</button>
 			<button id="save-settings" disabled>Save the settings only</button>
+			<button id="run-gears" disabled>Run gears</button>
+			<button id="stop-gears" hidden>Stop gears</button>
+			<button id="reset" disabled>Reset</button>
 		</div>
 		<progress id="progress" max="1" value="0" hidden></progress>
-		<div id="install-status" class="status" hidden></div>
+		<div id="action-status" class="status" hidden></div>
+		<p class="hint" style="margin-top: 12px">
+			<b>Install pico-gpu</b> writes the firmware and the settings above to the card, then
+			restarts the Zero from it; <b>Save the settings only</b> writes just the settings.
+			<b>Run gears</b> runs glxgears' three gears on the Zero: the demo runs in this page
+			(WebAssembly) and sends its OpenGL ES commands over the serial port (it needs the Host
+			setting Auto or USB on the card). While it runs, the Zero takes commands from this page
+			only; stopping it restarts the Zero. <b>Reset</b> restarts the Zero from its card.</p>
 	</section>
 
 	<section>

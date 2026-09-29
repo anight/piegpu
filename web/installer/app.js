@@ -5,6 +5,7 @@
 import {USB_FILTERS, bootStage, waitForBootDevice} from './rpiboot.js';
 import {SERIAL_FILTERS, Installer, crc32} from './pgi.js';
 import {DEFAULTS, makeCmdline, makeConfig, parseSettings} from './settings.js';
+import {GLStream, runDemo} from './gl.js';
 
 const $ = id => document.getElementById (id);
 const FIRMWARE = ['bootcode.bin', 'start.elf', 'fixup.dat', 'kernel.img'];
@@ -14,6 +15,7 @@ let manifest = null;
 let firmware = null;			// Map name -> Uint8Array (fetched once)
 let installer = null;			// the connection to pico-gpu
 let card = null;			// the last INFO
+let cardHost = null;			// host= in the card's cmdline.txt (null: not read)
 let busy = false;
 
 // ---- the log --------------------------------------------------------------------
@@ -55,7 +57,7 @@ function readForm ()
 {
 	const radio = name => document.querySelector (`input[name=${name}]:checked`)?.value;
 	return {
-		output: radio ('output'), panel: radio ('panel'), hdmiMode: radio ('hdmiMode'),
+		host: radio ('host'), gud: radio ('gud'), output: radio ('output'), panel: radio ('panel'), hdmiMode: radio ('hdmiMode'),
 		hdmiPixels: Number ($('hdmiPixels').value),
 		cvtWidth: Number ($('cvtWidth').value), cvtHeight: Number ($('cvtHeight').value),
 		cvtRate: Number ($('cvtRate').value),
@@ -64,7 +66,7 @@ function readForm ()
 
 function writeForm (s)
 {
-	for (const name of ['output', 'panel', 'hdmiMode'])
+	for (const name of ['host', 'gud', 'output', 'panel', 'hdmiMode'])
 	{
 		const input = document.querySelector (`input[name=${name}][value=${s[name]}]`);
 		if (input)
@@ -301,7 +303,6 @@ function mb (n)
 async function refreshCard (loadSettings)
 {
 	card = await installer.info ();
-	$('card-section').hidden = false;
 	const facts = $('card-facts');
 	facts.innerHTML = '';
 	const add = (k, v) =>
@@ -314,22 +315,22 @@ async function refreshCard (loadSettings)
 	};
 	$('card-retry').hidden = true;
 	$('format').hidden = true;
+	add ('Type', card.board ? `${card.board}${card.ramMB ? `, ${card.ramMB} MB` : ''} (revision ${card.revision})`
+				: "unknown (this pico-gpu doesn't say: install to see it)");
 	if (!card.card)
 	{
-		add ('Card', 'none found');
+		add ('SD card', 'none found');
 		status ('card-status', 'Put the microSD card in the Zero now, then press the button.', 'warn');
 		$('card-retry').hidden = false;
 	}
 	else
 	{
-		add ('Size', mb (card.sizeMB));
-		add ('File system', card.fs === 'none' ? 'none (blank or unknown)' : card.fs);
+		const facts = [mb (card.sizeMB), card.fs === 'none' ? 'no file system (blank or unknown)' : card.fs];
 		if (card.fs.startsWith ('FAT'))
 		{
-			add ('Free', mb (Math.floor (card.freeKB / 1024)));
-			const have = FIRMWARE.filter (n => card.files.has (n));
-			add ('pico-gpu', have.length === FIRMWARE.length ? 'installed'
-				 : have.length ? `partly (${have.join (', ')})` : 'not installed');
+			facts.push (`${mb (Math.floor (card.freeKB / 1024))} free`);
+			add ('SD card', facts.join (' · '));
+			add ('Firmware', describeInstalled ());
 			status ('card-status', '');
 			if (loadSettings && (card.files.has ('config.txt') || card.files.has ('cmdline.txt')))
 			{
@@ -337,17 +338,38 @@ async function refreshCard (loadSettings)
 				const config = decode (await installer.read ('config.txt'));
 				const cmdline = decode (await installer.read ('cmdline.txt'));
 				writeForm (parseSettings (config, cmdline, readForm ()));
+				cardHost = parseSettings (null, cmdline, DEFAULTS).host;
 				$('settings-source').textContent = 'Read from the card.';
 			}
 		}
 		else
 		{
+			add ('SD card', facts.join (' · '));
 			status ('card-status', 'The card has no FAT file system, which the Zero needs to start from it. '
 				+ 'Formatting erases everything on it.', 'warn');
 			$('format').hidden = false;
 		}
 	}
 	updateButtons ();
+}
+
+// pico-gpu on the card: its build (version, time, configuration), or how much
+// of it is there
+function describeInstalled ()
+{
+	const have = FIRMWARE.filter (n => card.files.has (n));
+	if (have.length < FIRMWARE.length)
+	{
+		return have.length ? `partly on the card (${have.join (', ')})` : 'not on the card';
+	}
+	const b = card.build;
+	if (!b)
+	{
+		return 'on the card (an older build that doesn\'t say which)';
+	}
+	const built = b.built.replace ('T', ' ').replace (/Z$/, ' UTC');
+	const config = b.config.split (',').map (s => s.replace (/_/g, ' ')).join (', ');
+	return `${b.version}, built ${built} (${config})`;
 }
 
 async function format ()
@@ -375,7 +397,7 @@ async function install (settingsOnly)
 	const s = readForm ();
 	if (!settingsValid (s))
 	{
-		status ('install-status', 'The HDMI mode is out of range.', 'bad');
+		status ('action-status', 'The HDMI mode is out of range.', 'bad');
 		return;
 	}
 	await run (async () =>
@@ -391,41 +413,113 @@ async function install (settingsOnly)
 		let done = 0;
 		for (const [name, bytes] of all)
 		{
-			status ('install-status', `Writing ${name}…`);
+			status ('action-status', `Writing ${name}…`);
 			await installer.put (name, bytes, n => bar.value = done + n);
 			done += bytes.length;
 			bar.value = done;
 		}
 		log (`(page) wrote ${all.length} files, ${total} bytes, each checked by its CRC`);
+		cardHost = s.host;
 
-		status ('install-status', 'Written. Restarting the Zero from the card…');
-		const waiting = waitForSerial (30000);
-		await installer.reboot ();
-		const port = await waiting;
-		if (!port)
-		{
-			throw new Error ('The Zero didn\'t come back from its card within 30 s');
-		}
-		await new Promise (r => setTimeout (r, 500));
-		const seen = [];
-		const watch = line =>
-		{
-			if (/ (Screen|Panel): /.test (line))
-			{
-				seen.push (line.replace (/^\S+ \S+ /, ''));
-			}
-		};
-		await attach (port, line =>
-		{
-			log (line);
-			watch (line);
-		});
-		await refreshCard (false);			// (its answer comes after the replayed log)
-		const screen = seen.filter (l => l.startsWith ('Screen')).pop ();
-		status ('install-status', `Done: pico-gpu started from the card.${screen ? ' ' + screen + '.' : ''}`, 'ok');
+		status ('action-status', 'Written. Restarting the Zero from the card…');
+		const screen = await restartZero (() => installer.reboot ());
+		status ('action-status', `Done: pico-gpu started from the card.${screen ? ' ' + screen + '.' : ''}`, 'ok');
 		status ('connect-status', 'Connected to pico-gpu.', 'ok');
-	}, 'install-status');
+	}, 'action-status');
 	$('progress').hidden = true;
+}
+
+// restart the Zero (how: a function) and connect again; returns its
+// "Screen: ..." line
+async function restartZero (how)
+{
+	const waiting = waitForSerial (30000);
+	await how ();
+	const port = await waiting;
+	if (!port)
+	{
+		throw new Error ('The Zero didn\'t come back from its card within 30 s');
+	}
+	await new Promise (r => setTimeout (r, 500));
+	const seen = [];
+	await attach (port, line =>
+	{
+		log (line);
+		if (/ Screen: /.test (line))
+		{
+			seen.push (line.replace (/^\S+ \S+ /, ''));
+		}
+	});
+	await refreshCard (false);			// (its answer comes after the replayed log)
+	return seen.pop ();
+}
+
+// ---- gears ----------------------------------------------------------------------
+
+let gears = null;			// the running demo's GLStream
+
+async function runGears ()
+{
+	if (cardHost === 'i2s')
+	{
+		status ('action-status', 'The card has Host: I2S, so the Zero ignores commands from this page. '
+			+ 'Choose Auto or USB above and save the settings first.', 'warn');
+		return;
+	}
+	await run (async () =>
+	{
+		const connection = installer;
+		gears = new GLStream (bytes => connection.writeRaw (bytes));
+		connection.rawSink = chunk => gears.push (chunk);
+		$('stop-gears').hidden = false;
+		status ('action-status', 'Starting…');
+		let code;
+		try
+		{
+			code = await runDemo ('gears', gears, line =>
+			{
+				if (line.trim ())
+				{
+					log (`(gears) ${line}`);
+				}
+				const m = line.match (/^gears: (.*fps.*)$/);
+				if (m || / running$/.test (line))
+				{
+					status ('action-status', m ? `Running: ${m[1]}.` : 'Running.', 'ok');
+				}
+			});
+		}
+		finally
+		{
+			connection.rawSink = null;
+			gears = null;
+			$('stop-gears').hidden = true;
+		}
+
+		// the Zero keeps taking commands from the serial port until it restarts
+		status ('action-status', code ? 'Gears ended with an error (see the log). Restarting the Zero…'
+				       : 'Stopped. Restarting the Zero…', code ? 'bad' : '');
+		await restartZero (() => connection.restart ());
+		status ('action-status', code ? 'Gears ended with an error (see the log); the Zero restarted.'
+				       : 'Stopped; the Zero restarted.', code ? 'bad' : 'ok');
+		status ('connect-status', 'Connected to pico-gpu.', 'ok');
+	}, 'action-status');
+}
+
+// ---- reset ----------------------------------------------------------------------
+
+// restart the Zero from its card (the reboot magic: in any mode, a running
+// GL stream too) and connect again
+async function reset ()
+{
+	await run (async () =>
+	{
+		status ('action-status', 'Restarting the Zero from its card…');
+		const connection = installer;
+		const screen = await restartZero (() => connection.restart ());
+		status ('action-status', `The Zero restarted.${screen ? ' ' + screen + '.' : ''}`, 'ok');
+		status ('connect-status', 'Connected to pico-gpu.', 'ok');
+	}, 'action-status');
 }
 
 // ---- plumbing -------------------------------------------------------------------
@@ -467,6 +561,18 @@ function updateButtons ()
 	$('boot').disabled = busy;
 	$('format').disabled = busy;
 	$('card-retry').disabled = busy;
+	$('run-gears').disabled = busy || !installer;
+	$('reset').disabled = busy || !installer;
+
+	// the board, its settings and the actions: while a board is connected
+	// (kept while an action restarts it)
+	if (!busy)
+	{
+		for (const id of ['card-section', 'settings-section', 'actions-section'])
+		{
+			$(id).hidden = !(installer && card);
+		}
+	}
 }
 
 function init ()
@@ -490,6 +596,9 @@ function init ()
 	$('card-retry').onclick = () => run (() => refreshCard (true));
 	$('install').onclick = () => install (false);
 	$('save-settings').onclick = () => install (true);
+	$('run-gears').onclick = runGears;
+	$('stop-gears').onclick = () => gears?.stop ();
+	$('reset').onclick = reset;
 	loadManifest ();
 	updateButtons ();
 	if ('usb' in navigator && 'serial' in navigator)

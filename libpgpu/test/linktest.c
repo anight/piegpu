@@ -150,7 +150,7 @@ int main (void)
 			t_lost += s.reply_overruns + s.replies_lost;
 			printf ("linktest: %3u s: down %u KB/s, up %u KB/s, round trip %u KB/s; %u rounds, "
 				"%u words compared, %u wrong, %u reads failed; reply CRC errors %u, overruns %u, "
-				"lost %u; READY wait %u ms; Zero: CRC errors %d, command errors %d\n",
+				"lost %u; READY wait %u ms; Zero: CRC errors %d, command errors %d, CPU %d%%\n",
 				(unsigned) ((now - start) / 1000000),
 				(unsigned) (down_us ? down_bytes * 1000 / down_us : 0),
 				(unsigned) (up_us ? up_bytes * 1000 / up_us : 0),
@@ -159,7 +159,8 @@ int main (void)
 				(unsigned) s.reply_crc_errors, (unsigned) s.reply_overruns,
 				(unsigned) s.replies_lost, (unsigned) (s.ready_wait_us / 1000),
 				have ? (int) (st.crc_errors - st0.crc_errors) : -1,
-				have ? (int) (st.command_errors - st0.command_errors) : -1);
+				have ? (int) (st.command_errors - st0.command_errors) : -1,
+				have && st.window_us ? (int) ((uint64_t) st.arm_busy_us * 100 / st.window_us) : -1);
 			printf ("linktest: totals: %llu rounds, %llu words compared, %llu wrong, %llu reads failed, "
 				"%llu reply CRC errors, %llu replies lost\n", (unsigned long long) t_rounds,
 				(unsigned long long) t_words, (unsigned long long) t_bad,

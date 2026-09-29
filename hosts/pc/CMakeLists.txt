@@ -21,7 +21,11 @@ target_compile_definitions(pgl PRIVATE PGL_GLSLC="${ROOT}/tools/glslc/glslc.py")
 target_include_directories(pgl PUBLIC ${ROOT}/libpgpu ${ROOT}/libpgpu/gles ${ROOT}/protocol)
 set_property(TARGET pgl PROPERTY POSITION_INDEPENDENT_CODE ON)
 target_compile_options(pgl PRIVATE -Wall -Wno-unused-parameter)
-target_link_libraries(pgl PUBLIC m)
+# the Zero's GL interface
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
+target_include_directories(pgl PRIVATE ${LIBUSB_INCLUDE_DIRS})
+target_link_libraries(pgl PUBLIC m ${LIBUSB_LIBRARIES})
 
 # self test 8 on the PC
 add_executable(gltest_host gltest_main.c ${ROOT}/libpgpu/test/gltest.c)
@@ -47,3 +51,15 @@ add_executable(linktest_host ${ROOT}/libpgpu/test/linktest.c)
 target_include_directories(linktest_host PRIVATE ${PGPU_COMPAT_INCLUDE_DIR})
 target_compile_definitions(linktest_host PRIVATE LINKTEST_SECONDS=30)
 target_link_libraries(linktest_host pgl)
+
+# demos (demos/demos.cmake) on the PC: DEMO_host. The HUD's objects only (its
+# pgpu is in pgl already); frames paced by pgpu_wait_frame (the PC transport:
+# a PING after each frame)
+include(${ROOT}/demos/demos.cmake)
+foreach(app gears)
+	add_executable(${app}_host $<TARGET_OBJECTS:pgpu_hud>)
+	target_include_directories(${app}_host PRIVATE ${PGPU_COMPAT_INCLUDE_DIR} ${ROOT}/libpgpu/hud
+		${CMAKE_BINARY_DIR}/glsl)
+	target_link_libraries(${app}_host pgl)
+	pgpu_demo(${app}_host ${app})
+endforeach()

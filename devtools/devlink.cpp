@@ -8,6 +8,11 @@
 #include <circle/util.h>
 #include <assert.h>
 
+// (one copy of each, so the matchers can tell "at the start" by the pointer)
+static constexpr char s_RebootMagic[] = DEVLINK_REBOOT_MAGIC;
+static constexpr char s_StreamMagic[] = DEVLINK_STREAM_MAGIC;
+static_assert (s_RebootMagic[0] == s_StreamMagic[0], "ScanMagic skips to their first character");
+
 LOGMODULE ("devlink");
 
 CDevLink::CDevLink (CInterruptSystem *pInterrupt, CDWUSBGadget *pGadget)
@@ -17,8 +22,8 @@ CDevLink::CDevLink (CInterruptSystem *pInterrupt, CDWUSBGadget *pGadget)
 	m_pPrevLogTarget (nullptr),
 	m_bHostActive (FALSE),
 	m_bReplayDone (FALSE),
-	m_pMagicPtr (DEVLINK_REBOOT_MAGIC),
-	m_pStreamMagicPtr (DEVLINK_STREAM_MAGIC),
+	m_pMagicPtr (s_RebootMagic),
+	m_pStreamMagicPtr (s_StreamMagic),
 	m_bStream (FALSE),
 	m_pStream (nullptr),
 	m_nStreamIn (0),
@@ -64,7 +69,7 @@ void CDevLink::Update (void)
 		return;
 	}
 
-	char Buffer[512];
+	char Buffer[4096];
 	int nResult;
 	do
 	{
@@ -82,11 +87,10 @@ void CDevLink::Update (void)
 			// The host has opened the port and is listening now
 			m_bHostActive = TRUE;
 
-			CheckMagic (Buffer, nResult);
 			Receive (Buffer, nResult);
 		}
 	}
-	while (nResult > 0);			// all of it: the gadget's queue is 8 KB
+	while (nResult > 0);			// all of it: the gadget's queue is 64 KB
 
 	if (   m_bHostActive
 	    && !m_bReplayDone
@@ -115,44 +119,95 @@ void CDevLink::Update (void)
 
 void CDevLink::Receive (const char *pData, unsigned nLength)
 {
-	for (unsigned i = 0; i < nLength; i++)
+	while (nLength)
 	{
-		char c = pData[i];
-
+		// up to the end of the stream magic (the stream starts after it), or all
+		unsigned n = ScanMagic (pData, nLength);
 		if (m_bStream)
 		{
-			m_pStream[m_nStreamIn] = c;		// Update () checked the space
-			m_nStreamIn = (m_nStreamIn + 1) % StreamSize;
-			m_nStreamReceived++;
+			// into the ring (Update () checked the space), in blocks
+			m_nStreamReceived += n;
+			for (unsigned nLeft = n; nLeft; )
+			{
+				unsigned nChunk = StreamSize - m_nStreamIn < nLeft ? StreamSize - m_nStreamIn : nLeft;
+				memcpy (m_pStream + m_nStreamIn, pData + (n - nLeft), nChunk);
+				m_nStreamIn = (m_nStreamIn + nChunk) % StreamSize;
+				nLeft -= nChunk;
+			}
 		}
 		else
 		{
-			unsigned nNext = (m_nRxIn + 1) % RxBufferSize;
-			if (nNext != m_nRxOut)		// drop when full
+			for (unsigned i = 0; i < n; i++)
 			{
-				m_RxBuffer[m_nRxIn] = c;
-				m_nRxIn = nNext;
+				unsigned nNext = (m_nRxIn + 1) % RxBufferSize;
+				if (nNext != m_nRxOut)		// drop when full
+				{
+					m_RxBuffer[m_nRxIn] = pData[i];
+					m_nRxIn = nNext;
+				}
 			}
 		}
+		pData += n;
+		nLength -= n;
 
 		// the magic again: a new host session (the magic in the stream is
 		// skipped as garbage)
-		if (c != *m_pStreamMagicPtr)
-		{
-			m_pStreamMagicPtr = DEVLINK_STREAM_MAGIC;
-		}
-		if (c == *m_pStreamMagicPtr && *++m_pStreamMagicPtr == '\0')
+		if (*m_pStreamMagicPtr == '\0')
 		{
 			StartStream ();			// the following bytes are the stream
 		}
 	}
 }
 
+// the two magics, in the host's bytes: reboots on the reboot magic; returns
+// the number of bytes up to the end of the stream magic, or all of them
+unsigned CDevLink::ScanMagic (const char *pData, unsigned nLength)
+{
+	const char *p = pData, *pEnd = pData + nLength;
+	while (p < pEnd)
+	{
+		if (m_pMagicPtr == s_RebootMagic && m_pStreamMagicPtr == s_StreamMagic)
+		{
+			while (p < pEnd && *p != s_RebootMagic[0])	// (both start with it)
+			{
+				p++;
+			}
+			if (p == pEnd)
+			{
+				break;
+			}
+		}
+
+		char c = *p++;
+		if (c != *m_pMagicPtr)
+		{
+			m_pMagicPtr = s_RebootMagic;
+		}
+		if (c == *m_pMagicPtr && *++m_pMagicPtr == '\0')
+		{
+			LOGNOTE ("Reboot requested by host");
+
+			reboot ();
+		}
+
+		if (c != *m_pStreamMagicPtr)
+		{
+			m_pStreamMagicPtr = s_StreamMagic;
+		}
+		if (c == *m_pStreamMagicPtr && *++m_pStreamMagicPtr == '\0')
+		{
+			return p - pData;
+		}
+	}
+
+	return nLength;
+}
+
 void CDevLink::StartStream (void)
 {
 	LOGNOTE ("Binary stream from the host");
 
-	m_pStreamMagicPtr = DEVLINK_STREAM_MAGIC;
+	m_pStreamMagicPtr = s_StreamMagic;
 	if (!m_bReplayDone)
 	{
 		// the log goes to the host from now on (without the replay)
@@ -196,29 +251,6 @@ int CDevLink::GetChar (void)
 	m_nRxOut = (m_nRxOut + 1) % RxBufferSize;
 
 	return (unsigned char) c;
-}
-
-void CDevLink::CheckMagic (const char *pData, unsigned nLength)
-{
-	while (nLength--)
-	{
-		char c = *pData++;
-
-		if (c != *m_pMagicPtr)
-		{
-			m_pMagicPtr = DEVLINK_REBOOT_MAGIC;
-		}
-
-		if (c == *m_pMagicPtr)
-		{
-			if (*++m_pMagicPtr == '\0')
-			{
-				LOGNOTE ("Reboot requested by host");
-
-				reboot ();
-			}
-		}
-	}
 }
 
 void CDevLink::DeviceRemovedHandler (CDevice *pDevice, void *pContext)

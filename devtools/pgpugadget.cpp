@@ -37,7 +37,7 @@ const CPicoGPUGadget::TConfigurationDescriptor CPicoGPUGadget::s_ConfigurationDe
 		sizeof (TUSBConfigurationDescriptor),
 		DESCRIPTOR_CONFIGURATION,
 		sizeof s_ConfigurationDescriptor,
-		3,			// bNumInterfaces
+		4,			// bNumInterfaces
 		1,			// bConfigurationValue
 		0,
 		0x80,			// bmAttributes (bus-powered)
@@ -89,6 +89,20 @@ const CPicoGPUGadget::TConfigurationDescriptor CPicoGPUGadget::s_ConfigurationDe
 	{
 		sizeof (TUSBInterfaceDescriptor),
 		DESCRIPTOR_INTERFACE,
+		PGPU_GADGET_STREAM_INTERFACE, 0,
+		2,
+		0xFF, PGPU_GADGET_STREAM_SUBCLASS, PGPU_GADGET_STREAM_PROTOCOL,	// vendor specific (GL)
+		5			// iInterface
+	},
+	{
+		sizeof (TUSBEndpointDescriptor), DESCRIPTOR_ENDPOINT, EPStreamOut, 2, 512, 0
+	},
+	{
+		sizeof (TUSBEndpointDescriptor), DESCRIPTOR_ENDPOINT, EPStreamIn | 0x80, 2, 512, 0
+	},
+	{
+		sizeof (TUSBInterfaceDescriptor),
+		DESCRIPTOR_INTERFACE,
 		PGPU_GADGET_FUNCTION_INTERFACE, 0,
 		1,
 		0xFF, 0, 0,		// vendor specific (GUD)
@@ -105,16 +119,25 @@ const char *const CPicoGPUGadget::s_StringDescriptor[] =
 	"pico-gpu",
 	"pico-gpu",
 	nullptr,			// the serial number: the board's
-	"pico-gpu display"
+	"pico-gpu display",
+	"pico-gpu GL"
 };
 
 CPicoGPUGadget::CPicoGPUGadget (CInterruptSystem *pInterrupt)
 :	CDWUSBGadget (pInterrupt, HighSpeed),
 	m_pFunction (nullptr),
+	m_pStream (nullptr),
 	m_pSerial (nullptr),
 	m_pSerialEP {nullptr, nullptr},
-	m_pFunctionEP (nullptr)
+	m_pFunctionEP (nullptr),
+	m_pStreamEP {nullptr, nullptr}
 {
+	m_NoFunctionConfiguration = s_ConfigurationDescriptor;
+	m_nNoFunctionConfigurationLength =   (const u8 *) &m_NoFunctionConfiguration.Function
+					   - (const u8 *) &m_NoFunctionConfiguration;
+	m_NoFunctionConfiguration.Configuration.wTotalLength = m_nNoFunctionConfigurationLength;
+	m_NoFunctionConfiguration.Configuration.bNumInterfaces = 3;
+
 	strcpy (m_SerialNumber, "0");
 	CBcmPropertyTags Tags;
 	TPropertyTagSerial Serial;
@@ -148,6 +171,11 @@ const void *CPicoGPUGadget::GetDescriptor (u16 wValue, u16 wIndex, size_t *pLeng
 		break;
 
 	case DESCRIPTOR_CONFIGURATION:
+		if (!uchIndex && !m_pFunction)
+		{
+			*pLength = m_nNoFunctionConfigurationLength;
+			return &m_NoFunctionConfiguration;
+		}
 		if (!uchIndex)
 		{
 			*pLength = sizeof s_ConfigurationDescriptor;
@@ -204,6 +232,11 @@ int CPicoGPUGadget::OnClassOrVendorRequest (const TSetupData *pSetupData, u8 *pD
 	{
 		return m_pFunction->OnVendorRequest (pSetupData, pData, 512);	// (EP0's buffer)
 	}
+	if (   (pSetupData->bmRequestType & 0x1F) == 0x01			// interface
+	    && (pSetupData->wIndex & 0xFF) == PGPU_GADGET_STREAM_INTERFACE)
+	{
+		return -1;			// none (Linux' GUD driver probes it: not a display)
+	}
 
 	return CDWUSBGadget::OnClassOrVendorRequest (pSetupData, pData);	// (the serial port's)
 }
@@ -213,7 +246,12 @@ void CPicoGPUGadget::AddEndpoints (void)
 	assert (!m_pSerialEP[0] && !m_pSerialEP[1] && !m_pFunctionEP);
 	m_pSerialEP[0] = new CUSBCDCGadgetEndpoint (&s_ConfigurationDescriptor.SerialOut, this);
 	m_pSerialEP[1] = new CUSBCDCGadgetEndpoint (&s_ConfigurationDescriptor.SerialIn, this);
-	m_pFunctionEP = new CBulkOutEndpoint (&s_ConfigurationDescriptor.FunctionOut, this);
+	m_pStreamEP[0] = new CStreamEndpoint (&s_ConfigurationDescriptor.StreamOut, this);
+	m_pStreamEP[1] = new CStreamEndpoint (&s_ConfigurationDescriptor.StreamIn, this);
+	if (m_pFunction)
+	{
+		m_pFunctionEP = new CBulkOutEndpoint (&s_ConfigurationDescriptor.FunctionOut, this);
+	}
 }
 
 void CPicoGPUGadget::CreateDevice (void)
@@ -230,6 +268,10 @@ void CPicoGPUGadget::OnSuspend (void)
 	{
 		m_pFunction->OnDisconnect ();
 	}
+	if (m_pStream)
+	{
+		m_pStream->OnStreamDisconnect ();
+	}
 
 	delete m_pSerial;
 	m_pSerial = nullptr;
@@ -241,6 +283,11 @@ void CPicoGPUGadget::OnSuspend (void)
 	}
 	delete m_pFunctionEP;
 	m_pFunctionEP = nullptr;
+	for (auto &pEP : m_pStreamEP)
+	{
+		delete pEP;
+		pEP = nullptr;
+	}
 }
 
 boolean CPicoGPUGadget::ReceiveBulk (void *pBuffer, size_t nLength)
@@ -254,6 +301,16 @@ void CPicoGPUGadget::CancelBulk (void)
 	{
 		m_pFunctionEP->Cancel ();
 	}
+}
+
+boolean CPicoGPUGadget::StreamReceive (void *pBuffer, size_t nLength)
+{
+	return m_pStreamEP[0] && m_pStreamEP[0]->Begin (pBuffer, nLength);
+}
+
+boolean CPicoGPUGadget::StreamSend (const void *pBuffer, size_t nLength)
+{
+	return m_pStreamEP[1] && m_pStreamEP[1]->Begin ((void *) pBuffer, nLength);
 }
 
 // ---- the bulk OUT endpoint ------------------------------------------------------
@@ -321,5 +378,60 @@ void CPicoGPUGadget::CBulkOutEndpoint::OnTransferComplete (boolean bIn, size_t n
 	if (m_pGadget->m_pFunction)
 	{
 		m_pGadget->m_pFunction->OnBulkReceived (m_nDone);
+	}
+}
+
+// ---- the GL stream's endpoints ----------------------------------------------------
+
+CPicoGPUGadget::CStreamEndpoint::CStreamEndpoint (const TUSBEndpointDescriptor *pDesc,
+						   CPicoGPUGadget *pGadget)
+:	CDWUSBGadgetEndpoint (pDesc, pGadget),
+	m_pGadget (pGadget),
+	m_bActive (FALSE)
+{
+}
+
+boolean CPicoGPUGadget::CStreamEndpoint::Begin (void *pBuffer, size_t nLength)
+{
+	if (m_bActive || !nLength || nLength > MAX_CHUNK)
+	{
+		return FALSE;
+	}
+	m_bActive = TRUE;
+	BeginTransfer (GetDirection () == DirectionIn ? TransferDataIn : TransferDataOut, pBuffer, nLength);
+
+	return TRUE;
+}
+
+void CPicoGPUGadget::CStreamEndpoint::OnDeactivate (void)
+{
+	if (m_bActive)
+	{
+		m_bActive = FALSE;
+		CancelTransfer ();
+	}
+	if (m_pGadget->m_pStream)
+	{
+		m_pGadget->m_pStream->OnStreamDisconnect ();
+	}
+}
+
+void CPicoGPUGadget::CStreamEndpoint::OnTransferComplete (boolean bIn, size_t nLength)
+{
+	if (!m_bActive)
+	{
+		return;
+	}
+	m_bActive = FALSE;
+	if (m_pGadget->m_pStream)
+	{
+		if (bIn)
+		{
+			m_pGadget->m_pStream->OnStreamSent ();
+		}
+		else
+		{
+			m_pGadget->m_pStream->OnStreamReceived (nLength);
+		}
 	}
 }

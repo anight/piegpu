@@ -66,8 +66,8 @@ public:
 	boolean Write (const void *pData, unsigned nLength);
 
 private:
-	void CheckMagic (const char *pData, unsigned nLength);
 	void Receive (const char *pData, unsigned nLength);
+	unsigned ScanMagic (const char *pData, unsigned nLength);
 	void StartStream (void);
 
 	static void DeviceRemovedHandler (CDevice *pDevice, void *pContext);

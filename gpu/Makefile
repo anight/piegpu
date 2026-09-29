@@ -1,7 +1,7 @@
 CIRCLEHOME = ../circle
 
-OBJS = main.o kernel.o commands.o geometry.o textures.o programs.o renderer.o \
-       link/i2s_link.o link/usb_link.o display/panel_output.o display/hdmi_output.o display/hdmi_monitor.o display/gud_display.o video/video.o install/installer.o \
+OBJS = main.o build_info.o kernel.o commands.o geometry.o textures.o programs.o renderer.o \
+       link/i2s_link.o link/byte_stream_link.o link/usb_link.o link/usb_bulk_link.o display/panel_output.o display/hdmi_output.o display/hdmi_monitor.o display/gud_display.o video/video.o install/installer.o \
        ../drivers/v3d.o ../drivers/st7789dma.o ../devtools/devlink.o ../devtools/pgpugadget.o \
        video/compat/circle_vcos.o video/compat/circle_micros.o $(MMAL)
 
@@ -38,6 +38,14 @@ CFLAGS += -include video/compat/mmal_circle.h -Wno-format -Wno-unused-parameter 
 EXTRACLEAN = shaders.h $(MMAL) $(MMAL:.o=.d) video/compat/*.o video/compat/*.d
 
 include $(CIRCLEHOME)/Rules.mk
+
+# this build's version, time and configuration (build_info.h), at every build
+build_info.o: CPPFLAGS += -DPGPU_VERSION='"$(shell git describe --always --dirty 2>/dev/null || echo unknown)"' \
+	-DPGPU_BUILT='"$(shell date -u +%Y-%m-%dT%H:%MZ)"' \
+	-DPGPU_CIRCLE='"$(shell git -C $(CIRCLEHOME) describe --tags --always 2>/dev/null || echo unknown)"'
+build_info.o: FORCE
+.PHONY: FORCE
+FORCE:
 
 shaders.h: shaders.py ../devtools/qpuasm.py
 	@echo "  GEN   $@"

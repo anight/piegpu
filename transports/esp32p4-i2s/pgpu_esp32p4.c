@@ -297,6 +297,11 @@ uint32_t pgpu_frame_count (void)
 	return frame_count;
 }
 
+const char *pgpu_link_name (void)
+{
+	return "I2S";
+}
+
 bool pgpu_wait_frame (uint32_t timeout_ms)
 {
 	uint32_t start = frame_count;

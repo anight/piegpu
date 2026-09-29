@@ -2,7 +2,9 @@
 // installer.cpp
 //
 #include "installer.h"
+#include "../build_info.h"
 #include <circle/logger.h>
+#include <circle/machineinfo.h>
 #include <circle/startup.h>
 #include <circle/string.h>
 #include <circle/util.h>
@@ -181,7 +183,7 @@ boolean CInstaller::InitCard (void)
 		{
 			delete m_pEMMC;			// again at the next command
 			m_pEMMC = nullptr;
-			Reply ("INFO card=0 error=no-card");
+			Reply ("INFO %s card=0 error=no-card", (const char *) Board ());
 			return FALSE;
 		}
 		LOGNOTE ("SD card: %llu MB", m_pEMMC->GetSize () >> 20);
@@ -202,7 +204,7 @@ boolean CInstaller::Mount (void)
 	FRESULT Result = f_mount (&m_FileSystem, DRIVE, 1);
 	if (Result != FR_OK)
 	{
-		Reply ("INFO card=1 size=%llu fs=none error=%s", m_pEMMC->GetSize () >> 20,
+		Reply ("INFO %s card=1 size=%llu fs=none error=%s", (const char *) Board (), m_pEMMC->GetSize () >> 20,
 		       Result == FR_NO_FILESYSTEM ? "no-FAT-filesystem" : "mount-failed");
 		return FALSE;
 	}
@@ -243,8 +245,53 @@ void CInstaller::Info (void)
 		}
 	}
 
-	Reply ("INFO card=1 size=%llu fs=%s free=%llu files=%s", m_pEMMC->GetSize () >> 20, pType,
-	       nFreeKB, List.GetLength () ? (const char *) List : "-");
+	CString Build = CardBuildInfo ();
+	Reply ("INFO %s card=1 size=%llu fs=%s free=%llu files=%s%s%s", (const char *) Board (),
+	       m_pEMMC->GetSize () >> 20, pType,
+	       nFreeKB, List.GetLength () ? (const char *) List : "-",
+	       Build.GetLength () ? " " : "", (const char *) Build);
+}
+
+// the build line in the card's kernel.img (build_info.h: "fw=... fwbuilt=...
+// fwconfig=..."), or "" (none there, or an older build without it)
+CString CInstaller::CardBuildInfo (void)
+{
+	CString Line;
+	FIL File;
+	if (f_open (&File, DRIVE "/kernel.img", FA_READ) != FR_OK)
+	{
+		return Line;
+	}
+	unsigned nSize = f_size (&File);
+	u8 *pImage = nSize <= 16 * 1024 * 1024 ? new u8[nSize + 1] : nullptr;
+	UINT nRead = 0;
+	if (pImage && f_read (&File, pImage, nSize, &nRead) == FR_OK && nRead == nSize)
+	{
+		// the frame's start followed by "fw=" (this code's own copy of the
+		// start is followed by other bytes)
+		static const char Start[] = BUILD_INFO_START "fw=";
+		const unsigned nStart = sizeof Start - 1;
+		for (unsigned i = 0; i + nStart <= nSize && !Line.GetLength (); i++)
+		{
+			if (pImage[i] == (u8) Start[0] && memcmp (pImage + i, Start, nStart) == 0)
+			{
+				unsigned nFrom = i + sizeof BUILD_INFO_START - 1, j = nFrom;
+				while (j < nSize && j - nFrom < 256 && pImage[j] >= ' ' && pImage[j] < 0x7F)
+				{
+					j++;
+				}
+				if (j < nSize && pImage[j] == (u8) BUILD_INFO_END)
+				{
+					pImage[j] = '\0';
+					Line = (const char *) pImage + nFrom;
+				}
+			}
+		}
+	}
+	delete [] pImage;
+	f_close (&File);
+
+	return Line;
 }
 
 // FatFs' f_mkfs: an MBR with one FAT32 partition over the card (type 0Ch,
@@ -406,6 +453,19 @@ void CInstaller::Abort (void)
 		f_unlink (m_TempName);
 		m_bOpen = FALSE;
 	}
+}
+
+// the board, as its firmware reports it (the revision code; Circle's
+// CMachineInfo decodes it): "board=Raspberry_Pi_Zero_W rev=9000c1 ram=512"
+CString CInstaller::Board (void)
+{
+	const CMachineInfo *pInfo = CMachineInfo::Get ();
+	CString Name (pInfo->GetMachineName ());
+	Name.Replace (" ", "_");				// (INFO's fields are split at spaces)
+	CString Fields;
+	Fields.Format ("board=%s rev=%x ram=%u", (const char *) Name, pInfo->GetRevisionRaw (),
+		       pInfo->GetRAMSize ());
+	return Fields;
 }
 
 void CInstaller::Reply (const char *pFormat, ...)

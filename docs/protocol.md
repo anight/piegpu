@@ -854,9 +854,9 @@ gpu app's devlink), so programs on the PC drive the GPU without the Pico:
   (§4, byte aligned) and ignores the I2S input from then on. Replies come back
   on the same link; the log goes on as text, which the PC skips (packets are
   found by their header and CRC).
-- **Flow control:** the Zero's USB gadget buffers 8 KB and drops what doesn't
+- **Flow control:** the Zero's USB gadget buffers 64 KB and drops what doesn't
   fit, so the Zero sends `CREDIT` replies (§9) with the number of stream bytes
-  taken; the PC keeps at most 6 KB unacknowledged.
+  taken; the PC keeps at most 6 KB unacknowledged (`PGPU_WINDOW` sets it).
 - **Shader compiler:** on the PC, `GL_SHADER_COMPILER` is true:
   `glCompileShader` runs `glslc --check` (Mesa's info log),
   `glLinkProgram` runs glslc for the pair with the attribute locations bound

@@ -107,6 +107,32 @@ uint32_t pgpu_video_room (uint32_t stream)
 	return in_flight < st.ring_bytes ? st.ring_bytes - in_flight : 0;
 }
 
+/* STATUS replies: a copy of the latest one, under a sequence count (odd while
+   the parser writes it); the reply is queued as well (pgpu_get_status) */
+#define STATUS_WORDS	(sizeof (pgpu_status_t) / 4)
+static uint32_t status_words[STATUS_WORDS];
+static uint32_t status_seq;
+
+uint32_t pgpu_last_status (pgpu_status_t *status)
+{
+	uint32_t w[STATUS_WORDS], seq;
+	do
+	{
+		while ((seq = LOAD (status_seq)) & 1)
+		{
+		}
+		for (unsigned i = 0; i < STATUS_WORDS; i++)
+		{
+			w[i] = __atomic_load_n (&status_words[i], __ATOMIC_RELAXED);
+		}
+		__atomic_thread_fence (__ATOMIC_ACQUIRE);
+	}
+	while (__atomic_load_n (&status_seq, __ATOMIC_RELAXED) != seq);
+
+	memcpy (status, w, sizeof *status);
+	return seq / 2;
+}
+
 /* DISPLAY replies: the latest one, under a sequence count (odd while the
    parser writes it) */
 static uint32_t display_words[PGPU_DISPLAY_WORDS];
@@ -320,6 +346,17 @@ void pgpu_deliver_reply (uint8_t opcode, const uint32_t *payload, uint32_t lengt
 		}
 		STORE (video_seq[stream], seq + 2);
 		return;
+	}
+	if (opcode == PGPU_REPLY_STATUS && length >= 5)	/* (and queued, below) */
+	{
+		uint32_t seq = status_seq;
+		STORE (status_seq, seq + 1);
+		__atomic_thread_fence (__ATOMIC_RELEASE);
+		for (unsigned i = 0; i < STATUS_WORDS; i++)
+		{
+			__atomic_store_n (&status_words[i], i < length ? payload[i] : 0, __ATOMIC_RELAXED);
+		}
+		STORE (status_seq, seq + 2);
 	}
 	if (opcode == PGPU_REPLY_DISPLAY && length >= PGPU_DISPLAY_WORDS)
 	{

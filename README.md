@@ -12,7 +12,7 @@ in [docs/protocol.md](docs/protocol.md).
 | `gpu/` | the Zero's firmware: links (`link/`), outputs (`display/`), renderer, video (`video/`) |
 | `libpgpu/` | the host library: protocol encoding, pgl (the GL ES API), MP4 reader, HUD, self tests |
 | `transports/` | links for the host library: `pico-i2s`, `esp32p4-i2s`, `pc-usb` |
-| `hosts/` | builds per host board: `pico`, `esp32p4`, `pc` |
+| `hosts/` | builds per host board: `pico`, `esp32p4`, `pc`, `web` (a page, WebAssembly) |
 | `demos/` | the demos, for every host |
 | `protocol/` | the wire format header, shared by both sides |
 | `devtools/` | boot the Zero over USB, logs, screenshots (`run.sh`) |
@@ -95,6 +95,10 @@ there. Without the SDO wire it can't tell: set `panel=yes` (see below).
 
 | Option | Meaning |
 |---|---|
+| `host=auto` | the default: GL commands from a PC over USB once it opens its stream (until the Zero restarts), else from I2S |
+| `host=usb`, `host=i2s` | only a PC over USB, or only a Pico / ESP32-P4 over I2S (the log, the installer and the USB monitor work either way) |
+| `gud=on` | the default: the Zero is also a USB monitor for a Linux PC (below) |
+| `gud=off` | no monitor for a PC's desktop to take (the serial port and the GL interface stay) |
 | `output=auto` | the default: HDMI while a monitor is connected, else the panel |
 | `output=panel`, `output=hdmi` | always this output |
 | `panel=auto` | the default: a panel if one answers on SDO (MISO) at boot |
@@ -117,12 +121,22 @@ an off-screen one). `hosts/pc/videoplay.c` is an example program.
 cmake -S hosts/pc -B hosts/pc/build && make -C hosts/pc/build
 ```
 
-- Over USB there is no FRAME pulse: a program paces its frames itself
-  (videoplay: 60 a second), or they pile up in the Zero's queue.
+- Over USB there is no FRAME line: `pgpu_wait_frame` sends a PING instead,
+  whose answer comes once the Zero has executed the frame (and waited for
+  the screen), so programs pace on the Zero's frames as on the Pico's. The
+  demos build for the PC as `DEMO_host` (`hosts/pc/build/gears_host`: 60
+  fps on the panel, render 1.2 ms a frame).
 - While a PC's desktop uses the Zero as a monitor (below), GL frames are
   rendered off screen: turn that monitor off first.
-- The port is found by name (`/dev/serial/by-id/usb-pico-gpu_pico-gpu_*`);
-  `PGPU_TTY` overrides it.
+- Two ways over the cable (`transports/pc-usb/pgpu_host.c`): the Zero's GL
+  interface (a vendor interface with a bulk endpoint each way, libusb), when
+  the PC may open the device; else its serial port, found by name
+  (`/dev/serial/by-id/usb-pico-gpu_pico-gpu_*`; `PGPU_TTY` picks it and
+  overrides the GL interface). Opening the device takes a udev rule:
+  `SUBSYSTEM=="usb", ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="614d", TAG+="uaccess"`
+  in `/etc/udev/rules.d/70-pico-gpu.rules`.
+- Each program starts with 64 KB of zeros and a PING: a program killed in
+  the middle of a packet leaves nothing for the next one to trip on.
 
 Measured with `hosts/pc/build/linktest_host` (libpgpu/test/linktest.c: 64 KB
 uploads of random data, and random 256x256 textures read back and compared
@@ -130,9 +144,9 @@ word by word; 30 s):
 
 | | PC, USB | ESP32-P4, I2S 31.25 MHz |
 |---|---|---|
-| to the Zero | 5.57 MB/s | 3.9 MB/s |
-| back from it | 4.77 MB/s | 2.37 MB/s |
-| errors | 0 of 4.3M words | 0 |
+| to the Zero | 8.3 MB/s | 3.9 MB/s |
+| back from it | 6.1 MB/s | 2.37 MB/s |
+| errors | 0 of 6.0M words | 0 |
 
 Tests from the PC:
 
@@ -183,6 +197,15 @@ then renamed into place. At the end the Zero restarts from the card, and the
 page shows where the screen went. Measured: 3.5 MB in 5.4 s; a 64 GB card
 formatted in 7.3 s.
 
+**Try it: Run gears.** The page runs gears in the browser: `demos/gears.c`
+with libpgpu compiled to WebAssembly (`hosts/web`, Emscripten), its GL
+commands going over the same Web Serial port as the installer's (the PC's
+serial transport; `web/installer/gl.js` moves the bytes). No driver or udev
+rule is needed. Stop restarts the Zero, which takes commands from the serial
+port until then. `make-firmware.sh` builds the demo when Emscripten is
+installed (`EMSDK`, default `~/emsdk`); measured from Node against the
+Zero: 60 fps, render 1.2 ms, as `gears_host`.
+
 ## The Zero as a USB monitor for Linux
 
 Over its USB port the Zero is also a monitor for a Linux PC, with no driver
@@ -206,5 +229,5 @@ off screen until the PC turns it off (`gpu/display/gud_display`).
 - Don't unplug or reboot the Zero while GNOME uses it as a monitor: GNOME
   Shell 50.1 crashed once when it came back within seconds (it keeps the old
   device, and the new one had the same `/dev/dri` name). For a desktop that
-  must leave it alone, tag it in udev: `SUBSYSTEM=="drm", KERNEL=="card*",
+  must leave it alone, set `gud=off` on the Zero, or tag it in udev: `SUBSYSTEM=="drm", KERNEL=="card*",
   ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="614d", TAG+="mutter-device-ignore"`.

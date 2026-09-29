@@ -26,10 +26,12 @@ bool perf_frame (uint32_t wait, perf_t *m)
 	wait_us += wait;
 
 	pgpu_reply_t r;
-	while (pgpu_poll_reply (&r))
+	while (pgpu_poll_reply (&r))		/* (replies nobody waits for: as before) */
 	{
-		pgpu_status_from_reply (&r, &status);	/* the Zero's last second */
 	}
+	pgpu_last_status (&status);		/* the Zero's last second: kept aside, so a
+						   wait for another reply (the PC's frame
+						   pacing) can't lose it */
 
 	int64_t window = (int64_t) (pgpu_time_us () - window_start);
 	if (window < 1000000)
@@ -81,7 +83,7 @@ void hud_perf (float x, float y, float scale, const perf_t *m)
 	char s[24];
 #define Y(line)	(y + roundf ((4 + (line) * LINE) * scale))
 
-	hud_rect (x, y, hud_perf_width (scale), roundf ((6 * LINE + 6) * scale), HUD_RGBA (0, 0, 0, 150));
+	hud_rect (x, y, hud_perf_width (scale), roundf ((7 * LINE + 6) * scale), HUD_RGBA (0, 0, 0, 150));
 	snprintf (s, sizeof s, "FPS  %4.1f", m->fps);
 	hud_text_scaled (left, Y (0), s, HUD_RGBA (255, 230, 120, 255), scale);
 
@@ -101,5 +103,7 @@ void hud_perf (float x, float y, float scale, const perf_t *m)
 	hud_text_scaled (left, Y (4), s, text, scale);
 	snprintf (s, sizeof s, "PANEL  %4.1fms", m->panel_ms);
 	hud_text_scaled (left, Y (5), s, text, scale);
+	snprintf (s, sizeof s, "HOST   %s", pgpu_link_name ());
+	hud_text_scaled (left, Y (6), s, text, scale);
 #undef Y
 }

@@ -5,8 +5,11 @@
 // installs pico-gpu), over the USB serial link (devtools/devlink) in text
 // lines, between the log's lines:
 //
-//   PGI INFO                     #PGI INFO card=1 size=<MB> fs=FAT32 free=<KB>
+//   PGI INFO                     #PGI INFO board=<name, _ for spaces> rev=<hex>
+//                                  ram=<MB> card=1 size=<MB> fs=FAT32 free=<KB>
 //                                  files=<name>:<bytes>,...   (card=0 error=...)
+//                                  [fw=... fwbuilt=... fwconfig=...: the build
+//                                  in the card's kernel.img, build_info.h]
 //   PGI PUT <name> <bytes> <crc> #PGI OK       a file is coming (CRC-32, hex)
 //   PGI DATA <base64>            #PGI OK <bytes so far>   (each line answered)
 //   PGI END                      #PGI OK <name>   written as <name>.new, the
@@ -25,6 +28,7 @@
 #define _gpu_install_installer_h
 
 #include <circle/interrupt.h>
+#include <circle/string.h>
 #include <circle/timer.h>
 #include <circle/types.h>
 #include <fatfs/ff.h>
@@ -53,6 +57,8 @@ private:
 	void Read (const char *pName);
 	void Abort (void);
 
+	static CString Board (void);
+	CString CardBuildInfo (void);
 	void Reply (const char *pFormat, ...);
 
 	static boolean ValidName (const char *pName);

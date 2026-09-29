@@ -4,6 +4,8 @@
 // from the files on a card.
 
 export const DEFAULTS = {
+	host: 'auto',		// GL commands from: auto (a PC over USB once it streams, else I2S), usb, i2s
+	gud: 'on',		// on: a USB monitor for a PC's desktop (GUD); off: none
 	output: 'auto',		// auto: HDMI while a monitor is connected, else the panel
 	panel: 'auto',		// auto: detect over SDO (MISO); yes; none
 	hdmiPixels: 0,		// 0: the monitor's native resolution
@@ -15,7 +17,7 @@ export const DEFAULTS = {
 
 export function makeCmdline (s)
 {
-	const options = [`output=${s.output}`, `panel=${s.panel}`];
+	const options = [`host=${s.host}`, `gud=${s.gud}`, `output=${s.output}`, `panel=${s.panel}`];
 	if (s.hdmiPixels > 0)
 	{
 		options.push (`hdmi_pixels=${s.hdmiPixels}`);
@@ -66,7 +68,15 @@ export function parseSettings (config, cmdline, base = DEFAULTS)
 	for (const option of (cmdline || '').trim ().split (/\s+/))
 	{
 		const [key, value] = option.split ('=');
-		if (key === 'output' && ['auto', 'panel', 'hdmi'].includes (value))
+		if (key === 'host' && ['auto', 'usb', 'i2s'].includes (value))
+		{
+			s.host = value;
+		}
+		else if (key === 'gud' && ['on', 'off'].includes (value))
+		{
+			s.gud = value;
+		}
+		else if (key === 'output' && ['auto', 'panel', 'hdmi'].includes (value))
 		{
 			s.output = value;
 		}

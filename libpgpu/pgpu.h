@@ -148,7 +148,8 @@ void pgpu_init (void);
 /* the side-band signals (the transport's; over USB they answer at once) */
 bool pgpu_wait_ready (uint32_t timeout_ms);	/* the Zero is up and accepting */
 bool pgpu_wait_frame (uint32_t timeout_ms);	/* next FRAME pulse */
-uint32_t pgpu_frame_count (void);		/* FRAME pulses so far (0 over USB) */
+uint32_t pgpu_frame_count (void);		/* FRAME pulses so far (over USB: frames waited for) */
+const char *pgpu_link_name (void);		/* the link to the Zero: "I2S", "USB" */
 uint64_t pgpu_time_us (void);			/* the transport's clock, microseconds */
 void pgpu_flush (void);
 uint32_t pgpu_packets_sent (void);		/* packets built since pgpu_init () */
@@ -162,6 +163,10 @@ bool pgpu_poll_error (uint32_t error[3]);		/* ERROR reply: code, opcode, detail 
 bool pgpu_wait_reply (uint8_t opcode, pgpu_reply_t *reply, uint32_t timeout_ms);
 bool pgpu_get_info (pgpu_info_t *info, uint32_t timeout_ms);
 bool pgpu_get_status (pgpu_status_t *status, uint32_t timeout_ms);
+/* the last STATUS reply (from pgpu_request_status); returns how many have
+   arrived. Like DISPLAY, it can't be lost to another wait (pgpu_wait_reply
+   drops the replies it isn't waiting for) */
+uint32_t pgpu_last_status (pgpu_status_t *status);
 /* a STATUS reply (from pgpu_poll_reply after pgpu_request_status) */
 bool pgpu_status_from_reply (const pgpu_reply_t *reply, pgpu_status_t *status);
 /* round trip: -1 on timeout, else microseconds */

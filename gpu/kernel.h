@@ -17,6 +17,7 @@
 #include <v3d.h>
 #include "link/i2s_link.h"
 #include "link/usb_link.h"
+#include "link/usb_bulk_link.h"
 #include "display/panel_output.h"
 #include "display/hdmi_output.h"
 #include "display/hdmi_monitor.h"
@@ -77,6 +78,11 @@ private:
 	// hdmi_pixels=N in cmdline.txt
 	enum TOutputMode {OutputAuto, OutputPanel, OutputHDMI};
 	TOutputMode		m_OutputMode;
+	// where GL commands come from: host=auto (a PC over USB once it opens
+	// its stream, else I2S), usb (only a PC), i2s (only a Pico or ESP32-P4)
+	enum THostMode {HostAuto, HostUSB, HostI2S};
+	THostMode		m_HostMode;
+	boolean			m_bGUD;			// gud=off: no USB monitor
 	boolean			m_bPanelPresent;
 	unsigned		m_nHDMIPixels;		// the largest screen on HDMI (default: native)
 	CPanelOutput		m_Panel;
@@ -88,11 +94,12 @@ private:
 	boolean			m_bOutputPending;	// to be chosen again between frames
 	CV3D			m_V3D;
 	CI2SLink		m_I2SLink;		// commands from the Pico
-	CUSBLink		m_USBLink;		// commands from a PC over USB (tests)
+	CUSBBulkLink		m_USBBulkLink;		// commands from a PC over USB: the GL interface (libusb)
+	CUSBLink		m_USBLink;		// ... or the serial port
 	CRenderer		m_Renderer;
 	CCommands		m_Commands;
 
-	static const unsigned Links = 2;
+	static const unsigned Links = 3;
 	CLink			*m_pLinks[Links];	// in priority order: the first active one serves
 };
 
