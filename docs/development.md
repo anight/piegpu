@@ -1,9 +1,167 @@
 # Developing piegpu
 
-Notes on how the RPi side works inside, for changing it. How to build and
-use it is in the [README](README.md). Supported for now: the Raspberry Pi
-Zero / Zero W and the Zero 2 W; where a model is named below, the fact was
-measured on that one.
+How the RPi side works inside, for changing it. Elsewhere:
+
+- building and using it: the [README](../README.md);
+- the wire protocol: [protocol.md](protocol.md);
+- the host side (libpgpu, pgl): [host-library.md](host-library.md).
+
+Supported for now: the Raspberry Pi Zero / Zero W and the Zero 2 W; where a
+model is named below, the fact was measured on that one.
+
+- [The I2S link](#the-i2s-link)
+- [Rendering](#rendering)
+- [The screen: panel and HDMI](#the-screen-panel-and-hdmi)
+- [Video](#video)
+- [The run log: a restart explains itself](#the-run-log-a-restart-explains-itself)
+- [The control list checker](#the-control-list-checker)
+
+## The I2S link
+
+- **Receive:** cyclic DMA from the PCM receive FIFO into a 1 MB ring buffer. The
+  CPU parses packets from the ring and drives READY from its fill level.
+- **Replies:** a second self-looping DMA control block plays a 1 MB transmit ring
+  of idle words into the PCM transmit FIFO for as long as the Pico clocks. A reply
+  is written about 1024 words ahead of the DMA's read position and zeroed again
+  once the DMA has passed it.
+
+## Rendering
+
+- **Vertex processing on the ARM:** transform, GL ES 1.1 lighting (up to 4
+  lights, no spot lights, infinite viewer), texture matrix, per-vertex fog,
+  primitive assembly, clipping (near, far and a guard band), flat shading
+  (last vertex), two-sided lighting (facing per triangle). Screen-space triangles
+  go to the V3D in NV shader mode.
+- **Guard band:** vertices stay within 800 px outside the viewport. Measured on
+  the hardware at 320×240: up to x −960 … 1280 px renders, x −1120 … 1440 px
+  loses triangles, although the 12.4 fixed-point format reaches ±2048.
+- **Points and lines** are screen-space quads, 1 pixel and `LINE_WIDTH` wide.
+- **Jobs:** each render target's draws are one V3D job (binning, then rendering
+  64×64 tiles). Colour is loaded from memory unless cleared; depth and stencil
+  are stored after every job (T-format, about 80 µs at 320×240) and loaded
+  unless cleared. A frame that switches targets renders several jobs.
+- **Texture targets** are level 0 of a texture, in its tiled layout (T or LT
+  RGBA8888, the tile buffer's format), not y-flipped: rows in GL order.
+- **Stencil:** every fragment shader writes the three TLB stencil setup words
+  from uniforms (Mesa's encoding); with the test off they say "always pass, keep".
+- **Scissor** and the viewport become the V3D's clip window; polygon offset is
+  its depth offset (factor and units as in Mesa's `vc4`). An empty clip window
+  doesn't clip everything on the V3D: such draws are skipped.
+- **V3D state that persists across jobs:** the line width keeps its value from
+  the previous job (measured: lines drew wrongly after wide-line tests), so
+  each job emits it before first use; the depth offset is treated the same.
+- **Programs** run in the V3D's GL shader mode: the binner runs the coordinate
+  shader, the renderer the vertex and fragment shaders, and the hardware clips.
+  Each draw gets a shader record, attribute records pointing straight into the
+  buffers, and uniform streams resolved at draw time. Buffers used by a program
+  draw are copied on write for the rest of the frame (§6.3). The viewport has a
+  negative y scale on the panel, because its rows go top to bottom.
+- **Program fragment shaders** are compiled by Mesa for an RGBA8888 window
+  framebuffer with blending off; `glslc` replaces the final colour write with one
+  of two endings (`devtools/qpuasm.py`): reorder Mesa's BGRA into the tile
+  buffer's RGBA (8 instructions), or load the tile buffer's colour and blend
+  per channel with 48 coefficient uniforms, which cover every blend factor and
+  equation, the constant colour and the colour mask (about 75 instructions).
+- **Fixed-function fragment shaders:** 40 built-in QPU programs (`gpu/shaders.py`,
+  generated with `devtools/qpuasm.py`): texture environment (none, MODULATE,
+  REPLACE, DECAL, BLEND) × fog × alpha test × blending. Blending and the colour
+  mask are done in the shader (tile buffer colour read), with the same
+  coefficients as programs; `SRC_ALPHA_SATURATE` is approximated by `SRC_ALPHA`.
+  For `A8` textures the texel's RGB is taken as 1 (GL ES 1.1 environments).
+- **Textures:** converted at upload to RGBA8888 (R in byte 0) in Mesa's tiled
+  layouts (LT for levels up to 16 pixels, else T), levels smallest first with
+  level 0 page aligned, cube faces as whole mip trees; rows bottom-up as sent.
+  ETC1 is decoded on the ARM. (Raster RGBA32R, used before, reads rows at a
+  stride of max(width, 4) texels: verified with widths 1, 2, 4, 8 and 64.)
+
+## The screen: panel and HDMI
+
+- **Output:** the V3D renders RGB565 directly into two alternating screen
+  buffers. The ST7789 DMA driver sends them to the panel at 75 MHz (60 fps at
+  320×240). On HDMI the V3D renders straight into the pages of a three-page
+  firmware framebuffer: one on screen, one waiting for the vertical sync that
+  shows it, one being drawn; no copy (a DMA copy cost 2.6 ms of CPU a frame at
+  512×300: CPU-G 20% instead of 6%). The vertical sync is the frame count of
+  the display scaler's channel for HDMI (HVS `DISPSTAT1`, bits 17:12; measured
+  60 a second), polled with a 100 ms timeout. The firmware's "wait for vsync"
+  call, used before, has no timeout; with it, the RPi hung once as a monitor
+  was switched on during a video (the log stopped, the watchdog reset it;
+  where it hung isn't known), and since the change it hasn't. The video demo
+  on 1024×600 went from 38–51 to 57–60 fps. A page flip is still a firmware call
+  (`SetVirtualOffset`).
+- **Screen size on HDMI** (`gpu/kernel.cpp`, `gpu/display/`; the options
+  `output=`, `panel=`, `hdmi_pixels=` are in the README's "Kernel command
+  line"): the monitor's preferred mode (native: 1024×600 for a 1024×600
+  monitor), up to 1920×1200; a larger one, or one over `hdmi_pixels`, is
+  divided by the smallest whole number that makes it fit (with
+  `hdmi_pixels=230400`, 1920×1080 and 1280×720 give 640×360, 1024×600 gives
+  512×300). The width is a multiple of 16.
+- **Panel detection** (`CPanelOutput::Detect`): at boot the panel is reset
+  and its registers read over MISO (GPIO9), bit-banged at about 500 kHz (the
+  ST7789 reads slowly; the driver's SPI runs at 75 MHz), then the pins go back
+  to SPI0. A panel answers RDDID (04h: a dummy bit, then its ID bytes) the
+  same with MISO pulled up and pulled down, and releases the line after them;
+  with nothing there the pull-up reads all ones and the pull-down all zeros.
+  Measured: 1000 of 1000 reads the same with each pull (ID 81 81 B3). The ID
+  bytes are the module maker's (IDSET, C1h, in the panel's NVM; the ST7789V
+  datasheet's default is 85 85 52), and no register tells the glass's size
+  (the controller's memory is 240×320 whatever is attached).
+- **Hot plug:** the HDMI hot-plug line is GPIO46 on a Zero, GPIO28 on a Zero
+  2 W (low while a monitor is connected), sampled every 20 ms; a change counts
+  after 200 ms.
+  The EDID is read over the DDC bus (BSC2, address 0x50, 100 kHz, about 12 ms),
+  because the firmware's EDID property tag keeps answering with the EDID read
+  at boot after the monitor is gone. At boot it's read at once; after a hot
+  plug from 2 s on (the firmware reads it too, over the same bus, and sets HDMI
+  up again); while a connected monitor doesn't answer, it's tried again every
+  second.
+- **HDMI mode:** the firmware chooses it at boot and doesn't change it later.
+  `config.txt` has `hdmi_force_hotplug=1`, so that HDMI stays on (640×480)
+  when the RPi boots without a monitor. By default the firmware prefers TV
+  modes: for a 1024×600 monitor it sent 720×576 at 50 Hz, capping frames at
+  50 fps. `hdmi_group=2` gave 1024×768 at 60 Hz; `hdmi_mode=87` with
+  `hdmi_cvt=1024 600 60` gives that monitor's own mode (measured: 59.9 fps).
+
+## Video
+
+- **Video** (`gpu/video/`): MMAL (the Raspberry Pi userland's client,
+  BSD-3, vendored in `gpu/video/userland`) talks to the firmware's components
+  over Circle's VCHIQ. A stream is `vc.ril.video_decode` tunnelled to
+  `vc.ril.isp` inside the VideoCore; the ISP scales to the texture's size and
+  converts to RGBA, and its frames come into ARM memory (4 KB aligned buffers,
+  by the VideoCore's DMA: the ARM copies nothing). The texture then points at
+  the frame: raster RGBA (TMU type RGBA32R). The TMU reads raster rows at a
+  power-of-two stride (measured: a 320-wide texture came out garbled, 512
+  right), hence the width rule. MMAL's zero-copy would need the firmware's
+  VCSM service, which Circle lacks; it isn't needed.
+- **Each frame is tiled once:** the TMU samples raster rows about four times
+  slower than a tiled texture (a 1024x576 quad on HDMI: 8.7 vs 2.05 ms), and
+  at 60 fps a 24 fps frame is drawn 2.5 times. So a video texture has tiled
+  storage of its own (`CTextures::CreateExternal`), and each new frame is
+  copied into it once, between frames: a render-only V3D job whose tiles load
+  the frame's raster rows and store T-format (`CRenderer::CopyToTiled`,
+  `CV3D::RunRender`; no shader, no TMU). Without the storage, or if a copy
+  fails, the TMU reads the raster frame. Measured on the Zero 2 W, HDMI
+  1024x600: GPU 71% → 35%.
+- **VCHIQ's tasks** run when the main loop yields (Circle's cooperative
+  scheduler): the loop yields after at most 1 ms of commands. Measured: with
+  64 packets a turn and a fast host (a PC over USB), the decoder stopped after
+  11 frames. The V3D jobs yield too while they run
+  (`CV3D::SetWaitHandler`, pointed at `CScheduler::Yield`): with 3–4 ms more
+  work at a frame's end that didn't yield (a plain busy wait did the same),
+  the decoder stopped for good after 4 frames.
+- **Measured** (720p H.264 test pattern, High profile with B-frames, 512×288
+  texture on the panel, from the P4): 30 video frames a second with none
+  dropped, GL at 60 fps, the host's CPU 1–2%. Decoder to RGBA in ARM memory:
+  96 fps from 720p, 43 fps from 1080p (1024×576).
+- **In 64 bit too** (the Zero 2 W): MMAL's messages to the VideoCore have the
+  VideoCore's 32-bit layout on any client
+  (`gpu/video/userland/interface/mmal/vc/mmal_vc_msgs.h`);
+  `devtools/mmal-layout.py` checks the layout against the 32-bit compiler's.
+  Circle's vcos is used in 64 bit too (the fork's "vcos: build for AArch64
+  too"). The MMAL sources are built with `-mstrict-align`: they read VCHIQ's
+  messages in place, in Circle's coherent region, which is Device memory in 64
+  bit, where unaligned accesses fault.
 
 ## The run log: a restart explains itself
 
@@ -308,10 +466,11 @@ Measured on the Zero 2 W, HDMI 1024x600 (one job a frame):
 | video (the frame copy is a second, smaller job) | 130 us |
 
 Nearly all of it is the rendering list (160 tiles, about 1,400 packets, 6.9
-KB); the binning list takes about 10 us. That's 1-2% of a 60 fps frame, on an
-ARM that runs at 600 MHz: the firmware starts it there and piegpu doesn't
-raise it (a plain byte-by-byte read of the same 6.9 KB takes 45 us). A job
-refused costs nothing more.
+KB); the binning list takes about 10 us. That's 1-2% of a 60 fps frame. These
+were measured with the ARM at 600 MHz (the firmware's starting clock,
+`cpu=low`; a plain byte-by-byte read of the same 6.9 KB took 45 us); at its
+maximum, 1000 MHz, gears' check takes 103 us. A job refused costs nothing
+more.
 
 Verified with the check on: the demos, the video, gltest (the same 19 known
 failures on HDMI as without it) and dEQP-GLES2's 2015-case subset (1999 pass,

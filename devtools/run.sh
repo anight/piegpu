@@ -17,7 +17,7 @@
 # log over USB serial, the reboot magic and a watchdog.
 #
 # CMDLINE sets the kernel command line (cmdline.txt), e.g. CMDLINE="output=panel"
-# for the gpu app (docs/protocol.md 14: output=, panel=, hdmi_pixels=).
+# for the gpu app (README "Kernel command line": output=, panel=, hdmi_pixels=).
 #
 # A photo of the display is taken after booting (CAMERA=/dev/videoN, default
 # /dev/video0 if present, CAMERA=none to disable; CAMERA_ROTATE=0|180, default 180).

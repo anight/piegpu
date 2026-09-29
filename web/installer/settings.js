@@ -1,7 +1,6 @@
 // settings.js - the piegpu settings as the RPi reads them: config.txt (the
 // firmware's: memory, clocks, the HDMI mode) and cmdline.txt (the gpu app's
-// options, docs/protocol.md 14 / README "Kernel command line"), and back
-// from the files on a card.
+// options, README "Kernel command line"), and back from the files on a card.
 
 export const DEFAULTS = {
 	host: 'auto',		// GL commands from: auto (a PC over USB once it streams, else I2S), usb, i2s

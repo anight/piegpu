@@ -79,7 +79,7 @@ private:
 	unsigned		m_nHostLine;
 	CVCHIQDevice		m_VCHIQ;		// the VideoCore's services (video)
 
-	// the outputs (docs/protocol.md 14): output=auto|panel|hdmi, panel=none,
+	// the outputs (README "Kernel command line"): output=auto|panel|hdmi, panel=none,
 	// hdmi_pixels=N in cmdline.txt
 	enum TOutputMode {OutputAuto, OutputPanel, OutputHDMI};
 	TOutputMode		m_OutputMode;

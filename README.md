@@ -1,11 +1,11 @@
 # piegpu
 
 A toy GPU for OpenGL and video rendering. A Raspberry Pi (RPi) runs bare
-metal (Circle) as the graphics card of a microcontroller: the microcontroller
-sends OpenGL ES 2.0 commands (and 1.1's fixed function), and the RPi renders
-them with its VideoCore IV V3D, to an ST7789 panel or to HDMI. Video (H.264,
-e.g. from an MP4) is decoded by the VideoCore into textures that any draw can
-use.
+metal (Circle) as the graphics card of a microcontroller (like a Raspberry Pi
+Pico or an ESP32): the microcontroller sends OpenGL ES 2.0 commands (and 1.1's
+fixed function), and the RPi renders them with its VideoCore IV V3D, to an
+ST7789 panel or to HDMI. Video (H.264, e.g. from an MP4) is decoded by the
+VideoCore into textures that any draw can use.
 
 The host can be any microcontroller board capable of the link: I2S as the
 master (DATA, BCLK and FS out, the replies back on REPLY), a READY input and
@@ -25,8 +25,12 @@ page) and serves as a monitor for a Linux desktop.
 RPi boards are to come; "RPi" below means the board piegpu runs on, and a
 model is named where only that one was verified.
 
-The protocol is in [docs/protocol.md](docs/protocol.md). Notes on how the RPi
-side works inside are in [DEVELOPMENT.md](DEVELOPMENT.md).
+Documentation ([docs/](docs/README.md)):
+
+- [docs/protocol.md](docs/protocol.md): the wire protocol;
+- [docs/host-library.md](docs/host-library.md): the host library, libpgpu
+  (pgl, the GL ES API);
+- [docs/development.md](docs/development.md): how the RPi side works inside.
 
 | Directory | What |
 |---|---|
@@ -78,18 +82,9 @@ This gives `gpu/kernel.img` (the Zero) and `build/zero2/gpu/kernel8.img` (the
 Zero 2 W). `web/installer/make-firmware.sh` puts both builds on the installer
 page, which picks the one for the board.
 
-Video decoding works the same on both boards:
-
-- MMAL's messages to the VideoCore have the VideoCore's 32-bit layout on any
-  client (`gpu/video/userland/interface/mmal/vc/mmal_vc_msgs.h`).
-  `devtools/mmal-layout.py` checks the layout against the 32-bit compiler's.
-- Circle's vcos is used in 64 bit too (the fork's "vcos: build for AArch64
-  too").
-- In 64 bit, the MMAL sources are built with `-mstrict-align`. They read
-  VCHIQ's messages in place, in Circle's coherent region, which is Device
-  memory in 64 bit, where unaligned accesses fault.
-
-Verified on both boards: 640x360 to 1280x720, 0 dropped.
+Video decoding works the same on both boards (in 64 bit too:
+[docs/development.md](docs/development.md#video)). Verified on both boards:
+640x360 to 1280x720, 0 dropped.
 
 ### Why the RPi restarted: the run log
 
@@ -111,7 +106,8 @@ runlog: | 30.33 except: Synchronous exception (PC 0x818A4, EC 0x25, ISS 0x46, FA
 "crashed" is an exception, assertion or panic (its message last); "stopped
 without a word" a hang the watchdog caught, or a reset; "restarted as asked"
 the host's reboot, the installer's, Reset. Verified on the Zero 2 W (all
-four); the Zero not yet. How it works: [DEVELOPMENT.md](DEVELOPMENT.md).
+four); the Zero not yet. How it works:
+[docs/development.md](docs/development.md#the-run-log-a-restart-explains-itself).
 
 ## Wiring
 
@@ -223,7 +219,7 @@ there. Without the SDO wire it can't tell: set `panel=yes` (see below).
 | `panel=yes`, `panel=none` | a panel is there (SDO not wired) or none is; without a panel and a monitor the screen stays on HDMI |
 | `hdmi_pixels=N` | cap the screen on HDMI to N pixels (default: the monitor's native resolution, up to 1920x1200) |
 | `cpu=max`, `cpu=low` | the ARM at its maximum clock (the default; the Zero 2 W: 1000 MHz, throttled by the firmware at its own temperature limit) or at the firmware's starting clock (600 MHz) |
-| `clcheck=on`, `clcheck=off` | check each V3D job's control lists before it runs, and refuse a bad one (the default: on; DEVELOPMENT.md) |
+| `clcheck=on`, `clcheck=off` | check each V3D job's control lists before it runs, and refuse a bad one (the default: on; [docs/development.md](docs/development.md#the-control-list-checker)) |
 
 With `devtools/run.sh`, pass these as `CMDLINE="output=panel" devtools/run.sh gpu`.
 

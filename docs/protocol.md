@@ -1,9 +1,11 @@
-# Pico → RPi GPU command protocol, version 1
+# piegpu command protocol, version 1
 
-This document specifies the link between the **Pico 2 W** (the host, which runs
-the application) and the **Raspberry Pi** (RPi: the GPU, which renders with the
-VideoCore IV V3D and drives the ST7789 panel). Supported for now: the
-Raspberry Pi Zero / Zero W and the Zero 2 W.
+This document specifies the link between the **host** (a microcontroller such
+as the Pico 2 W or the ESP32-P4, or a PC over USB, §13; it runs the
+application) and the **Raspberry Pi** (RPi: the GPU, which renders with the
+VideoCore IV V3D and drives the ST7789 panel or HDMI). Supported for now: the
+Raspberry Pi Zero / Zero W and the Zero 2 W. "Pico" below stands for any host:
+the protocol was first written for the Pico 2 W.
 
 Version 1 has two pipelines, which can be mixed within a frame:
 - a **fixed-function pipeline in the style of OpenGL ES 1.1** (option A), run by
@@ -24,7 +26,7 @@ Status: **draft**. Everything is normative unless marked *informative*.
 | Physical | pins, I2S timing, the READY and FRAME signals (§2, §3) |
 | Packet | framing of 32-bit words: header, payload, CRC32 (§4) |
 | Command | execution model, opcodes, payloads, replies and enums (§6–§10) |
-| API (Pico library) | the OpenGL ES 2.0 and 1.1 API, encoded into commands (§13, informative) |
+| API (host library) | the OpenGL ES 2.0 and 1.1 API, encoded into commands (informative: [host-library.md](host-library.md)) |
 
 ---
 
@@ -222,13 +224,13 @@ Coordinates follow OpenGL:
   ST7789 panel (320×240) or HDMI, where it is a framebuffer of a size chosen
   for the monitor, which the RPi's firmware scales to the HDMI mode.
 - By default the screen is on HDMI while a monitor is connected and on the
-  panel otherwise; the kernel command line can change that (§14). The RPi
+  panel otherwise; the kernel command line can change that (README, "Kernel command line"). The RPi
   watches the HDMI hot-plug line and reads a new monitor's EDID.
 - **The screen changes only between frames**: before the first draw of a
   frame. Both of its images are cleared then (a frame without a colour `CLEAR`
   starts from black), and its depth and stencil are undefined until cleared.
   The GL state does not change: the viewport and scissor box keep their values
-  (pgl moves ones that covered the whole screen, §13.1).
+  (pgl moves ones that covered the whole screen, [host-library.md](host-library.md#how-pgl-maps-gl-to-the-wire)).
 - After each change the RPi sends `DISPLAY` (§9), and `INFO` gives the new size.
 
 ### 6.5 Errors
@@ -319,7 +321,7 @@ fixed-function pipeline. The default minification filter is
 
 | Op | Name | Payload | Meaning |
 |---|---|---|---|
-| `0x40` | LOAD_MATRIX | `u32 which`, `f32 m[16]` | Load MODELVIEW (0), PROJECTION (1) or TEXTURE (2), column-major. The matrix **stack** is kept by the Pico library (§13); the wire carries only the resulting matrices. |
+| `0x40` | LOAD_MATRIX | `u32 which`, `f32 m[16]` | Load MODELVIEW (0), PROJECTION (1) or TEXTURE (2), column-major. The matrix **stack** is kept by the host library ([host-library.md](host-library.md)); the wire carries only the resulting matrices. |
 | `0x41` | LIGHT | `u32 light`, `f32 position[4]`, `color ambient`, `color diffuse`, `color specular`, `f32 attenuation[3]` | Light 0–3. position w = 0 means directional. attenuation = constant, linear, quadratic. The position is taken as given, **in eye space** (the library transforms it by the current modelview, as GL does). |
 | `0x42` | MATERIAL | `color ambient`, `color diffuse`, `color specular`, `color emission`, `f32 shininess` | Front and back material. |
 | `0x43` | LIGHT_MODEL | `color ambient`, `u32 two_side` | Global ambient light; two-sided lighting. |
@@ -364,7 +366,7 @@ compiling (triangles, lines, points), each with two fragment shader endings: a
 plain one, and one that blends and masks from uniforms, so every blend state
 and colour mask works with every program. The compiler also writes a C header
 with the blob, the attribute locations, the uniform storage offsets and the
-sampler indices, and the names and GL types that `glProgramBinaryOES` needs (§13).
+sampler indices, and the names and GL types that `glProgramBinaryOES` needs ([host-library.md](host-library.md)).
 
 | Op | Name | Payload | Meaning |
 |---|---|---|---|
@@ -474,7 +476,7 @@ the GL frame rate.
   taken by its decoder. `VIDEO_STATUS` (every 100 ms while the stream is open,
   and on request) says how many bytes and samples the decoder has taken since
   the open; the host sends a sample only if it fits in what's left
-  (`pgpu_video_room`, §13). The video's data then never holds up the GL
+  (`pgpu_video_room`, [host-library.md](host-library.md)). The video's data then never holds up the GL
   commands behind it.
 - **Looping and seeking:** a stream is one clock: to loop, send the samples
   again with the times going on (the file's duration added); to jump, close
@@ -527,7 +529,7 @@ A reply to a request uses the request's opcode (`GET_INFO` → `INFO`, `PING` �
 | `0x06` | VIDEO_STATUS | `u32 stream`, `u32 flags` (bit 0 open, bit 1 playing, bit 2 ended: the EOS came out of the decoder, bit 3 error: a VideoCore component reported one), `u32 bytes_done`, `u32 ring_bytes`, `u32 decoded`, `u32 shown`, `u32 dropped` (frames), `s64 shown_pts` (2 words; `0x8000000000000000`: none), `u32 waiting` (decoded frames before their time), `u32 samples_done`, `u32 max_samples` | Every 100 ms while a stream is open, and `VIDEO_GET_STATUS`. `bytes_done` and `samples_done` count what the decoder has taken since `VIDEO_OPEN` (mod 2^32): the host may have `ring_bytes` and `max_samples` more in flight (§7.12) |
 | `0x11` | FRAME_DONE | `u32 frame_number`, `u32 render_us`, `u32 draws`, `u32 triangles` | After a frame whose `FRAME_END` had flag bit 0 set is handed to the panel |
 | `0x16` | PIXELS | `u32 offset`, `color pixels[1 … 61]` | `READ_PIXELS`: the pixels from `offset` (in pixels, rows bottom up), in as many replies as needed |
-| `0x7E` | CREDIT | `u32 bytes` | USB stream only (§13.3): the stream bytes the RPi has taken so far, since the session started |
+| `0x7E` | CREDIT | `u32 bytes` | USB stream only (§13): the stream bytes the RPi has taken so far, since the session started |
 | `0x7F` | ERROR | `u32 code`, `u32 opcode`, `u32 detail` | An invalid command (§6.5) or a CRC error (code 1, opcode 0) |
 
 Error codes: 1 = CRC, 2 = unknown opcode, 3 = bad length, 4 = bad id,
@@ -549,7 +551,7 @@ for; all objects and state are gone then.
 - `monitor_width`, `monitor_height`, `monitor_refresh_mhz`: the monitor's
   preferred mode from its EDID (refresh in millihertz); 0 without an EDID.
 - `signal_width`, `signal_height`: the mode the RPi sends on HDMI. The
-  firmware sets it at boot (`config.txt`, §14) and keeps it.
+  firmware sets it at boot (`config.txt`, [development.md](development.md#the-screen-panel-and-hdmi)) and keeps it.
 - `monitor_name`: the monitor's name from the EDID (up to 13 characters), zero
   padded; empty if it has none.
 
@@ -696,159 +698,20 @@ words wherever the Pico has nothing to send.
 
 ---
 
-## 13. Pico library (*informative*)
+## 13. The USB stream
 
-The host library (`libpgpu/`, board independent) has two layers:
+A host on a PC (`hosts/pc`, `hosts/web`) sends the packets (§4, byte
+aligned) over the RPi's USB port instead of I2S
+([host-library.md](host-library.md#pgl-on-a-pc)), one of two ways:
 
-- **`pgpu`** (`libpgpu/pgpu.{h,c}`): one C function per command. It
-  batches packets, splits large uploads, turns client-side arrays into
-  `PROGRAM_DRAW_INLINE`, and parses replies into queues (`ERROR` replies
-  separately, `pgpu_poll_error`), including the reply stream of an I2S link
-  (`pgpu_rx_parse`, §9.1). The words go through a transport
-  (`libpgpu/pgpu_link.h`, one per link in `transports/`): on the Pico the I2S
-  link (`transports/pico-i2s`: DMA over PIO, READY before each batch, replies
-  sampled into a DMA ring and parsed in a 1 ms timer); on a PC the RPi's USB
-  (`transports/pc-usb`, §13.3). The builds per host board are in `hosts/`.
-- **`pgl`** (`libpgpu/gles/pgl.{h,c}`): the **OpenGL ES 2.0 API**, with
-  the **GL ES 1.1 fixed-function calls** for program 0. It keeps the GL state
-  (for `glGet*`, `glIsEnabled`, object names) and encodes it into commands.
-  `gltest.c` (self test 8) exercises it using only `gl*` calls, on the Pico and
-  on a PC.
-- **Video** (§7.12): `pglVideoTexture (texture, stream, width, height,
-  coded_width, coded_height, avcc, avcc_bytes)` makes a GL texture name a
-  video texture (`VIDEO_OPEN`; pgl then knows it as a complete RGBA texture,
-  linear, clamped); `pglVideoResize (texture, stream, width, height)` changes
-  its size, the stream going on (`RESIZE`). `pgpu_video_room` says how big a sample may be now (from
-  the last `VIDEO_STATUS`, which the library keeps per stream like `DISPLAY`,
-  and what it has sent since); `pgpu_video_control` and
-  `pgpu_video_get_status` the rest.
-- **The data path from a file:** a file is read through a callback
-  (`pgpu_read_t`: bytes at an offset), so it needn't be in memory: on an SD
-  card the filesystem reads its sectors as needed.
-  - `libpgpu/pgpu_mp4.{h,c}` reads an MP4's H.264 track through it: the boxes
-    by their headers (the `moov` may follow the media data), the sample
-    tables through 256-byte windows (about 1.5 KB of state however long the
-    file; tables read in order, so each window once): each sample's offset,
-    size, times (the edit list applied) and keyframe flag, and the avcC.
-    Checked against ffprobe on five files (moov at the end and first, an
-    interleaved AAC track, no B-frames, 2880 samples): every offset, size and
-    keyframe the same, times within 1 µs, read in 512-byte sectors (8 … 26
-    sectors to open a file).
-  - `pgpu_video_sample_read` sends a sample in `VIDEO_DATA` packets, reading
-    each packet's data through the callback straight into the packet (the
-    samples go as they are: format AVCC). So the only copy on the host is the
-    filesystem's, from its sector buffer (or the card's DMA) into the
-    packet; no buffer for a sample. A read that fails leaves the sample
-    unfinished; the RPi drops it at the next sample's first chunk.
-    The reads are arranged for a filesystem's DMA: a sample's first packet
-    carries the bytes up to the file's next 512-byte sector boundary, the
-    others whole sectors, and idle words before a packet put its data on a
-    64-byte boundary (`PGPU_READ_ALIGN`: the ESP32-P4's cache line; the
-    staging buffers are aligned so too). So the filesystem reads whole sectors
-    by DMA straight into the packet. Unaligned, ESP-IDF's SD driver allocated
-    a DMA buffer the size of the read, read into it and copied it over, on
-    every read.
-  - `demos/video.c` plays the file `PGPU_VIDEO_PATH` if the host has a
-    filesystem (POSIX `open`/`lseek`/`read`), else an MP4 linked into the
-    host's image (memory as the file, `pgpu_mp4_open_memory`). When the screen
-    changes (panel ↔ HDMI) it resizes the texture; the video keeps its place.
-    `hosts/pc/videoplay` plays a file on the PC, through a reader that does as
-    an SD filesystem does (whole sectors, a one-sector cache).
-  - **The ESP32-P4's microSD card** (`hosts/esp32p4/main/sdcard.c`, the video
-    app): SDMMC slot 0, 4 bits at 40 MHz (CLK GPIO43, CMD 44, D0–D3 39–42);
-    the card's supply is on-chip LDO channel 4 through a P-MOSFET that GPIO45
-    switches on (low). FAT32 at `/sdcard` (ESP-IDF 5.5's FatFs has exFAT
-    off), the file `/sdcard/video1.mp4` (CMake `PGPU_VIDEO_FILE`). Measured
-    on a 64 GB card: POSIX `read` into the packet 12.8 MB/s (16.4 MB/s into
-    DMA-capable memory); unbuffered stdio (`fread` with no buffer) managed
-    84 KB/s, buffered 2.1 MB/s. With stdio a 1920×800 24 fps film (1.9 GB,
-    102 minutes) played slowly with the P4's CPU at 100%; with POSIX reads
-    it plays at 24 fps. FatFs' fast seek (`CONFIG_FATFS_USE_FASTSEEK`) is on
-    for the seeks between the sample tables and the samples; alone it didn't
-    help stdio.
-  - **The card sometimes stalls:** stretches of 5–10 s in which every read
-    takes about 25 ms, whatever its size (2–15 KB), dropping frames. Seen with
-    the unaligned reads (7 in 29 minutes) and with the aligned ones (one in
-    the first 17 minutes, at 1020 s into that film, file offsets 327–330 MB).
-    Not understood yet.
-  - **The link is the limit on the P4:** its chip (revision v1.0) runs I2S
-    from the APLL, at most 125 MHz, divided by 2 to MCLK and by 2 again to
-    BCLK: 31.25 MHz, 3.9 MB/s (25 MHz before). `linktest` (random buffer
-    uploads, and random textures uploaded and read back, compared word by
-    word): 25 MHz 3.1 MB/s down, 2.0 MB/s up; 31.25 MHz 3.9 MB/s down, 2.37
-    MB/s up, and in 10 minutes 87.4M words there and back with 0 wrong, 0
-    CRC errors either way. That film's peaks send about 2 MB/s of video
-    (2132 KB in one second), and GL frames wait behind it: its busiest
-    stretch (100–126 s) went 22–43 fps with 60 frames dropped at 25 MHz,
-    30–60 fps with 35 dropped at 31.25 MHz. The video frames no GL frame
-    showed count as dropped.
+- **The GL interface** (interface 2 of the RPi's USB device, a bulk endpoint
+  each way; `gpu/link/usb_bulk_link`): active once the host has sent on it,
+  until the RPi restarts. USB itself holds the host back when the RPi's
+  receive ring is full, so there are no `CREDIT` replies.
+- **The serial port** (interfaces 0 and 1, which also carry the log;
+  `gpu/link/usb_link`), as follows.
 
-### 13.1 How pgl maps GL to the wire
-
-| GL | Wire |
-|---|---|
-| `glGen*`, `glBind*`, `glDelete*` | GL names map to RPi ids: buffers 1–250, textures 1–110 (texture object 0 of each target: 111, 112), framebuffers 1–16. Colour renderbuffers are RPi textures 121–128; framebuffers without a colour attachment get a scratch colour texture (113–120). Programs get RPi ids 1–64 from a pool. |
-| `glBufferData`, `glBufferSubData` | `BUFFER_CREATE`, `BUFFER_DATA`. Buffers up to 16 KB and all index buffers are also kept on the Pico (on a PC all buffers), for draws that combine an index buffer with client-side vertex arrays. |
-| `glTexImage2D`, `glTexSubImage2D`, `glCompressedTexImage2D` (ETC1), `glCopyTex[Sub]Image2D`, `glGenerateMipmap`, `glTexParameter*` | `TEXTURE_CREATE` when level 0's size or format changes, then `TEXTURE_DATA` (repacked for `GL_UNPACK_ALIGNMENT`; `glTexSubImage2D` data of another type than the texture's is converted on the Pico), `COPY_TEX_IMAGE`, `GENERATE_MIPMAP`, `TEXTURE_PARAMS`. A texture pgl knows to be incomplete (a level of size 0, a mipmap level that doesn't fit level 0) is bound as none. The GL ES 1.1 `GL_GENERATE_MIPMAP` parameter is supported. |
-| `glFramebufferTexture2D`, `glFramebufferRenderbuffer`, `glBindFramebuffer` | `FRAMEBUFFER_CREATE` and `BIND_FRAMEBUFFER`, sent by the next draw, clear or read. A depth or stencil renderbuffer sets the depth and stencil flag and names a shared depth and stencil buffer (the renderbuffer), so framebuffers attaching the same renderbuffer share its contents. |
-| `glEnable`, `glDisable` | `ENABLE` / `DISABLE`, sent by the next draw or clear. Depth and stencil tests are off on targets without those buffers, as in GL. |
-| `glShaderBinary` + `glLinkProgram`, `glProgramBinaryOES`; on a PC also `glCompileShader` + `glLinkProgram` | `PROGRAM_CREATE` / `PROGRAM_DATA`, then a `PING`. An `ERROR` from checking the blob makes the link fail. Samplers are set to unit 0, as in GL. |
-| `glUniform*` | `PROGRAM_UNIFORM`: locations are uniform index << 16 \| array element. Values are converted to the program's types (int32; bool 0 / ~0). Sampler uniforms use `PROGRAM_SAMPLER`. |
-| `glVertexAttribPointer`, `glDrawArrays`, `glDrawElements` with a program | Buffer arrays use `ATTRIB_ARRAY`. Client-side arrays and indices use `PROGRAM_DRAW_INLINE`, with the buffer arrays' offsets moved to the first vertex sent; lists are split into several packets; strips, fans and loops too large for a packet go to temporary buffers (RPi ids 253, 254). Draws of more than 65535 vertices are split (lists and strips). |
-| GL ES 1.1 arrays and draws | Buffer arrays use `ARRAY`. Client-side arrays (interleaved ones once) and indices are copied into two stream buffers (RPi ids 251 and 252), which the RPi reads when the draw arrives. |
-| GL ES 1.1 matrices, lights, material, fog, `glTexEnv`, `glAlphaFunc`, `glShadeModel`, `glColor4f`, `glNormal3f`, `glMultiTexCoord4f` | Matrix stacks kept on the Pico (`LOAD_MATRIX` before a draw that needs a changed matrix); `LIGHT` (position and spot direction transformed by the modelview when set), `MATERIAL`, `LIGHT_MODEL`, `FOG`, `TEX_ENV`, `ALPHA_FUNC`, `SHADE_MODEL`, `COLOR`, `NORMAL`, `TEXCOORD`. |
-| `glClear`, `glClearColor`, `glClearDepthf`, `glClearStencil` | `CLEAR` |
-| `glReadPixels` (RGBA, UNSIGNED_BYTE) | `READ_PIXELS`, rows at `GL_PACK_ALIGNMENT`. Alpha is 255 on targets without alpha. |
-| `glGetError` | Errors found by pgl at once. `ERROR` replies map to GL errors (ENUM → `GL_INVALID_ENUM`, LIMIT → `GL_INVALID_VALUE`, MEMORY → `GL_OUT_OF_MEMORY`, others → `GL_INVALID_OPERATION`). If commands were sent since the last call, `glGetError` first waits for them with a `PING` (about 80 µs over USB, 1–3 ms over I2S), so it reports their errors. `pglGetRPiError` gives the last one's code, opcode and detail; with `PGL_DEBUG` set (PC), pgl prints them. |
-| `pglSwapBuffers` | `FRAME_END`. Then, if a `DISPLAY` reply has brought a new screen size: a viewport and scissor box that covered the whole old screen are set to the new one (`VIEWPORT`, `SCISSOR`), as a window system does for a resized window. `pglGetScreenSize` gives the size; `pgpu_get_display` the whole `DISPLAY` reply. |
-
-### 13.2 Differences from GL ES 2.0 and 1.1
-
-- **No shader compiler on the Pico** (`GL_SHADER_COMPILER` is false), which GL
-  ES 2.0 allows when a shader binary format is supported (2.10). Programs are
-  compiled by `tools/glslc`; the binary is the `NAME_info` structure of the
-  generated header, "an optimized pair of vertex and fragment shaders"
-  (2.10.2): load it with `glShaderBinary` (format `PGL_SHADER_BINARY_PGPU`)
-  into the vertex and the fragment shader, then `glLinkProgram`; or with
-  `glProgramBinaryOES` (`PGL_PROGRAM_BINARY_PGPU`). As the specification
-  requires without a compiler, `glShaderSource`, `glCompileShader`,
-  `glReleaseShaderCompiler`, `glGetShaderPrecisionFormat`,
-  `glGetShaderInfoLog`, `glGetShaderSource` and `glGetShaderiv` for the compile
-  status, info log and source lengths report `GL_INVALID_OPERATION`. Attribute
-  locations of binaries are those given to glslc, so `glBindAttribLocation` has
-  no effect on them. On a PC, pgl compiles (§13.3).
-- Programs are compiled for triangles, lines and points by default; a program
-  compiled with fewer (`glslc -v`) reports `ERROR` 10 for the others.
-- Draws of more than 65535 vertices as fans or loops report
-  `GL_OUT_OF_MEMORY`.
-- **Framebuffers:** colour attachments are level 0 of an RGBA or RGB texture,
-  or an RGBA4, RGB5_A1, RGB565, RGB8 or RGBA8 renderbuffer. The RPi keeps
-  depth and stencil together: a framebuffer with separate depth and stencil
-  renderbuffers shares its depth and stencil with others through the depth one.
-- **Textures:** a level of an incomplete texture that doesn't fit level 0
-  keeps its old contents on the RPi (GL has none, the texture being
-  incomplete); only visible once the texture is complete again.
-- **Fixed function:** 4 lights, no spot lights (`GL_SPOT_*` is stored but
-  ignored), one texture unit, `MODULATE`, `REPLACE`, `DECAL` and `BLEND`
-  environments (no `ADD` or `COMBINE`), no clip planes, no point size. The
-  texture coordinate's r and q are ignored.
-- **`GL_DITHER`** is stored but has no effect: the V3D's dither moves values
-  by up to two steps (0 becomes 2 of 31, measured), where GL requires one of
-  the two nearest values (GL ES 2.0 4.1.7). pgl keeps it off (the RPi's
-  `DITHER` capability); without it, the V3D truncates, as GL does.
-- `GL_POINT_SMOOTH`, `GL_LINE_SMOOTH` and the multisample enables are stored,
-  but have no effect (there is no multisample buffer).
-- **Mesa's limits** (glslc compiles with Mesa's `vc4`): at most 8 attributes
-  including aliased ones (`attribute_location.bind_aliasing.max_cond_*`); the
-  V3D loses triangles with vertices far outside the viewport
-  (`clipping.triangle_vertex.clip_three.*`). Mesa's `vc4` fails these on a
-  Raspberry Pi 3 as well (`src/broadcom/ci/broadcom-rpi3-fails.txt`).
-
-### 13.3 pgl on a PC (tests)
-
-pgl and pgpu also build for Linux (`hosts/pc`): the transport
-(`transports/pc-usb/pgpu_host.c`) sends the packets to the RPi over its USB serial link (the
-gpu app's devlink), so programs on the PC drive the GPU without the Pico:
+On the serial port:
 
 - **The stream:** the PC sends `piegpu-stream` (a new session each time);
   the RPi answers `#STREAM`, takes all following bytes as command packets
@@ -858,141 +721,8 @@ gpu app's devlink), so programs on the PC drive the GPU without the Pico:
 - **Flow control:** the RPi's USB gadget buffers 64 KB and drops what doesn't
   fit, so the RPi sends `CREDIT` replies (§9) with the number of stream bytes
   taken; the PC keeps at most 6 KB unacknowledged (`PGPU_WINDOW` sets it).
-- **Shader compiler:** on the PC, `GL_SHADER_COMPILER` is true:
-  `glCompileShader` runs `glslc --check` (Mesa's info log),
-  `glLinkProgram` runs glslc for the pair with the attribute locations bound
-  by `glBindAttribLocation` (others get the lowest free ones; aliases and
-  matrix attributes as GL) and loads the result as a binary. Results are
-  cached (`~/.cache/pgpu-glslc`).
-- **Tests:** `gltest_host` (self test 8), `compile_test`, and the Khronos
-  conformance tests: `tools/deqp/build-deqp.sh` builds dEQP-GLES2 (VK-GL-CTS)
-  with a `pgl` platform (the panel as a 320x240 RGB565 window with 24-bit depth
-  and 8-bit stencil); `tools/deqp/run-deqp.py` runs cases in batches (going on
-  after a crash), `failures.py` groups the failures, `compare-vc4.py` compares
-  with Mesa's `vc4` on a Raspberry Pi 3.
 
-## 14. RPi implementation notes (*informative*)
-
-- **Receive:** cyclic DMA from the PCM receive FIFO into a 1 MB ring buffer. The
-  CPU parses packets from the ring and drives READY from its fill level.
-- **Replies:** a second self-looping DMA control block plays a 1 MB transmit ring
-  of idle words into the PCM transmit FIFO for as long as the Pico clocks. A reply
-  is written about 1024 words ahead of the DMA's read position and zeroed again
-  once the DMA has passed it.
-- **Vertex processing on the ARM:** transform, GL ES 1.1 lighting (up to 4
-  lights, no spot lights, infinite viewer), texture matrix, per-vertex fog,
-  primitive assembly, clipping (near, far and a guard band), flat shading
-  (last vertex), two-sided lighting (facing per triangle). Screen-space triangles
-  go to the V3D in NV shader mode.
-- **Guard band:** vertices stay within 800 px outside the viewport. Measured on
-  the hardware at 320×240: up to x −960 … 1280 px renders, x −1120 … 1440 px
-  loses triangles, although the 12.4 fixed-point format reaches ±2048.
-- **Points and lines** are screen-space quads, 1 pixel and `LINE_WIDTH` wide.
-- **Jobs:** each render target's draws are one V3D job (binning, then rendering
-  64×64 tiles). Colour is loaded from memory unless cleared; depth and stencil
-  are stored after every job (T-format, about 80 µs at 320×240) and loaded
-  unless cleared. A frame that switches targets renders several jobs.
-- **Texture targets** are level 0 of a texture, in its tiled layout (T or LT
-  RGBA8888, the tile buffer's format), not y-flipped: rows in GL order.
-- **Stencil:** every fragment shader writes the three TLB stencil setup words
-  from uniforms (Mesa's encoding); with the test off they say "always pass, keep".
-- **Scissor** and the viewport become the V3D's clip window; polygon offset is
-  its depth offset (factor and units as in Mesa's `vc4`). An empty clip window
-  doesn't clip everything on the V3D: such draws are skipped.
-- **V3D state that persists across jobs:** the line width keeps its value from
-  the previous job (measured: lines drew wrongly after wide-line tests), so
-  each job emits it before first use; the depth offset is treated the same.
-- **Programs** run in the V3D's GL shader mode: the binner runs the coordinate
-  shader, the renderer the vertex and fragment shaders, and the hardware clips.
-  Each draw gets a shader record, attribute records pointing straight into the
-  buffers, and uniform streams resolved at draw time. Buffers used by a program
-  draw are copied on write for the rest of the frame (§6.3). The viewport has a
-  negative y scale on the panel, because its rows go top to bottom.
-- **Program fragment shaders** are compiled by Mesa for an RGBA8888 window
-  framebuffer with blending off; `glslc` replaces the final colour write with one
-  of two endings (`devtools/qpuasm.py`): reorder Mesa's BGRA into the tile
-  buffer's RGBA (8 instructions), or load the tile buffer's colour and blend
-  per channel with 48 coefficient uniforms, which cover every blend factor and
-  equation, the constant colour and the colour mask (about 75 instructions).
-- **Fixed-function fragment shaders:** 40 built-in QPU programs (`gpu/shaders.py`,
-  generated with `devtools/qpuasm.py`): texture environment (none, MODULATE,
-  REPLACE, DECAL, BLEND) × fog × alpha test × blending. Blending and the colour
-  mask are done in the shader (tile buffer colour read), with the same
-  coefficients as programs; `SRC_ALPHA_SATURATE` is approximated by `SRC_ALPHA`.
-  For `A8` textures the texel's RGB is taken as 1 (GL ES 1.1 environments).
-- **Textures:** converted at upload to RGBA8888 (R in byte 0) in Mesa's tiled
-  layouts (LT for levels up to 16 pixels, else T), levels smallest first with
-  level 0 page aligned, cube faces as whole mip trees; rows bottom-up as sent.
-  ETC1 is decoded on the ARM. (Raster RGBA32R, used before, reads rows at a
-  stride of max(width, 4) texels: verified with widths 1, 2, 4, 8 and 64.)
-- **Output:** the V3D renders RGB565 directly into two alternating screen
-  buffers. The ST7789 DMA driver sends them to the panel at 75 MHz (60 fps at
-  320×240). On HDMI the V3D renders straight into the pages of a three-page
-  firmware framebuffer: one on screen, one waiting for the vertical sync that
-  shows it, one being drawn; no copy (a DMA copy cost 2.6 ms of CPU a frame at
-  512×300: CPU-G 20% instead of 6%). The vertical sync is the frame count of
-  the display scaler's channel for HDMI (HVS `DISPSTAT1`, bits 17:12; measured
-  60 a second), polled with a 100 ms timeout. The firmware's "wait for vsync"
-  call, used before, has no timeout; with it, the RPi hung once as a monitor
-  was switched on during a video (the log stopped, the watchdog reset it;
-  where it hung isn't known), and since the change it hasn't. The video demo
-  on 1024×600 went from 38–51 to 57–60 fps. A page flip is still a firmware call
-  (`SetVirtualOffset`).
-- **Screen and HDMI** (`gpu/kernel.cpp`, `gpu/display/`): the kernel command
-  line (`cmdline.txt`) sets `output=auto` (the default: HDMI while a monitor is
-  connected, else the panel), `output=panel` or `output=hdmi`; `panel=auto`
-  (the default) looks for a panel, `panel=yes` and `panel=none` say there is
-  one or none (without a panel HDMI keeps the screen without a monitor);
-  `hdmi_pixels=N` caps the screen on HDMI. The HDMI screen is the monitor's
-  preferred mode (native: 1024×600 for a 1024×600 monitor), up to 1920×1200;
-  a larger one, or one over `hdmi_pixels`, is divided by the smallest whole
-  number that makes it fit (with `hdmi_pixels=230400`, 1920×1080 and 1280×720
-  give 640×360, 1024×600 gives 512×300). The width is a multiple of 16.
-- **Video** (`gpu/video/`): MMAL (the Raspberry Pi userland's client,
-  BSD-3, vendored in `gpu/video/userland`) talks to the firmware's components
-  over Circle's VCHIQ. A stream is `vc.ril.video_decode` tunnelled to
-  `vc.ril.isp` inside the VideoCore; the ISP scales to the texture's size and
-  converts to RGBA, and its frames come into ARM memory (4 KB aligned buffers,
-  by the VideoCore's DMA: the ARM copies nothing). The texture then points at
-  the frame: raster RGBA (TMU type RGBA32R). The TMU reads raster rows at a
-  power-of-two stride (measured: a 320-wide texture came out garbled, 512
-  right), hence the width rule. MMAL's zero-copy would need the firmware's
-  VCSM service, which Circle lacks; it isn't needed.
-- **VCHIQ's tasks** run when the main loop yields (Circle's cooperative
-  scheduler): the loop yields after at most 1 ms of commands. Measured: with
-  64 packets a turn and a fast host (a PC over USB), the decoder stopped after
-  11 frames.
-- **Measured** (720p H.264 test pattern, High profile with B-frames, 512×288
-  texture on the panel, from the P4): 30 video frames a second with none
-  dropped, GL at 60 fps, the host's CPU 1–2%. Decoder to RGBA in ARM memory:
-  96 fps from 720p, 43 fps from 1080p (1024×576).
-- **Panel detection** (`CPanelOutput::Detect`): at boot the panel is reset
-  and its registers read over MISO (GPIO9), bit-banged at about 500 kHz (the
-  ST7789 reads slowly; the driver's SPI runs at 75 MHz), then the pins go back
-  to SPI0. A panel answers RDDID (04h: a dummy bit, then its ID bytes) the
-  same with MISO pulled up and pulled down, and releases the line after them;
-  with nothing there the pull-up reads all ones and the pull-down all zeros.
-  Measured: 1000 of 1000 reads the same with each pull (ID 81 81 B3). The ID
-  bytes are the module maker's (IDSET, C1h, in the panel's NVM; the ST7789V
-  datasheet's default is 85 85 52), and no register tells the glass's size
-  (the controller's memory is 240×320 whatever is attached).
-- **Hot plug:** the HDMI hot-plug line is GPIO46 on a Zero, GPIO28 on a Zero
-  2 W (low while a monitor is connected), sampled every 20 ms; a change counts
-  after 200 ms.
-  The EDID is read over the DDC bus (BSC2, address 0x50, 100 kHz, about 12 ms),
-  because the firmware's EDID property tag keeps answering with the EDID read
-  at boot after the monitor is gone. At boot it's read at once; after a hot
-  plug from 2 s on (the firmware reads it too, over the same bus, and sets HDMI
-  up again); while a connected monitor doesn't answer, it's tried again every
-  second.
-- **HDMI mode:** the firmware chooses it at boot and doesn't change it later.
-  `config.txt` has `hdmi_force_hotplug=1`, so that HDMI stays on (640×480)
-  when the RPi boots without a monitor. By default the firmware prefers TV
-  modes: for a 1024×600 monitor it sent 720×576 at 50 Hz, capping frames at
-  50 fps. `hdmi_group=2` gave 1024×768 at 60 Hz; `hdmi_mode=87` with
-  `hdmi_cvt=1024 600 60` gives that monitor's own mode (measured: 59.9 fps).
-
-## 15. Open points
+## 14. Open points
 
 - The exact READY thresholds and ring size, to be tuned against real workloads.
 - Whether `DRAW_INLINE` should get 16-bit formats (half the bandwidth for
