@@ -222,6 +222,7 @@ there. Without the SDO wire it can't tell: set `panel=yes` (see below).
 | `panel=auto` | the default: a panel if one answers on SDO (MISO) at boot |
 | `panel=yes`, `panel=none` | a panel is there (SDO not wired) or none is; without a panel and a monitor the screen stays on HDMI |
 | `hdmi_pixels=N` | cap the screen on HDMI to N pixels (default: the monitor's native resolution, up to 1920x1200) |
+| `cpu=max`, `cpu=low` | the ARM at its maximum clock (the default; the Zero 2 W: 1000 MHz, throttled by the firmware at its own temperature limit) or at the firmware's starting clock (600 MHz) |
 | `clcheck=on`, `clcheck=off` | check each V3D job's control lists before it runs, and refuse a bad one (the default: on; DEVELOPMENT.md) |
 
 With `devtools/run.sh`, pass these as `CMDLINE="output=panel" devtools/run.sh gpu`.

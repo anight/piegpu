@@ -8,6 +8,7 @@
 #include <circle/exceptionhandler.h>
 #include <circle/interrupt.h>
 #include <circle/timer.h>
+#include <circle/cputhrottle.h>
 #include <circle/logger.h>
 #include <circle/sched/scheduler.h>
 #include <circle/types.h>
@@ -67,6 +68,7 @@ private:
 	CExceptionHandler	m_ExceptionHandler;
 	CInterruptSystem	m_Interrupt;
 	CTimer			m_Timer;
+	CCPUThrottle		m_CPUThrottle;		// the ARM at its maximum clock (cpu=low: not); no Update ()
 	CLogger			m_Logger;
 	CRunLog			m_RunLog;
 	CScheduler		m_Scheduler;		// VCHIQ's tasks (video) run when the main loop yields
@@ -87,6 +89,7 @@ private:
 	THostMode		m_HostMode;
 	boolean			m_bGUD;			// gud=off: no USB monitor
 	boolean			m_bJobCheck;		// clcheck=on (the default): control lists checked (v3dcheck.h)
+	unsigned		m_nARMClock;		// the rate last logged, Hz
 	boolean			m_bPanelPresent;
 	unsigned		m_nHDMIPixels;		// the largest screen on HDMI (default: native)
 	CPanelOutput		m_Panel;

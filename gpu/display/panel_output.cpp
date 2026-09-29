@@ -3,13 +3,14 @@
 //
 #include "panel_output.h"
 #include <circle/gpiopin.h>
+#include <circle/machineinfo.h>
 #include <circle/logger.h>
 #include <circle/timer.h>
 #include <circle/util.h>
 
 LOGMODULE ("panel");
 
-#define SPI_CLOCK_SPEED		75000000
+#define SPI_MAX_SPEED		75000000	// the panel's
 #define CS_PIN			8		// SPI0: CE0, MISO, MOSI, SCLK
 #define MISO_PIN		9
 #define MOSI_PIN		10
@@ -19,8 +20,20 @@ LOGMODULE ("panel");
 #define WIDTH			320
 #define HEIGHT			240
 
+// SPI0's clock is the core clock / an even divider (odd ones round down, and
+// Circle writes core / speed, truncated): the fastest at or below the panel's
+// maximum - core_freq=300: 300/4, 450: 450/6, both 75 MHz; 400: 400/6, 66.7
+static unsigned SPIClockSpeed (void)
+{
+	unsigned nCore = CMachineInfo::Get ()->GetClockRate (CLOCK_ID_CORE);
+	unsigned nDivider = (nCore + SPI_MAX_SPEED - 1) / SPI_MAX_SPEED;
+	nDivider += nDivider & 1;
+
+	return nCore / nDivider;
+}
+
 CPanelOutput::CPanelOutput (CInterruptSystem *pInterrupt)
-:	m_Display (pInterrupt, DC_PIN, RESET_PIN, WIDTH, HEIGHT, SPI_CLOCK_SPEED, 0,
+:	m_Display (pInterrupt, DC_PIN, RESET_PIN, WIDTH, HEIGHT, SPIClockSpeed (), 0,
 		   TRUE)			// little endian RGB565 from the V3D
 {
 }

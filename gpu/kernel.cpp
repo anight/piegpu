@@ -33,6 +33,12 @@ static void V3DWait (void)
 
 CKernel::CKernel (void)
 :	m_Timer (&m_Interrupt),
+	// the firmware starts the ARM at its lowest clock (the Zero 2 W: 600 of
+	// 1000 MHz). The temperature is the firmware's to watch, at its own limit
+	// (it throttles, and the throttle flags say so): CCPUThrottle's Update ()
+	// isn't called, which would slow the ARM down at 60 C (socmaxtemp)
+	m_CPUThrottle (strcmp (m_Options.GetAppOptionString ("cpu", "max"), "low") == 0
+		       ? CPUSpeedLow : CPUSpeedMaximum),
 	m_Logger (m_Options.GetLogLevel (), &m_Timer),
 	m_Gadget (&m_Interrupt),
 	m_DevLink (&m_Interrupt, &m_Gadget),
@@ -43,6 +49,7 @@ CKernel::CKernel (void)
 	m_HostMode (HostAuto),
 	m_bGUD (TRUE),
 	m_bJobCheck (TRUE),
+	m_nARMClock (0),
 	m_bPanelPresent (TRUE),
 	m_nHDMIPixels (CRenderer::MaxPixels),
 	m_Panel (&m_Interrupt),
@@ -311,6 +318,12 @@ TShutdownMode CKernel::Run (void)
 			 CMachineInfo::Get ()->GetMachineName ());
 	}
 	LOGNOTE ("Core clock %u MHz", CMachineInfo::Get ()->GetClockRate (CLOCK_ID_CORE) / 1000000);
+	m_nARMClock = m_CPUThrottle.GetClockRate ();
+	LOGNOTE ("ARM clock %u MHz (%u-%u MHz), V3D %u MHz; SoC %u C (the firmware's limit: %u C)",
+		 m_nARMClock / 1000000, m_CPUThrottle.GetMinClockRate () / 1000000,
+		 m_CPUThrottle.GetMaxClockRate () / 1000000,
+		 CMachineInfo::Get ()->GetClockRate (5) / 1000000,	// (5: the V3D's clock id)
+		 m_CPUThrottle.GetTemperature (), m_CPUThrottle.GetMaxTemperature ());
 	// the firmware's throttle flags (under-voltage and so on, since boot)
 	LOGNOTE ("Throttled %05X", GetThrottled ());
 	m_RunLog.Report ();		// how the previous run ended
@@ -469,6 +482,15 @@ TShutdownMode CKernel::Run (void)
 				 C.nErrors, C.nLastError, R.nReplies, R.nRepliesDropped, R.nTxLate,
 				 (unsigned) (CMemorySystem::Get ()->GetHeapFreeSpace (HEAP_LOW) / 1024),
 				 m_Commands.GetTextureBytes () / 1024);
+
+			// the ARM's clock, when the firmware changed it
+			unsigned nARMClock = m_CPUThrottle.GetClockRate ();
+			if (nARMClock && nARMClock != m_nARMClock)
+			{
+				LOGNOTE ("ARM clock now %u MHz (SoC %u C)", nARMClock / 1000000,
+					 m_CPUThrottle.GetTemperature ());
+				m_nARMClock = nARMClock;
+			}
 
 			// under-voltage, capping, throttling, temperature limit: now
 			// (bits 0-3) or since boot (16-19)
