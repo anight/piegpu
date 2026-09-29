@@ -24,12 +24,17 @@
 # within minutes. PGPU_HEAP_BUCKETS tells the gpu app it was built this way
 # (gpu/textures.cpp).
 #
+# MEM_PERSISTENT_SIZE (patches/circle-persistent-memory.patch): Circle leaves
+# the top 64 KB of the ARM memory to the app, for the log that survives a
+# restart (devtools/runlog.h).
+#
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$HERE/..
 TOOLCHAINS=$HOME/toolchains
 PATCHES="circle-cdc-endpoint-gadget circle-cdc-rx-overrun circle-cdc-short-packets
-	 circle-ep0-vendor-in circle-fatfs-mkfs circle-cdc-throughput"	# (in this order)
+	 circle-ep0-vendor-in circle-fatfs-mkfs circle-cdc-throughput
+	 circle-persistent-memory"	# (in this order)
 PATCHES64="circle-vcos-aarch64"		# and for a 64-bit tree
 
 case "${1:-zero}" in
@@ -59,7 +64,7 @@ esac
 cd "$TREE"
 ./configure -r "$RASPPI" -f -p "$PREFIX" \
 	-d HEAP_BLOCK_BUCKET_SIZES=0x40,0x400,0x1000,0x4000,0x10000,0x40000,0x80000,0x100000,0x200000,0x400000,0x800000,0x1000000,0x2000000,0x4000000 \
-	-d PGPU_HEAP_BUCKETS
+	-d PGPU_HEAP_BUCKETS -d MEM_PERSISTENT_SIZE=0x10000
 ./makeall clean >/dev/null
 ./makeall
 # the add-ons the gpu app links (gpu/Makefile: LIBS)

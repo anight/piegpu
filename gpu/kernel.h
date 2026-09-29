@@ -12,6 +12,7 @@
 #include <circle/sched/scheduler.h>
 #include <circle/types.h>
 #include <devlink.h>
+#include <runlog.h>
 #include <pgpugadget.h>
 #include <vc4/vchiq/vchiqdevice.h>
 #include <v3d.h>
@@ -67,6 +68,7 @@ private:
 	CInterruptSystem	m_Interrupt;
 	CTimer			m_Timer;
 	CLogger			m_Logger;
+	CRunLog			m_RunLog;
 	CScheduler		m_Scheduler;		// VCHIQ's tasks (video) run when the main loop yields
 	CPicoGPUGadget		m_Gadget;		// USB: serial port + monitor (GUD)
 	CDevLink		m_DevLink;

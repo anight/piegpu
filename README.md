@@ -44,6 +44,26 @@ Verified on both boards: 640x360 to 1280x720, 0 dropped. The Zero 2 W's HDMI hot
 Zero's: GPIO46). `web/installer/make-firmware.sh`
 puts both builds on the installer page, which picks the one for the board.
 
+A restart explains itself (`devtools/runlog.h`): the Zero keeps its log in
+the top 64 KB of the ARM memory, which Circle leaves to the app
+(`patches/circle-persistent-memory.patch`, `MEM_PERSISTENT_SIZE`) and the
+firmware doesn't clear at a restart (the low memory it does: the Zero 2 W's
+first ~4 MB). At boot the log says how the previous run ended, with its last
+lines unless it restarted as asked:
+
+```
+runlog: Run 4 since power-on: the previous one crashed; its last lines:
+runlog: | 30.33 gpu: Writing to 0xFFFFFFF0
+runlog: | 30.33 except: stack[1] is 0x81BDC
+runlog: | 30.33 except: stack[19] is 0x8082C
+runlog: | 30.33 except: Synchronous exception (PC 0x818A4, EC 0x25, ISS 0x46, FAR 0xFFFFFFF0, SP 0x27C0A0, LR 0x8189C, SPSR 0x60000304)
+```
+
+"crashed" is an exception, assertion or panic (its message last); "stopped
+without a word" a hang the watchdog caught, or a reset; "restarted as asked"
+the host's reboot, the installer's, Reset. Verified on the Zero 2 W (all
+four); the Zero not yet. How it works: [DEVELOPMENT.md](DEVELOPMENT.md).
+
 ## Wiring
 
 ```

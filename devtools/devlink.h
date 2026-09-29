@@ -60,6 +60,9 @@ public:
 	/// gadget has no flow control: the host needs to know)
 	u32 GetStreamReceived (void) const	{ return m_nStreamReceived; }
 
+	/// \brief Called before the reboot the host asks for (DEVLINK_REBOOT_MAGIC)
+	void RegisterRebootHandler (void (*pHandler) (void))	{ m_pRebootHandler = pHandler; }
+
 	/// \brief Write raw data to the host (not through the logger), waits
 	/// until all is queued (1 s timeout)
 	/// \return FALSE if there is no host or on timeout
@@ -78,6 +81,7 @@ private:
 
 	CUSBSerialDevice * volatile m_pSerial;
 	CDevice *m_pPrevLogTarget;
+	void (*m_pRebootHandler) (void);
 
 	boolean m_bHostActive;		// host has sent data, so it is listening
 	boolean m_bReplayDone;		// boot log has been replayed to the host

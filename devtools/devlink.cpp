@@ -20,6 +20,7 @@ CDevLink::CDevLink (CInterruptSystem *pInterrupt, CDWUSBGadget *pGadget)
 							      DEVLINK_USB_PRODUCT_ID)),
 	m_pSerial (nullptr),
 	m_pPrevLogTarget (nullptr),
+	m_pRebootHandler (nullptr),
 	m_bHostActive (FALSE),
 	m_bReplayDone (FALSE),
 	m_pMagicPtr (s_RebootMagic),
@@ -186,6 +187,10 @@ unsigned CDevLink::ScanMagic (const char *pData, unsigned nLength)
 		if (c == *m_pMagicPtr && *++m_pMagicPtr == '\0')
 		{
 			LOGNOTE ("Reboot requested by host");
+			if (m_pRebootHandler)
+			{
+				(*m_pRebootHandler) ();
+			}
 
 			reboot ();
 		}

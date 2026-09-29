@@ -1,5 +1,6 @@
 #include "kernel.h"
 #include <circle/startup.h>
+#include <runlog.h>
 
 int main (void)
 {
@@ -15,6 +16,7 @@ int main (void)
 	switch (ShutdownMode)
 	{
 	case ShutdownReboot:
+		CRunLog::Restarting ();
 		reboot ();
 		return EXIT_REBOOT;
 

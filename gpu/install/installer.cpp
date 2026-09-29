@@ -8,6 +8,7 @@
 #include <circle/startup.h>
 #include <circle/string.h>
 #include <circle/util.h>
+#include <runlog.h>
 #include <stdarg.h>
 
 LOGMODULE ("install");
@@ -169,6 +170,7 @@ void CInstaller::Command (char *pLine)
 		Reply ("OK");
 		LOGNOTE ("Rebooting (the host asked)");
 		CTimer::SimpleMsDelay (100);		// the answer goes out
+		CRunLog::Restarting ();
 		reboot ();
 	}
 	else

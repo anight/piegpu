@@ -64,8 +64,10 @@ boolean CKernel::Initialize (void)
 	{
 		m_nHDMIPixels = CRenderer::MaxPixels;
 	}
+	m_DevLink.RegisterRebootHandler (CRunLog::Restarting);
 
 	return    m_Logger.Initialize (&m_Null)
+	       && m_RunLog.Initialize (&m_Logger, m_Options.GetLogLevel ())
 	       && m_Interrupt.Initialize ()
 	       && m_Timer.Initialize ()
 	       && (!m_bGUD || m_GUD.Initialize ())	// (before the gadget starts)
@@ -289,6 +291,7 @@ TShutdownMode CKernel::Run (void)
 	LOGNOTE ("Core clock %u MHz", CMachineInfo::Get ()->GetClockRate (CLOCK_ID_CORE) / 1000000);
 	// the firmware's throttle flags (under-voltage and so on, since boot)
 	LOGNOTE ("Throttled %05X", GetThrottled ());
+	m_RunLog.Report ();		// how the previous run ended
 	LOGNOTE ("Host: %s", m_HostMode == HostUSB ? "USB only (host=usb)"
 			     : m_HostMode == HostI2S ? "I2S only (host=i2s)" : "USB when a PC streams, else I2S (host=auto)");
 	LOGNOTE ("USB: %s", m_bGUD ? "serial port, GL interface and monitor (GUD)" : "serial port and GL interface, no monitor (gud=off)");
