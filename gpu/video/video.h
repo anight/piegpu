@@ -26,6 +26,15 @@ struct MMAL_POOL_T;
 struct MMAL_QUEUE_T;
 struct MMAL_BUFFER_HEADER_T;
 
+// a clock a video stream can follow (the sound it plays with)
+class CMediaClock
+{
+public:
+	virtual ~CMediaClock (void) {}
+	/// \return FALSE while it isn't running yet
+	virtual boolean GetTime (s64 *pUS) = 0;
+};
+
 class CVideo
 {
 public:
@@ -61,6 +70,10 @@ public:
 
 	/// \brief After a GL frame has rendered: the textures get the frames due now
 	void FrameEnd (void);
+
+	/// \brief A stream's frames follow this clock (nullptr: its own again).
+	///	   Until the clock runs, the stream shows its first frame.
+	void SetClock (unsigned nStream, CMediaClock *pClock);
 
 	/// \brief The VIDEO_STATUS reply of a stream
 	/// \param bDue only if its periodic one is due (else always)
@@ -132,6 +145,7 @@ private:
 	void Feed (TStream &S);
 	void TakeFrames (TStream &S);
 	s64 MediaTime (const TStream &S) const;
+	void ShowDue (TStream &S, s64 nNow);
 	void ReleaseFrame (TFrame *pFrame);
 	void CopyFromRing (TStream &S, unsigned nOffset, u8 *pTo, unsigned nBytes);
 
@@ -143,6 +157,7 @@ private:
 	CTextures *m_pTextures;
 	boolean m_bInitialized;
 	TStream m_Streams[MaxStreams + 1];	// ids 1 .. MaxStreams
+	CMediaClock *m_pClock[MaxStreams + 1];	// SetClock's (kept across Open and Close)
 };
 
 #endif

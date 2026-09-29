@@ -46,17 +46,17 @@ static uint32_t error_head, error_tail;
 
 /* VIDEO_STATUS replies: the latest one a stream, under a sequence count (as
    DISPLAY); the bytes sent, for pgpu_video_room () */
-static uint32_t video_words[PGPU_VIDEO_STREAMS + 1][PGPU_VIDEO_STATUS_WORDS];
-static uint32_t video_seq[PGPU_VIDEO_STREAMS + 1];
-static uint32_t video_bytes_sent[PGPU_VIDEO_STREAMS + 1];
-static uint32_t video_samples_sent[PGPU_VIDEO_STREAMS + 1];
+static uint32_t video_words[PGPU_MEDIA_STREAMS + 1][PGPU_VIDEO_STATUS_WORDS];
+static uint32_t video_seq[PGPU_MEDIA_STREAMS + 1];
+static uint32_t video_bytes_sent[PGPU_MEDIA_STREAMS + 1];
+static uint32_t video_samples_sent[PGPU_MEDIA_STREAMS + 1];
 
 uint32_t pgpu_video_get_status (uint32_t stream, pgpu_video_status_t *status)
 {
 	pgpu_link_poll ();			/* replies that have come */
 	memset (status, 0, sizeof *status);
 	status->shown_pts = PGPU_VIDEO_TIME_NONE;
-	if (stream < 1 || stream > PGPU_VIDEO_STREAMS)
+	if (stream < 1 || stream > PGPU_MEDIA_STREAMS)
 	{
 		return 0;
 	}
@@ -335,7 +335,7 @@ void pgpu_deliver_reply (uint8_t opcode, const uint32_t *payload, uint32_t lengt
 		return;
 	}
 	if (   opcode == PGPU_REPLY_VIDEO_STATUS && length >= PGPU_VIDEO_STATUS_WORDS
-	    && payload[0] >= 1 && payload[0] <= PGPU_VIDEO_STREAMS)
+	    && payload[0] >= 1 && payload[0] <= PGPU_MEDIA_STREAMS)
 	{
 		uint32_t stream = payload[0], seq = video_seq[stream];
 		STORE (video_seq[stream], seq + 1);
@@ -1242,7 +1242,7 @@ void pgpu_video_open (uint32_t stream, uint32_t texture, uint32_t width, uint32_
 		memcpy (p + PGPU_VIDEO_OPEN_WORDS, avcc, avcc_bytes);
 	}
 	pgpu_end ();
-	if (stream >= 1 && stream <= PGPU_VIDEO_STREAMS)
+	if (stream >= 1 && stream <= PGPU_MEDIA_STREAMS)
 	{
 		/* the RPi counts from 0 again; until its first status (the old
 		   stream's gone) there's no room */
@@ -1318,7 +1318,7 @@ static bool video_sample (uint32_t stream, uint32_t flags, int64_t pts, uint32_t
 	}
 	while (ok && done < bytes);
 
-	if (ok && stream >= 1 && stream <= PGPU_VIDEO_STREAMS)
+	if (ok && stream >= 1 && stream <= PGPU_MEDIA_STREAMS)
 	{
 		video_bytes_sent[stream] += bytes;
 		video_samples_sent[stream]++;
@@ -1359,3 +1359,37 @@ void pgpu_video_resize (uint32_t stream, uint32_t width, uint32_t height)
 }
 
 void pgpu_video_request_status (uint32_t stream)	{ cmd1 (PGPU_OP_VIDEO_GET_STATUS, stream); }
+
+/* ---- audio (docs/protocol.md 7.13) ----------------------------------------------- */
+
+void pgpu_audio_open (uint32_t video_stream, const void *asc, uint32_t asc_bytes)
+{
+	if (!asc)
+	{
+		asc_bytes = 0;
+	}
+	uint32_t words = (asc_bytes + 3) / 4;
+	uint32_t *p = pgpu_begin (PGPU_OP_AUDIO_OPEN, PGPU_AUDIO_OPEN_WORDS + words);
+	if (!p)
+	{
+		return;
+	}
+	p[0] = PGPU_AUDIO_STREAM;
+	p[1] = PGPU_AUDIO_AAC;
+	p[2] = video_stream;
+	p[3] = asc_bytes;
+	if (words)
+	{
+		p[PGPU_AUDIO_OPEN_WORDS + words - 1] = 0;
+		memcpy (p + PGPU_AUDIO_OPEN_WORDS, asc, asc_bytes);
+	}
+	pgpu_end ();
+	video_bytes_sent[PGPU_AUDIO_STREAM] = 0;	/* (as pgpu_video_open) */
+	video_samples_sent[PGPU_AUDIO_STREAM] = 0;
+	STORE (video_seq[PGPU_AUDIO_STREAM], 0);
+}
+
+void pgpu_audio_volume (uint32_t percent)
+{
+	pgpu_video_control (PGPU_AUDIO_STREAM, PGPU_AUDIO_VOLUME, percent);
+}

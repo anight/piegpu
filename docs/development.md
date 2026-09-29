@@ -13,6 +13,7 @@ model is named below, the fact was measured on that one.
 - [Rendering](#rendering)
 - [The screen: panel and HDMI](#the-screen-panel-and-hdmi)
 - [Video](#video)
+- [Audio](#audio)
 - [The run log: a restart explains itself](#the-run-log-a-restart-explains-itself)
 - [The control list checker](#the-control-list-checker)
 
@@ -197,6 +198,60 @@ model is named below, the fact was measured on that one.
   too"). The MMAL sources are built with `-mstrict-align`: they read VCHIQ's
   messages in place, in Circle's coherent region, which is Device memory in 64
   bit, where unaligned accesses fault.
+
+## Audio
+
+The audio stream (protocol §7.13, `gpu/audio/`): AAC decoded on the ARM,
+played on HDMI through the VideoCore's audio service.
+
+- **Output** (`CAudioOut`): Circle's VCHIQ sound device
+  (`addon/vc4/sound`), destination HDMI, 16-bit stereo in 10 ms chunks
+  (480 frames at 48 kHz) from a 2 s ring; silence while the ring is empty.
+  The firmware sets HDMI up with audio from the monitor's EDID at boot:
+  nothing in `config.txt` was needed for the Dell S2421H (a monitor without
+  speakers gets no sound). One output a sample rate, kept for the whole run
+  (the service is opened once a device); a stream's close stops it, the next
+  stream starts it again.
+- **Decoding** (`aac.c`): FAAD2 2.11.3's libfaad (`gpu/audio/faad2`,
+  vendored unchanged; GPL 2 or later, so it can be linked with Circle's GPL
+  3), float out, more than two channels mixed down to stereo (FAAD2's
+  downmatrix), mono doubled, the volume applied in the conversion to 16 bit.
+  It's a library of its own (`gpu/audio/faad2/Makefile`, `libaac.a`): the
+  gpu app's C flags force-include MMAL's header, and FAAD2 needs two shims
+  for Circle, which has no C library (`compat/`: an `assert.h` found before
+  Circle's, whose `circle/macros.h` redefines FAAD2's `ALIGN`; `qsort`,
+  `abs`, and its three `fprintf`s to stderr dropped). Checked on a PC
+  against ffmpeg: a stereo AAC file the same sample for sample (correlation
+  1.00000, at most 245 of 32768 apart); FAAD2 drops the first unit's
+  priming frames, so the frames of unit k start at unit k's pts.
+- **A core of its own:** on the Zero 2 W the decoder runs on core 1
+  (`CCores` in `gpu/kernel.h`; Circle configured with `ARM_ALLOW_MULTI_CORE`,
+  `devtools/configure-circle.sh`; cores 2 and 3 halt). On the Zero, one
+  core, it runs in the main loop, up to 2 ms a turn. Between the cores:
+  rings with one writer and one reader each and memory barriers, no locks.
+  The compressed samples: `Data` (core 0) publishes a sample once its last
+  chunk has come; the decoder frees it once decoded (the host's room). The
+  frames: the decoder writes, `GetChunk` (VCHIQ's task, core 0) reads. The
+  times: a mark (output frame, pts) for each decoded unit. Closing parks the
+  decoder first: each side stores its flag, then a full barrier, then reads
+  the other's, so at least one sees the other.
+- **The clock:** the time being heard is the newest mark at or before the
+  frame being played (frames read from the ring less what the VideoCore
+  still holds: Circle's driver keeps two chunks queued, 960 frames), plus the
+  frames since it. A video stream opened with the audio (`CVideo::SetClock`)
+  shows the frame due at that time, and its first frame until the sound
+  starts. If the sound runs dry the clock stops, and the picture waits.
+  Not measured: the delay after the VideoCore (the camera sees only the
+  panel, so the picture against the sound can't be timed).
+- **Volume:** `volume=` on the command line (percent, default 10), and
+  `VOLUME` for a stream.
+- **Verified** on the Zero 2 W with the Dell S2421H, the trailer through
+  `video_host`: the webcam's microphone recording cross-correlated with the
+  trailer's audio decoded on the PC: 2 s windows over 40 s all within ±4 ms
+  of their expected place, across the loop (period 33.0 s) too; 1843 units,
+  0 broken, 30 ms of silence at the start; decoded on core 1. With the
+  decoder in the main loop: the same sound (8 s of recording = 7.996 s of
+  trailer). The Zero: builds, not run.
 
 ## The run log: a restart explains itself
 

@@ -39,6 +39,34 @@ enum TShutdownMode
 	ShutdownReboot
 };
 
+#ifdef ARM_ALLOW_MULTI_CORE
+#include <circle/multicore.h>
+#include <circle/memory.h>
+
+// the cores beside core 0 (the Zero 2 W's): core 1 decodes the audio stream
+// (CAudio::DecodeLoop), cores 2 and 3 halt
+class CCores : public CMultiCoreSupport
+{
+public:
+	CCores (CAudio *pAudio)
+	:	CMultiCoreSupport (CMemorySystem::Get ()),
+		m_pAudio (pAudio)
+	{
+	}
+
+	void Run (unsigned nCore) override
+	{
+		if (nCore == 1)
+		{
+			m_pAudio->DecodeLoop ();
+		}
+	}
+
+private:
+	CAudio *m_pAudio;
+};
+#endif
+
 class CKernel
 {
 public:
@@ -115,6 +143,10 @@ private:
 	CUSBLink		m_USBLink;		// ... or the serial port
 	CRenderer		m_Renderer;
 	CCommands		m_Commands;
+	CAudio			m_Audio;		// the audio stream, on HDMI (volume= option)
+#ifdef ARM_ALLOW_MULTI_CORE
+	CCores			m_Cores;		// core 1: the audio stream's decoder
+#endif
 
 	static const unsigned Links = 3;
 	CLink			*m_pLinks[Links];	// in priority order: the first active one serves

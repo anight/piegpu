@@ -174,6 +174,7 @@ CCommands::CCommands (CRenderer *pRenderer, CLink *pLink)
 	m_pLink (pLink),
 	m_Geometry (pRenderer, &m_Textures),
 	m_Video (&m_Textures),
+	m_pAudio (nullptr),
 	m_nBufferBytes (0),
 	m_nRetiredBuffers (0),
 	m_nProgram (0),
@@ -210,6 +211,10 @@ CCommands::~CCommands (void)
 void CCommands::Reset (void)
 {
 	m_pRenderer->DiscardFrame ();		// nothing may use the streams' frames now
+	if (m_pAudio)
+	{
+		m_pAudio->Close ();
+	}
 	m_Video.CloseAll ();
 	for (unsigned i = 1; i <= MaxBuffers; i++)
 	{
@@ -356,6 +361,14 @@ void CCommands::UpdateVideo (void)
 			Reply (PGPU_REPLY_VIDEO_STATUS, Status, CVideo::StatusWords);
 		}
 	}
+	if (m_pAudio)
+	{
+		m_pAudio->Update ();
+		if (m_pAudio->GetStatus (Status, TRUE))
+		{
+			Reply (PGPU_REPLY_VIDEO_STATUS, Status, CAudio::StatusWords);
+		}
+	}
 }
 
 boolean CCommands::IsBetweenFrames (void) const
@@ -413,7 +426,7 @@ void CCommands::Execute (u32 nHeader, const u32 *pPayload)
 		{PGPU_OP_ATTRIB_ARRAY, 6}, {PGPU_OP_ATTRIBS_ENABLE, 1},
 		{PGPU_OP_PROGRAM_DRAW_INLINE, VARIABLE},
 		{PGPU_OP_VIDEO_OPEN, VARIABLE}, {PGPU_OP_VIDEO_DATA, VARIABLE}, {PGPU_OP_VIDEO_CONTROL, 4},
-		{PGPU_OP_VIDEO_GET_STATUS, 1},
+		{PGPU_OP_VIDEO_GET_STATUS, 1}, {PGPU_OP_AUDIO_OPEN, VARIABLE},
 	};
 
 	boolean bKnown = FALSE;
@@ -676,11 +689,21 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 		{
 			return PGPU_ERR_LENGTH;
 		}
+		if (p[0] == PGPU_AUDIO_STREAM)
+		{
+			return m_pAudio ? m_pAudio->Data (p[1], (s64) ((u64) p[3] << 32 | p[2]), p[5],
+							  (const u8 *) (p + PGPU_VIDEO_DATA_HEADER), p[4])
+					: PGPU_ERR_OBJECT;
+		}
 		return m_Video.Data (p[0], p[1], (s64) ((u64) p[3] << 32 | p[2]), p[5],
 				     (const u8 *) (p + PGPU_VIDEO_DATA_HEADER), p[4]);
 
 	case PGPU_OP_VIDEO_CONTROL:
 		*pDetail = p[0];
+		if (p[0] == PGPU_AUDIO_STREAM)
+		{
+			return m_pAudio ? m_pAudio->Control (p[1], (s64) ((u64) p[3] << 32 | p[2])) : PGPU_ERR_OBJECT;
+		}
 		if (p[1] == PGPU_VIDEO_CLOSE || p[1] == PGPU_VIDEO_RESIZE)
 		{
 			FlushJob (FALSE);	// draws so far may use the stream's frame
@@ -690,12 +713,25 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 	case PGPU_OP_VIDEO_GET_STATUS: {
 		*pDetail = p[0];
 		u32 Status[CVideo::StatusWords];
-		if (!m_Video.GetStatus (p[0], Status, FALSE))
+		if (p[0] == PGPU_AUDIO_STREAM ? !m_pAudio || !m_pAudio->GetStatus (Status, FALSE)
+					      : !m_Video.GetStatus (p[0], Status, FALSE))
 		{
 			return PGPU_ERR_ID;
 		}
 		Reply (PGPU_REPLY_VIDEO_STATUS, Status, CVideo::StatusWords);
 		} break;
+
+	case PGPU_OP_AUDIO_OPEN:
+		*pDetail = p[0];
+		if (nLength < PGPU_AUDIO_OPEN_WORDS || p[3] > (nLength - PGPU_AUDIO_OPEN_WORDS) * 4)
+		{
+			return PGPU_ERR_LENGTH;
+		}
+		if (p[0] != PGPU_AUDIO_STREAM || !m_pAudio)
+		{
+			return PGPU_ERR_ID;
+		}
+		return m_pAudio->Open (p[1], p[2], (const u8 *) (p + PGPU_AUDIO_OPEN_WORDS), p[3]);
 
 	case PGPU_OP_TEXTURE_DELETE:
 		*pDetail = p[0];

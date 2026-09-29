@@ -14,6 +14,7 @@
 #include "link/link.h"
 #include "programs.h"
 #include "video/video.h"
+#include "audio/audio.h"
 #include <circle/types.h>
 
 struct TCommandStats
@@ -76,6 +77,9 @@ public:
 
 	/// \brief Connect to the VideoCore's video components (after VCHIQ)
 	boolean InitializeVideo (void)			{ return m_Video.Initialize (); }
+	CVideo *GetVideo (void)				{ return &m_Video; }
+	/// \brief The audio stream (stream 3: AUDIO_OPEN, and its VIDEO_* commands)
+	void SetAudio (CAudio *pAudio)			{ m_pAudio = pAudio; }
 	/// \brief Call often: the video streams' decoding and their status replies
 	void UpdateVideo (void);
 
@@ -169,6 +173,7 @@ private:
 	CLink *m_pLink;
 	CTextures m_Textures;
 	CVideo m_Video;			// video streams into textures
+	CAudio *m_pAudio;		// the audio stream (the kernel's), or nullptr
 	CGeometry m_Geometry;
 
 	TGLState m_State;

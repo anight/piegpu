@@ -29,10 +29,19 @@ The host library (`libpgpu/`, board independent) has two layers:
   the last `VIDEO_STATUS`, which the library keeps per stream like `DISPLAY`,
   and what it has sent since); `pgpu_video_control` and
   `pgpu_video_get_status` the rest.
+- **Audio** ([protocol](protocol.md) §7.13): `pgpu_audio_open (video_stream,
+  asc, asc_bytes)` opens the audio stream (stream `PGPU_AUDIO_STREAM`, 3) for
+  AAC with its AudioSpecificConfig and makes it the clock of that video
+  stream; its samples, room and status go through the video calls with
+  stream 3 (`pgpu_video_sample_read`, `pgpu_video_room`,
+  `pgpu_video_get_status`); `pgpu_audio_volume (percent)` sets the volume.
 - **The data path from a file:** a file is read through a callback
   (`pgpu_read_t`: bytes at an offset), so it needn't be in memory: on an SD
   card the filesystem reads its sectors as needed.
-  - `libpgpu/pgpu_mp4.{h,c}` reads an MP4's H.264 track through it: the boxes
+  - `libpgpu/pgpu_mp4.{h,c}` reads an MP4's H.264 track through it (or,
+    `pgpu_mp4_open_audio`, its AAC track: the `mp4a` entry's `esds`, also
+    inside QuickTime's `wave` box, gives the AudioSpecificConfig, its rate
+    and channels; each track takes a `pgpu_mp4_t` of its own): the boxes
     by their headers (the `moov` may follow the media data), the sample
     tables through 256-byte windows (about 1.5 KB of state however long the
     file; tables read in order, so each window once): each sample's offset,
@@ -59,6 +68,11 @@ The host library (`libpgpu/`, board independent) has two layers:
     filesystem (POSIX `open`/`lseek`/`read`), else an MP4 linked into the
     host's image (memory as the file, `pgpu_mp4_open_memory`). When the screen
     changes (panel ↔ HDMI) it resizes the texture; the video keeps its place.
+    If the file has an AAC track, its samples go to the audio stream the same
+    way, in time order with the video's, and the video follows the sound's
+    clock. Both tracks loop with the same period, the longer track's (the Big
+    Buck Bunny trailer: video 32.48 s, audio 32.98 s), so they stay together
+    round after round.
     `hosts/pc/videoplay` plays a file on the PC, through a reader that does as
     an SD filesystem does (whole sectors, a one-sector cache).
   - **The ESP32-P4's microSD card** (`hosts/esp32p4/main/sdcard.c`, the video

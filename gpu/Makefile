@@ -5,7 +5,7 @@ CIRCLEHOME ?= ../circle
 AARCH ?= 32
 
 OBJS = main.o build_info.o kernel.o commands.o geometry.o textures.o programs.o renderer.o \
-       link/i2s_link.o link/byte_stream_link.o link/usb_link.o link/usb_bulk_link.o display/panel_output.o display/hdmi_output.o display/hdmi_monitor.o display/gud_display.o video/video.o install/installer.o \
+       link/i2s_link.o link/byte_stream_link.o link/usb_link.o link/usb_bulk_link.o display/panel_output.o display/hdmi_output.o display/hdmi_monitor.o display/gud_display.o video/video.o audio/audio.o audio/audio_out.o install/installer.o \
        ../drivers/v3d.o ../drivers/v3dcheck.o ../drivers/st7789dma.o ../devtools/devlink.o ../devtools/runlog.o ../devtools/pgpugadget.o \
        video/compat/circle_vcos.o video/compat/circle_micros.o $(MMAL)
 
@@ -20,9 +20,11 @@ MMAL = $(UL)/core/mmal_format.o $(UL)/core/mmal_port.o $(UL)/core/mmal_port_cloc
        $(UL)/vc/mmal_vc_client.o $(UL)/vc/mmal_vc_api.o $(UL)/vc/mmal_vc_msgnames.o \
        $(UL)/vc/mmal_vc_opaque_alloc.o $(UL)/vc/mmal_vc_shm.o
 
-LIBS = $(CIRCLEHOME)/addon/SDCard/libsdcard.a \
+LIBS = audio/faad2/libaac.a \
+       $(CIRCLEHOME)/addon/SDCard/libsdcard.a \
        $(CIRCLEHOME)/addon/fatfs/libfatfs.a \
        $(CIRCLEHOME)/addon/vc4/interface/vcos/libvcos.a \
+       $(CIRCLEHOME)/addon/vc4/sound/libvchiqsound.a \
        $(CIRCLEHOME)/addon/vc4/vchiq/libvchiq.a \
        $(CIRCLEHOME)/addon/linux/liblinuxemu.a \
        $(CIRCLEHOME)/lib/usb/libusb.a \
@@ -30,9 +32,10 @@ LIBS = $(CIRCLEHOME)/addon/SDCard/libsdcard.a \
        $(CIRCLEHOME)/lib/input/libinput.a \
        $(CIRCLEHOME)/lib/fs/libfs.a \
        $(CIRCLEHOME)/lib/sched/libsched.a \
+       $(CIRCLEHOME)/lib/sound/libsound.a \
        $(CIRCLEHOME)/lib/libcircle.a
 
-EXTRAINCLUDE = -I ../drivers -I ../devtools -I ../protocol -I $(CIRCLEHOME)/addon \
+EXTRAINCLUDE = -I ../drivers -I ../devtools -I ../protocol -I $(CIRCLEHOME)/addon -I audio \
 	       -I video/compat -I video/userland -I video/userland/interface/mmal
 
 # the MMAL sources (C; their messages 32-bit on any client: video/userland/
@@ -50,6 +53,11 @@ endif
 EXTRACLEAN = shaders.h $(MMAL) $(MMAL:.o=.d) video/compat/*.o video/compat/*.d
 
 include $(CIRCLEHOME)/Rules.mk
+
+# AAC (audio/aac.c with FAAD2, audio/faad2: GPL 2 or later): a library of its
+# own, built with its own flags
+audio/faad2/libaac.a: FORCE
+	$(MAKE) -C audio/faad2 CIRCLEHOME=$(abspath $(CIRCLEHOME))
 
 # this build's version, time and configuration (build_info.h), at every build
 build_info.o: CPPFLAGS += -DPGPU_VERSION='"$(shell git describe --always --dirty 2>/dev/null || echo unknown)"' \

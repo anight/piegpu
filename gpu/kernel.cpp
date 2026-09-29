@@ -63,6 +63,10 @@ CKernel::CKernel (void)
 	m_USBLink (&m_DevLink),
 	m_Renderer (&m_V3D),
 	m_Commands (&m_Renderer, &m_I2SLink),
+	m_Audio (&m_VCHIQ, m_Commands.GetVideo ()),
+#ifdef ARM_ALLOW_MULTI_CORE
+	m_Cores (&m_Audio),
+#endif
 	m_pLinks {&m_USBBulkLink, &m_USBLink, &m_I2SLink}
 {
 }
@@ -82,6 +86,8 @@ boolean CKernel::Initialize (void)
 	m_bGUD = strcmp (m_Options.GetAppOptionString ("gud", "on"), "off") != 0;
 	m_bJobCheck = strcmp (m_Options.GetAppOptionString ("clcheck", "on"), "off") != 0;
 	m_nHDMIPixels = m_Options.GetAppOptionDecimal ("hdmi_pixels", m_nHDMIPixels);
+	m_Audio.SetDefaultVolume (m_Options.GetAppOptionDecimal ("volume", 10));	// percent
+	m_Commands.SetAudio (&m_Audio);
 	if (m_nHDMIPixels < 320 * 240 || m_nHDMIPixels > CRenderer::MaxPixels)
 	{
 		m_nHDMIPixels = CRenderer::MaxPixels;
@@ -98,7 +104,11 @@ boolean CKernel::Initialize (void)
 	       && DetectPanel ()
 	       && m_VCHIQ.Initialize ()
 	       && (!(m_bPanelPresent || m_OutputMode == OutputPanel) || m_Panel.Initialize ())
-	       && (m_OutputMode == OutputPanel || m_HDMI.Initialize ());
+	       && (m_OutputMode == OutputPanel || m_HDMI.Initialize ())
+#ifdef ARM_ALLOW_MULTI_CORE
+	       && m_Cores.Initialize ()
+#endif
+	       ;
 }
 
 // text from the host (the USB serial link): "s" alone asks for a screenshot,

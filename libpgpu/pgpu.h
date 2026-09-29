@@ -139,6 +139,14 @@ void pgpu_video_control (uint32_t stream, uint32_t op, int64_t arg);	/* PGPU_VID
    decoding and the clock go on */
 void pgpu_video_resize (uint32_t stream, uint32_t width, uint32_t height);
 void pgpu_video_request_status (uint32_t stream);
+
+/* the audio stream (docs/protocol.md 7.13): AAC access units (raw, as MP4 has
+   them; asc the AudioSpecificConfig), decoded by the RPi and played on HDMI
+   with the video stream video_stream (0: none), whose clock then follows the
+   sound. Its samples, room, control and status as a video stream's, with
+   stream PGPU_AUDIO_STREAM: pgpu_video_sample_read, pgpu_video_room, ... */
+void pgpu_audio_open (uint32_t video_stream, const void *asc, uint32_t asc_bytes);
+void pgpu_audio_volume (uint32_t percent);	/* 0 .. 100 (the RPi's default: its volume= option) */
 /* the last VIDEO_STATUS of a stream (the RPi sends one every 100 ms while it's
    open); returns how many have come (0: none) */
 uint32_t pgpu_video_get_status (uint32_t stream, pgpu_video_status_t *status);

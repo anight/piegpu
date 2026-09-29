@@ -5,7 +5,8 @@ metal (Circle) as the graphics card of a microcontroller (like a Raspberry Pi
 Pico or an ESP32): the microcontroller sends OpenGL ES 2.0 commands (and 1.1's
 fixed function), and the RPi renders them with its VideoCore IV V3D, to an
 ST7789 panel or to HDMI. Video (H.264, e.g. from an MP4) is decoded by the
-VideoCore into textures that any draw can use.
+VideoCore into textures that any draw can use, and its sound (AAC) is
+decoded by the RPi and played on HDMI, with the picture following it.
 
 The host can be any microcontroller board capable of the link: I2S as the
 master (DATA, BCLK and FS out, the replies back on REPLY), a READY input and
@@ -34,7 +35,7 @@ Documentation ([docs/](docs/README.md)):
 
 | Directory | What |
 |---|---|
-| `gpu/` | the RPi's firmware: links (`link/`), outputs (`display/`), renderer, video (`video/`), SD card installer (`install/`) |
+| `gpu/` | the RPi's firmware: links (`link/`), outputs (`display/`), renderer, video (`video/`), audio (`audio/`, with FAAD2), SD card installer (`install/`) |
 | `drivers/` | the RPi's V3D and ST7789 (DMA) drivers |
 | `libpgpu/` | the host library: protocol encoding, pgl (the GL ES API), MP4 reader, HUD, self tests |
 | `transports/` | links for the host library: `pico-i2s`, `esp32p4-i2s`, `pc-usb` |
@@ -219,6 +220,7 @@ there. Without the SDO wire it can't tell: set `panel=yes` (see below).
 | `panel=yes`, `panel=none` | a panel is there (SDO not wired) or none is; without a panel and a monitor the screen stays on HDMI |
 | `hdmi_pixels=N` | cap the screen on HDMI to N pixels (default: the monitor's native resolution, up to 1920x1200) |
 | `cpu=max`, `cpu=low` | the ARM at its maximum clock (the default; the Zero 2 W: 1000 MHz, throttled by the firmware at its own temperature limit) or at the firmware's starting clock (600 MHz) |
+| `volume=N` | the sound's volume on HDMI, percent (default: 10) |
 | `clcheck=on`, `clcheck=off` | check each V3D job's control lists before it runs, and refuse a bad one (the default: on; [docs/development.md](docs/development.md#the-control-list-checker)) |
 
 With `devtools/run.sh`, pass these as `CMDLINE="output=panel" devtools/run.sh gpu`.
@@ -380,7 +382,8 @@ transport; `web/installer/gl.js` moves the bytes). No driver or udev rule is
 needed. Test OpenGL runs `demos/gears.c` (60 fps, render 1.2 ms, as
 `gears_host`); Test video runs `demos/video.c` on the Big Buck Bunny trailer
 (853x480 H.264, Blender Foundation, CC BY 3.0), decoded by the RPi's
-VideoCore: 25 fps, 0 dropped. Stop restarts the RPi,
+VideoCore: 25 fps, 0 dropped; with its sound on an HDMI monitor that has
+speakers (5.1 AAC, mixed down to stereo, at the `volume=` setting). Stop restarts the RPi,
 which takes commands from the serial port until then. `make-firmware.sh`
 builds the demos when Emscripten is installed (`EMSDK`, default `~/emsdk`)
 and downloads the trailer (Blender's server doesn't let a page fetch it).

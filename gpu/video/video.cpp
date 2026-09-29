@@ -28,6 +28,7 @@ CVideo::CVideo (CTextures *pTextures)
 	m_bInitialized (FALSE)
 {
 	memset (m_Streams, 0, sizeof m_Streams);
+	memset (m_pClock, 0, sizeof m_pClock);
 }
 
 CVideo::~CVideo (void)
@@ -668,6 +669,21 @@ void CVideo::FrameEnd (void)
 			continue;
 		}
 
+		// a clock to follow (the sound): the frame due at its time, the
+		// first frame until it runs
+		if (m_pClock[i])
+		{
+			s64 nNow;
+			if (!m_pClock[i]->GetTime (&nNow))
+			{
+				nNow = (s64) MMAL_TIME_UNKNOWN;
+			}
+			S.bStarted = TRUE;
+			S.bPlaying = TRUE;
+			ShowDue (S, nNow);
+			continue;
+		}
+
 		// without PLAY the clock starts when the first frame is shown
 		if (!S.bStarted)
 		{
@@ -693,37 +709,57 @@ void CVideo::FrameEnd (void)
 			nNow = S.nMediaStart;
 		}
 
-		unsigned nDue = 0;
-		if (nNow != (s64) MMAL_TIME_UNKNOWN)
-		{
-			while (   nDue < S.nFrames
-			       && (S.Frames[nDue].nPTS == (s64) MMAL_TIME_UNKNOWN
-				   || S.Frames[nDue].nPTS <= nNow))
-			{
-				nDue++;
-			}
-		}
-		if (!nDue && !S.Shown.pBuffer)
-		{
-			nDue = 1;
-		}
-		if (!nDue)
-		{
-			continue;
-		}
+		ShowDue (S, nNow);
+	}
+}
 
-		for (unsigned k = 0; k < nDue - 1; k++)
+// the texture gets the newest frame due at nNow (MMAL_TIME_UNKNOWN: the first
+// frame, if none is shown), the older due ones are dropped
+void CVideo::ShowDue (TStream &S, s64 nNow)
+{
+	unsigned nDue = 0;
+	if (nNow != (s64) MMAL_TIME_UNKNOWN)
+	{
+		while (   nDue < S.nFrames
+		       && (S.Frames[nDue].nPTS == (s64) MMAL_TIME_UNKNOWN
+			   || S.Frames[nDue].nPTS <= nNow))
 		{
-			ReleaseFrame (&S.Frames[k]);
-			S.nDropped++;
+			nDue++;
 		}
-		ReleaseFrame (&S.Shown);
-		S.Shown = S.Frames[nDue - 1];
-		S.nFrames -= nDue;
-		memmove (S.Frames, S.Frames + nDue, S.nFrames * sizeof S.Frames[0]);
-		S.nShownFrames++;
+	}
+	if (!nDue && !S.Shown.pBuffer)
+	{
+		nDue = 1;
+	}
+	if (!nDue)
+	{
+		return;
+	}
 
-		m_pTextures->SetExternal (S.nTexture, S.Shown.pBuffer->data + S.Shown.pBuffer->offset);
+	for (unsigned k = 0; k < nDue - 1; k++)
+	{
+		ReleaseFrame (&S.Frames[k]);
+		S.nDropped++;
+	}
+	ReleaseFrame (&S.Shown);
+	S.Shown = S.Frames[nDue - 1];
+	S.nFrames -= nDue;
+	memmove (S.Frames, S.Frames + nDue, S.nFrames * sizeof S.Frames[0]);
+	S.nShownFrames++;
+
+	m_pTextures->SetExternal (S.nTexture, S.Shown.pBuffer->data + S.Shown.pBuffer->offset);
+}
+
+void CVideo::SetClock (unsigned nStream, CMediaClock *pClock)
+{
+	if (nStream < 1 || nStream > MaxStreams)
+	{
+		return;
+	}
+	m_pClock[nStream] = pClock;
+	if (!pClock)
+	{
+		m_Streams[nStream].bStarted = FALSE;	// its own clock from the next frame
 	}
 }
 

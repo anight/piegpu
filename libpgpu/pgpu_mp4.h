@@ -1,17 +1,21 @@
 /*
- * pgpu_mp4.h - the H.264 track of an MP4 file, sample by sample, for the
- * GPU's video (pgpu_video_*): the samples in decode order with their
- * presentation times, where they are in the file, and the avcC (the decoder's
- * configuration, for pgpu_video_open with PGPU_VIDEO_AVCC). The samples go to
- * the RPi as they are (NAL units with length prefixes).
+ * pgpu_mp4.h - the H.264 track or the AAC track of an MP4 file, sample by
+ * sample, for the GPU's video and audio (pgpu_video_*, pgpu_audio_*): the
+ * samples in decode order with their presentation times, where they are in
+ * the file, and the decoder's configuration (H.264: the avcC, for
+ * pgpu_video_open with PGPU_VIDEO_AVCC; AAC: the AudioSpecificConfig). The
+ * samples go to the RPi as they are (H.264: NAL units with length prefixes;
+ * AAC: raw access units).
  *
  * The file is read through a callback (pgpu_read_t: an offset and a size, so a
  * file on an SD card is read by the filesystem as it's needed): the boxes by
  * their headers (the moov may come after the media data), the sample tables
  * (stts, ctts, stss, stsz, stsc, stco/co64) through small windows, however
  * long the file. A file in memory: pgpu_mp4_open_memory. Reads the first video
- * track with an avcC and the start of its edit list (elst: the times as
- * players show them); no fragmented MP4.
+ * track with an avcC (or, pgpu_mp4_open_audio, the first sound track with an
+ * mp4a and its esds, also inside QuickTime's wave box) and the start of its
+ * edit list (elst: the times as players show them); no fragmented MP4. Each
+ * track needs a pgpu_mp4_t of its own.
  */
 #ifndef PGPU_MP4_H
 #define PGPU_MP4_H
@@ -28,6 +32,7 @@ extern "C" {
 #define PGPU_MP4_MAX_AVCC	256		/* bytes: SPS and PPS of any usual stream */
 #define PGPU_MP4_WINDOW		256		/* bytes of a sample table read at a time */
 #define PGPU_MP4_MAX_TITLE	64		/* bytes of the title kept, with its NUL */
+#define PGPU_MP4_MAX_ASC	64		/* bytes: an AudioSpecificConfig */
 
 typedef struct
 {
@@ -46,7 +51,12 @@ typedef struct
 	uint64_t size;				/* of the file */
 	const uint8_t *memory;			/* pgpu_mp4_open_memory's */
 
+	bool audio;				/* the AAC track (else H.264) */
 	uint32_t width, height;			/* coded (from avc1) */
+	uint32_t sample_rate, channels;		/* AAC: from the AudioSpecificConfig */
+	uint32_t object_type;			/* AAC: 2 LC, 5 SBR (HE-AAC), ... */
+	uint8_t asc[PGPU_MP4_MAX_ASC];		/* AAC: the AudioSpecificConfig */
+	uint32_t asc_size;
 	uint32_t timescale;			/* the track's, ticks a second */
 	uint32_t samples;
 	int64_t duration_us;			/* of the track */
@@ -81,6 +91,9 @@ typedef struct
 /* false if it's not an MP4 with an H.264 track this reads (or a read failed) */
 bool pgpu_mp4_open (pgpu_mp4_t *mp4, pgpu_read_t read, void *ctx, uint64_t size);
 bool pgpu_mp4_open_memory (pgpu_mp4_t *mp4, const void *file, size_t size);
+/* the same for its AAC track: false if it has none */
+bool pgpu_mp4_open_audio (pgpu_mp4_t *mp4, pgpu_read_t read, void *ctx, uint64_t size);
+bool pgpu_mp4_open_memory_audio (pgpu_mp4_t *mp4, const void *file, size_t size);
 /* the next sample in decode order; false at the end (or mp4->error) */
 bool pgpu_mp4_next (pgpu_mp4_t *mp4, pgpu_mp4_sample_t *sample);
 /* back to the first sample */

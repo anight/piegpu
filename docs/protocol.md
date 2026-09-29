@@ -488,6 +488,38 @@ the GL frame rate.
   can play at once (720p and smaller; one 1080p30 stream has headroom,
   measured: 43 fps).
 
+### 7.13 Audio
+
+One **audio stream**, stream 3: AAC access units, decoded by the RPi and
+played on HDMI (when the monitor takes audio), mixed down to stereo. It can
+be the clock of a video stream: that stream then shows the frame due at the
+time being heard, so picture and sound stay together.
+
+| Op | Name | Payload | Meaning |
+|---|---|---|---|
+| `0xC4` | AUDIO_OPEN | `u32 stream` (3), `u32 codec` (2 = AAC), `u32 video_stream` (0: none, or 1–2), `u32 config_bytes`, `u8 config[config_bytes]` (padded to words) | The stream is (re)opened for AAC with this AudioSpecificConfig (an MP4's esds has it): its samples are raw access units, as MP4 stores them. With a video stream, that stream's clock follows the sound from now on (without `PLAY`), and it shows its first frame until the sound starts. The volume is the RPi's default (its `volume=` option, 10%). `ENUM` for another codec or a configuration the decoder doesn't take. An open stream is closed first. |
+
+The stream's other commands and its reply are a video stream's, with stream
+3:
+
+- `VIDEO_DATA`: a sample is one access unit (flags `FIRST`, `LAST`, `EOS`
+  as there; `KEYFRAME` and `CONFIG` are ignored); its `pts` is its first
+  frame's time.
+- `VIDEO_CONTROL`: `PLAY` (after a pause: the sound goes on; `arg` is
+  ignored), `PAUSE` (silence; the sound, and so the video that follows it,
+  stops), `CLOSE`, and op 5 `VOLUME`: `arg` the volume in percent, 0 … 100
+  (from the next access unit).
+- `VIDEO_STATUS` (every 100 ms while it's open, and on `VIDEO_GET_STATUS`):
+  flags as a video stream's; `bytes_done`, `ring_bytes`, `samples_done`,
+  `max_samples` for flow control as there; `decoded`: access units decoded;
+  `shown`: milliseconds of silence played because no sound was decoded yet
+  (the stream ran dry); `dropped`: access units that didn't decode;
+  `shown_pts`: the time being heard; `waiting`: milliseconds of sound decoded
+  and waiting.
+- **Flow control** as a video stream's: 512 KB and 1024 samples not yet
+  decoded. The host sends both streams' samples in time order, as far ahead
+  as both allow.
+
 ---
 
 ## 8. Opcode map
@@ -505,7 +537,7 @@ the GL frame rate.
 | `0x60`–`0x7F` | reserved for fixed-function additions |
 | `0x80`–`0x8F` | programs (§7.10) |
 | `0x90`–`0xBF` | reserved for program additions |
-| `0xC0`–`0xC7` | video (§7.12) |
+| `0xC0`–`0xC7` | video (§7.12) and audio (§7.13) |
 | `0xC8`–`0xEF` | reserved |
 | `0xF0`–`0xFF` | debug and vendor |
 
@@ -653,6 +685,7 @@ In the fixed-function pipeline SRC_ALPHA_SATURATE is approximated by SRC_ALPHA.
 | packet payload | 16384 words (64 KB) |
 | command ring on the RPi | 1 MB |
 | video streams | 2; a stream: 4 MB and 256 samples not yet decoded, 8 decoded frames waiting |
+| audio stream | 1 (stream 3); 512 KB and 1024 samples not yet decoded, 2 s of decoded sound; an access unit at most 16 KB |
 | video textures | width a power of two, 32 … 2048; height a multiple of 16, … 2048 |
 
 The Pico should read the actual values from `INFO` rather than hard-code them.

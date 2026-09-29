@@ -9,6 +9,7 @@
 *.lst
 *.img
 *.map
+*.a
 gpu/shaders.h
 
 # host and experiment build outputs

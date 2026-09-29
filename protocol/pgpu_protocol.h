@@ -113,6 +113,7 @@ enum pgpu_opcode
 	PGPU_OP_VIDEO_DATA	= 0xC1,
 	PGPU_OP_VIDEO_CONTROL	= 0xC2,
 	PGPU_OP_VIDEO_GET_STATUS = 0xC3,
+	PGPU_OP_AUDIO_OPEN	= 0xC4,		/* section 7.13 */
 
 	/* debug */
 	PGPU_OP_DEBUG_SCREENSHOT = 0xF0		/* dump the last presented frame to the RPi's USB log */
@@ -167,6 +168,14 @@ enum pgpu_reply
 #define PGPU_VIDEO_ERROR		(1u << 3)
 #define PGPU_VIDEO_STATUS_WORDS		12
 #define PGPU_VIDEO_TIME_NONE		((int64_t) 0x8000000000000000ull)	/* no time */
+
+/* audio (section 7.13): stream 3, its data, control and status as a video
+   stream's (VIDEO_DATA, VIDEO_CONTROL, VIDEO_GET_STATUS, VIDEO_STATUS) */
+#define PGPU_AUDIO_STREAM		3	/* the audio stream's id */
+#define PGPU_MEDIA_STREAMS		3	/* stream ids 1 .. 3: video 1 and 2, audio 3 */
+#define PGPU_AUDIO_AAC			2	/* AUDIO_OPEN codec: raw AAC access units, config: the AudioSpecificConfig */
+#define PGPU_AUDIO_OPEN_WORDS		4	/* before the config */
+#define PGPU_AUDIO_VOLUME		5	/* VIDEO_CONTROL on the audio stream: arg the volume, percent (0 .. 100) */
 
 enum pgpu_error
 {

@@ -9,8 +9,13 @@
  * PGPU_VIDEO_MP4). It loops: the
  * next round's times follow on, so the RPi's clock just runs.
  *
- * The samples go as far ahead as the RPi's buffer takes (pgpu_video_room),
- * at most AHEAD_US of video ahead of the frame on screen.
+ * Its AAC track, if it has one, goes the same way to the RPi's audio stream
+ * (pgpu_audio_open: decoded there, played on HDMI; the video follows the
+ * sound's clock). Both tracks loop with the same period, the longer track's,
+ * so they stay together round after round.
+ *
+ * The samples go as far ahead as the RPi's buffers take (pgpu_video_room),
+ * at most AHEAD_US ahead of the frame on screen.
  */
 #include <stdio.h>
 #include <ctype.h>
@@ -118,6 +123,23 @@ int main (void)
 		(unsigned) mp4.height, (unsigned) mp4.samples, mp4.duration_us / 1e6,
 		(unsigned) (mp4.size >> 20), mp4.title[0] ? ", title " : "", mp4.title);
 
+	/* its AAC track, from the same file */
+	pgpu_mp4_t amp4;
+	bool audio = mp4.memory ? pgpu_mp4_open_memory_audio (&amp4, mp4.memory, (size_t) mp4.size)
+				: pgpu_mp4_open_audio (&amp4, mp4.read, mp4.ctx, mp4.size);
+	if (audio)
+	{
+		printf ("video: AAC track: %u Hz, %u channels, %u samples, %.2f s\n",
+			(unsigned) amp4.sample_rate, (unsigned) amp4.channels, (unsigned) amp4.samples,
+			amp4.duration_us / 1e6);
+	}
+	else
+	{
+		printf ("video: no AAC track: no sound\n");
+	}
+	/* the loop's period: the longer track's */
+	int64_t period = audio && amp4.duration_us > mp4.duration_us ? amp4.duration_us : mp4.duration_us;
+
 	/* the bottom line: the file's title, in the HUD's capitals */
 	char label[sizeof mp4.title] = "VIDEO";
 	if (mp4.title[0])
@@ -152,8 +174,11 @@ int main (void)
 	unsigned tex_w = 0, tex_h = 0;
 	int64_t pts_base = 0;			/* the round's offset (looping) */
 	bool streaming = false;
-	pgpu_mp4_sample_t sample;
+	pgpu_mp4_sample_t sample, asample;
 	bool have = pgpu_mp4_next (&mp4, &sample);
+	bool ahave = audio && pgpu_mp4_next (&amp4, &asample);
+	int64_t apts_base = 0;
+	unsigned asent = 0;
 	unsigned windows = 0, sent = 0, demux_us = 0;
 	perf_t m;
 	memset (&m, 0, sizeof m);
@@ -188,6 +213,10 @@ int main (void)
 			{
 				pglVideoTexture (texture, STREAM, tex_w, tex_h, mp4.width, mp4.height,
 						 mp4.avcc, mp4.avcc_size);
+				if (audio)		/* the sound, the video's clock */
+				{
+					pgpu_audio_open (STREAM, amp4.asc, amp4.asc_size);
+				}
 				streaming = true;
 			}
 			else			/* the screen changed: the video goes on */
@@ -216,9 +245,26 @@ int main (void)
 			demux_us += (unsigned) (time_us_64 () - t);
 			if (!have && !mp4.error)	/* again, the times going on */
 			{
-				pts_base += mp4.duration_us;
+				pts_base += period;
 				pgpu_mp4_rewind (&mp4);
 				have = pgpu_mp4_next (&mp4, &sample);
+			}
+		}
+		while (   ahave && apts_base + asample.pts_us - shown < AHEAD_US
+		       && pgpu_video_room (PGPU_AUDIO_STREAM) >= asample.size)
+		{
+			if (!pgpu_video_sample_read (PGPU_AUDIO_STREAM, 0, apts_base + asample.pts_us, asample.size,
+						     amp4.read, amp4.ctx, asample.offset))
+			{
+				printf ("video: can't read AAC sample %u\n", (unsigned) amp4.next - 1);
+			}
+			asent++;
+			ahave = pgpu_mp4_next (&amp4, &asample);
+			if (!ahave && !amp4.error)
+			{
+				apts_base += period;
+				pgpu_mp4_rewind (&amp4);
+				ahave = pgpu_mp4_next (&amp4, &asample);
 			}
 		}
 
@@ -252,6 +298,17 @@ int main (void)
 					(unsigned) (pgpu_video_room (STREAM) / 1024), (unsigned) st.flags,
 					(unsigned) e);
 				sent = 0;
+				if (audio)
+				{
+					pgpu_video_status_t as;
+					pgpu_video_get_status (PGPU_AUDIO_STREAM, &as);
+					printf ("video: sound: %u units decoded, %u broken, %u ms queued, %u ms of "
+						"silence, heard %.2f s, %u samples sent, flags %x\n",
+						(unsigned) as.decoded, (unsigned) as.dropped, (unsigned) as.waiting,
+						(unsigned) as.shown, as.shown_pts == PGPU_VIDEO_TIME_NONE ? -1.0
+						: as.shown_pts / 1e6, asent, (unsigned) as.flags);
+					asent = 0;
+				}
 #ifdef PGPU_VIDEO_PATH
 				printf ("video: file: %u reads (%u of whole sectors into aligned memory), %u KB in "
 					"%u ms (%u KB/s while reading); demux %u ms\n", read_calls, read_direct,

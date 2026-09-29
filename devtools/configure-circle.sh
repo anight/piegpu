@@ -35,6 +35,9 @@
 # Circle leaves the top 64 KB of the ARM memory to the app, for the log that
 # survives a restart (devtools/runlog.h).
 #
+# ARM_ALLOW_MULTI_CORE (the Zero 2 W, four cores): the gpu app decodes the
+# audio stream's AAC on core 1 (gpu/audio); the Zero has one core.
+#
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$HERE/..
@@ -47,11 +50,13 @@ case "${1:-zero}" in
 zero)
 	TREE=$ROOT/circle
 	RASPPI=1
+	MULTICORE=
 	PREFIX=$TOOLCHAINS/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi/bin/arm-none-eabi-
 	;;
 zero2)
 	TREE=$ROOT/circle-zero2
 	RASPPI=3
+	MULTICORE="-d ARM_ALLOW_MULTI_CORE"
 	PREFIX=$TOOLCHAINS/arm-gnu-toolchain-15.2.rel1-x86_64-aarch64-none-elf/bin/aarch64-none-elf-
 	;;
 *)
@@ -67,11 +72,11 @@ fi
 cd "$TREE"
 ./configure -r "$RASPPI" -f -p "$PREFIX" \
 	-d HEAP_BLOCK_BUCKET_SIZES=0x40,0x400,0x1000,0x4000,0x10000,0x40000,0x80000,0x100000,0x200000,0x400000,0x800000,0x1000000,0x2000000,0x4000000 \
-	-d PGPU_HEAP_BUCKETS -d MEM_PERSISTENT_SIZE=0x10000
+	-d PGPU_HEAP_BUCKETS -d MEM_PERSISTENT_SIZE=0x10000 $MULTICORE
 ./makeall clean >/dev/null
 MAKE="make -j$JOBS" ./makeall
 # the add-ons the gpu app links (gpu/Makefile: LIBS)
-for addon in addon/SDCard addon/fatfs addon/linux addon/vc4/interface/vcos addon/vc4/vchiq; do
+for addon in addon/SDCard addon/fatfs addon/linux addon/vc4/interface/vcos addon/vc4/vchiq addon/vc4/sound; do
 	make -C "$addon" clean >/dev/null
 	make -C "$addon" -j"$JOBS"
 done

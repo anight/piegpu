@@ -1,6 +1,6 @@
 /*
- * pgpu_mp4.c - see pgpu_mp4.h. ISO/IEC 14496-12 (boxes, sample tables) and
- * 14496-15 (avcC). Everything is read through the callback and checked
+ * pgpu_mp4.c - see pgpu_mp4.h. ISO/IEC 14496-12 (boxes, sample tables),
+ * 14496-15 (avcC), 14496-14 (esds) and 14496-3 (AudioSpecificConfig). Everything is read through the callback and checked
  * against the sizes the file gives; a failed read or a broken table ends the
  * samples (mp4->error).
  */
@@ -120,7 +120,122 @@ static uint32_t entry (pgpu_mp4_t *m, pgpu_mp4_table_t *t, uint32_t i, unsigned 
 	return be32 (t->window + (at - t->window_offset));
 }
 
-static bool video_track (pgpu_mp4_t *m, uint64_t trak, uint64_t trak_end)
+/* an MPEG-4 descriptor's tag and size (the size in 1 to 4 bytes of 7 bits) at
+   *at, within end; *at moves to its payload */
+static bool descriptor (const uint8_t *d, uint32_t *at, uint32_t end, uint8_t *tag, uint32_t *size)
+{
+	if (*at >= end)
+	{
+		return false;
+	}
+	*tag = d[(*at)++];
+	*size = 0;
+	for (int i = 0; i < 4; i++)
+	{
+		if (*at >= end)
+		{
+			return false;
+		}
+		uint8_t b = d[(*at)++];
+		*size = *size << 7 | (b & 0x7F);
+		if (!(b & 0x80))
+		{
+			return *size <= end - *at;
+		}
+	}
+	return false;
+}
+
+/* the esds box's payload: ES_Descriptor, DecoderConfigDescriptor (MPEG-4
+   audio), DecoderSpecificInfo: the AudioSpecificConfig; then its object
+   type, sampling rate and channels */
+static bool read_esds (pgpu_mp4_t *m, uint64_t esds, uint64_t size)
+{
+	uint8_t d[128];
+	if (size < 4 || size > sizeof d || !pgpu_mp4_read (m, esds, d, (uint32_t) size))
+	{
+		return false;
+	}
+	uint32_t at = 4, end = (uint32_t) size, n;	/* (version and flags) */
+	uint8_t tag;
+	if (!descriptor (d, &at, end, &tag, &n) || tag != 0x03 || n < 3)
+	{
+		return false;
+	}
+	end = at + n;
+	uint8_t flags = d[at + 2];
+	at += 3;					/* ES_ID, flags */
+	if (flags & 0x80)
+	{
+		at += 2;				/* dependsOn_ES_ID */
+	}
+	if (flags & 0x40)
+	{
+		if (at >= end)
+		{
+			return false;
+		}
+		at += 1 + d[at];			/* URL */
+	}
+	if (flags & 0x20)
+	{
+		at += 2;				/* OCR_ES_Id */
+	}
+	if (!descriptor (d, &at, end, &tag, &n) || tag != 0x04 || n < 13 || d[at] != 0x40)
+	{
+		return false;				/* (0x40: MPEG-4 audio) */
+	}
+	end = at + n;
+	at += 13;
+	if (!descriptor (d, &at, end, &tag, &n) || tag != 0x05 || n < 2 || n > PGPU_MP4_MAX_ASC)
+	{
+		return false;
+	}
+	memcpy (m->asc, d + at, n);
+	m->asc_size = n;
+
+	/* the AudioSpecificConfig's start: object type (5 bits, 31: 6 more),
+	   sampling frequency index (4 bits, 15: 24 bits of rate), channel
+	   configuration (4 bits) */
+	static const uint32_t Rates[13] = {96000, 88200, 64000, 48000, 44100, 32000, 24000,
+					   22050, 16000, 12000, 11025, 8000, 7350};
+	uint64_t bits = 0;
+	for (uint32_t i = 0; i < 8; i++)
+	{
+		bits = bits << 8 | (i < n ? d[at + i] : 0);
+	}
+	unsigned pos = 64;
+	#define TAKE(k)	(pos -= (k), (uint32_t) (bits >> pos) & ((1u << (k)) - 1))
+	uint32_t object = TAKE (5);
+	if (object == 31)
+	{
+		object = 32 + TAKE (6);
+	}
+	uint32_t index = TAKE (4);
+	uint32_t rate = index == 15 ? TAKE (24) : index < 13 ? Rates[index] : 0;
+	uint32_t channels = TAKE (4);
+	#undef TAKE
+	m->object_type = object;
+	m->sample_rate = rate;
+	m->channels = channels == 7 ? 8 : channels;	/* (7: 7.1) */
+	return rate != 0;
+}
+
+/* the esds in a sample entry's boxes, or inside its wave box (QuickTime) */
+static bool find_esds (pgpu_mp4_t *m, uint64_t start, uint64_t end)
+{
+	uint64_t p, size;
+	if (find (m, start, end, TYPE ('e', 's', 'd', 's'), &p, &size))
+	{
+		return read_esds (m, p, size);
+	}
+	m->error = false;
+	return    find (m, start, end, TYPE ('w', 'a', 'v', 'e'), &p, &size)
+	       && find (m, p, p + size, TYPE ('e', 's', 'd', 's'), &p, &size)
+	       && read_esds (m, p, size);
+}
+
+static bool track (pgpu_mp4_t *m, uint64_t trak, uint64_t trak_end)
 {
 	uint64_t p, size;
 
@@ -159,7 +274,8 @@ static bool video_track (pgpu_mp4_t *m, uint64_t trak, uint64_t trak_end)
 
 	uint8_t h[128];
 	if (   !find (m, mdia, mdia_end, TYPE ('h', 'd', 'l', 'r'), &p, &size) || size < 12
-	    || !pgpu_mp4_read (m, p, h, 12) || be32 (h + 8) != TYPE ('v', 'i', 'd', 'e'))
+	    || !pgpu_mp4_read (m, p, h, 12)
+	    || be32 (h + 8) != (m->audio ? TYPE ('s', 'o', 'u', 'n') : TYPE ('v', 'i', 'd', 'e')))
 	{
 		return false;
 	}
@@ -201,28 +317,50 @@ static bool video_track (pgpu_mp4_t *m, uint64_t trak, uint64_t trak_end)
 	}
 	uint64_t stbl_end = stbl + stbl_size;
 
-	/* stsd: the first entry, avc1 (or avc3), with an avcC */
-	if (   !find (m, stbl, stbl_end, TYPE ('s', 't', 's', 'd'), &p, &size) || size < 8 + 8 + 78
-	    || !pgpu_mp4_read (m, p, h, 8 + 8 + 78))
+	if (m->audio)
 	{
-		return false;
+		/* stsd: the first entry, mp4a: the sample entry (8 bytes), the
+		   sound description (20; QuickTime's version 1 16 more, version 2
+		   36 more), then boxes: the esds */
+		if (   !find (m, stbl, stbl_end, TYPE ('s', 't', 's', 'd'), &p, &size) || size < 8 + 8 + 28
+		    || !pgpu_mp4_read (m, p, h, 8 + 8 + 28))
+		{
+			return false;
+		}
+		uint32_t entry_size = be32 (h + 8), version = be16 (h + 16 + 8);
+		uint32_t fixed = 8 + 28 + (version == 1 ? 16 : version == 2 ? 36 : 0);
+		if (   be32 (h + 12) != TYPE ('m', 'p', '4', 'a')
+		    || entry_size < fixed || entry_size > size - 8
+		    || !find_esds (m, p + 8 + fixed, p + 8 + entry_size))
+		{
+			return false;
+		}
 	}
-	uint32_t entry_size = be32 (h + 8), type = be32 (h + 12);
-	if (   (type != TYPE ('a', 'v', 'c', '1') && type != TYPE ('a', 'v', 'c', '3'))
-	    || entry_size < 8 + 78 || entry_size > size - 8)
+	else
 	{
-		return false;
+		/* stsd: the first entry, avc1 (or avc3), with an avcC */
+		if (   !find (m, stbl, stbl_end, TYPE ('s', 't', 's', 'd'), &p, &size) || size < 8 + 8 + 78
+		    || !pgpu_mp4_read (m, p, h, 8 + 8 + 78))
+		{
+			return false;
+		}
+		uint32_t entry_size = be32 (h + 8), type = be32 (h + 12);
+		if (   (type != TYPE ('a', 'v', 'c', '1') && type != TYPE ('a', 'v', 'c', '3'))
+		    || entry_size < 8 + 78 || entry_size > size - 8)
+		{
+			return false;
+		}
+		m->width = be16 (h + 16 + 24);
+		m->height = be16 (h + 16 + 26);
+		uint64_t entry_start = p + 8;
+		uint64_t avcc;
+		if (   !find (m, entry_start + 8 + 78, entry_start + entry_size, TYPE ('a', 'v', 'c', 'C'), &avcc, &size)
+		    || size < 7 || size > PGPU_MP4_MAX_AVCC || !pgpu_mp4_read (m, avcc, m->avcc, (uint32_t) size))
+		{
+			return false;
+		}
+		m->avcc_size = (uint32_t) size;
 	}
-	m->width = be16 (h + 16 + 24);
-	m->height = be16 (h + 16 + 26);
-	uint64_t entry_start = p + 8;
-	uint64_t avcc;
-	if (   !find (m, entry_start + 8 + 78, entry_start + entry_size, TYPE ('a', 'v', 'c', 'C'), &avcc, &size)
-	    || size < 7 || size > PGPU_MP4_MAX_AVCC || !pgpu_mp4_read (m, avcc, m->avcc, (uint32_t) size))
-	{
-		return false;
-	}
-	m->avcc_size = (uint32_t) size;
 
 	/* the sample tables */
 	if (   !table (m, &m->stts, stbl, stbl_end, TYPE ('s', 't', 't', 's'), 8, 0, NULL)
@@ -299,7 +437,7 @@ static bool open_file (pgpu_mp4_t *m)
 	while (find (m, p, end, TYPE ('t', 'r', 'a', 'k'), &trak, &trak_size))
 	{
 		m->error = false;
-		if (video_track (m, trak, trak + trak_size))
+		if (track (m, trak, trak + trak_size))
 		{
 			pgpu_mp4_rewind (m);
 			return !m->error;
@@ -327,6 +465,27 @@ static bool memory_read (void *ctx, uint64_t offset, void *buffer, uint32_t byte
 bool pgpu_mp4_open_memory (pgpu_mp4_t *m, const void *file, size_t size)
 {
 	memset (m, 0, sizeof *m);
+	m->read = memory_read;
+	m->ctx = m;
+	m->size = size;
+	m->memory = (const uint8_t *) file;
+	return open_file (m);
+}
+
+bool pgpu_mp4_open_audio (pgpu_mp4_t *m, pgpu_read_t read, void *ctx, uint64_t size)
+{
+	memset (m, 0, sizeof *m);
+	m->audio = true;
+	m->read = read;
+	m->ctx = ctx;
+	m->size = size;
+	return open_file (m);
+}
+
+bool pgpu_mp4_open_memory_audio (pgpu_mp4_t *m, const void *file, size_t size)
+{
+	memset (m, 0, sizeof *m);
+	m->audio = true;
 	m->read = memory_read;
 	m->ctx = m;
 	m->size = size;
