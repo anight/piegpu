@@ -59,7 +59,6 @@ typedef struct
 	pgpu_mp4_table_t stts, ctts, stss, stsz, stsc, stco;
 	uint32_t stsz_fixed;			/* all samples this size (then no stsz table) */
 	bool co64;
-	bool ctts_signed;
 
 	/* where pgpu_mp4_next is (runs of the tables) */
 	uint32_t next;				/* the next sample */

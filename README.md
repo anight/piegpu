@@ -382,9 +382,9 @@ libpgpu compiled to WebAssembly (`hosts/web`, Emscripten), their GL commands
 going over the same Web Serial port as the installer's (the PC's serial
 transport; `web/installer/gl.js` moves the bytes). No driver or udev rule is
 needed. Test OpenGL runs `demos/gears.c` (60 fps, render 1.2 ms, as
-`gears_host`); Test video runs `demos/video.c` on the Sintel trailer (854x480
-H.264, Blender Foundation, CC BY 3.0; the MP4's title is the bottom line),
-decoded by the RPi's VideoCore: 24 fps, 0 dropped. Stop restarts the RPi,
+`gears_host`); Test video runs `demos/video.c` on the Big Buck Bunny trailer
+(853x480 H.264, Blender Foundation, CC BY 3.0), decoded by the RPi's
+VideoCore: 25 fps, 0 dropped. Stop restarts the RPi,
 which takes commands from the serial port until then. `make-firmware.sh`
 builds the demos when Emscripten is installed (`EMSDK`, default `~/emsdk`)
 and downloads the trailer (Blender's server doesn't let a page fetch it).

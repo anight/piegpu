@@ -225,16 +225,12 @@ static bool video_track (pgpu_mp4_t *m, uint64_t trak, uint64_t trak_end)
 	m->avcc_size = (uint32_t) size;
 
 	/* the sample tables */
-	uint8_t version = 0;
 	if (   !table (m, &m->stts, stbl, stbl_end, TYPE ('s', 't', 't', 's'), 8, 0, NULL)
 	    || !table (m, &m->stsc, stbl, stbl_end, TYPE ('s', 't', 's', 'c'), 12, 0, NULL))
 	{
 		return false;
 	}
-	if (table (m, &m->ctts, stbl, stbl_end, TYPE ('c', 't', 't', 's'), 8, 0, &version))
-	{
-		m->ctts_signed = version != 0;
-	}
+	table (m, &m->ctts, stbl, stbl_end, TYPE ('c', 't', 't', 's'), 8, 0, NULL);
 	table (m, &m->stss, stbl, stbl_end, TYPE ('s', 't', 's', 's'), 4, 0, NULL);
 	m->co64 = false;
 	if (!table (m, &m->stco, stbl, stbl_end, TYPE ('s', 't', 'c', 'o'), 4, 0, NULL))
@@ -409,7 +405,8 @@ bool pgpu_mp4_next (pgpu_mp4_t *m, pgpu_mp4_sample_t *s)
 			m->ctts_left = entry (m, &m->ctts, ++m->ctts_i, 0);
 		}
 		uint32_t v = entry (m, &m->ctts, m->ctts_i, 1);
-		cts = m->ctts_signed ? (int64_t) (int32_t) v : (int64_t) v;
+		cts = (int32_t) v;	/* signed in version 0 too: QuickTime writes negative
+					   offsets there (with a cslg), as ffmpeg reads them */
 		if (m->ctts_left)
 		{
 			m->ctts_left--;

@@ -510,8 +510,8 @@ async function restartRPi (how)
 // ---- demos on the RPi -----------------------------------------------------------
 
 // the video the Test video button plays (web/installer/make-firmware.sh puts
-// it here: the Sintel trailer, Blender Foundation, CC BY 3.0)
-const TEST_VIDEO = 'videos/sintel_trailer-480p.mp4';
+// it here: the Big Buck Bunny trailer, Blender Foundation, CC BY 3.0)
+const TEST_VIDEO = 'videos/bbb_trailer-480p.mov';
 
 let demo = null;			// the running demo's GLStream
 

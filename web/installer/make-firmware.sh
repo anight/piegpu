@@ -48,13 +48,13 @@ json.dump(manifest, open(os.path.join(out, 'manifest.json'), 'w'), indent=1)
 print('firmware/: piegpu %s for %s' % (version, ', '.join(boards)))
 PY
 
-# the test video (the Test video button): the Sintel trailer, 854x480 H.264,
-# Blender Foundation, CC BY 3.0 (its server doesn't let a page fetch it)
-VIDEO=$HERE/videos/sintel_trailer-480p.mp4
+# the test video (the Test video button): the Big Buck Bunny trailer, 853x480
+# H.264, Blender Foundation, CC BY 3.0 (its server doesn't let a page fetch it)
+VIDEO=$HERE/videos/bbb_trailer-480p.mov
 if [ ! -f "$VIDEO" ]; then
 	mkdir -p "$HERE/videos"
-	curl -sSfL -o "$VIDEO.part" https://download.blender.org/durian/trailer/sintel_trailer-480p.mp4 \
-		&& mv "$VIDEO.part" "$VIDEO" && echo "videos/: the Sintel trailer" \
+	curl -sSfL -o "$VIDEO.part" https://download.blender.org/peach/trailer/trailer_480p.mov \
+		&& mv "$VIDEO.part" "$VIDEO" && echo "videos/: the Big Buck Bunny trailer" \
 		|| echo "videos/: none (the download failed): the page can't test video"
 fi
 
