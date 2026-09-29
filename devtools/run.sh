@@ -1,7 +1,9 @@
 #!/bin/bash
 #
-# Build a Circle app, boot it on the RPi over USB and capture its log. Verified
-# on a Zero (32 bit, kernel.img); a Zero 2 W didn't start over USB here.
+# Build a Circle app, boot it on the RPi over USB and capture its log. It boots
+# the Zero's 32-bit build (kernel.img, devtools/config.txt: arm_64bit=0); a
+# Zero 2 W starts over USB too, with its kernel8.img and arm_64bit=1 (the
+# installer page, or rpiboot -d on such a folder).
 #
 #   devtools/run.sh <app-dir> [log-seconds]   build, boot, capture log (default 10 s, 0 = boot only)
 #   devtools/run.sh --log [log-seconds]        only capture the log of the running app

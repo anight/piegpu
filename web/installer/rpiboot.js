@@ -1,7 +1,7 @@
 // rpiboot.js - boots an RPi over its USB port from the page (WebUSB), as
-// raspberrypi/usbboot's rpiboot does (verified on a Zero; a Zero 2 W took
-// bootcode.bin, then stopped answering): an RPi without a bootable SD card
-// waits in its boot ROM (USB 0a5c:2763) for bootcode.bin; that then asks for
+// raspberrypi/usbboot's rpiboot does (verified on a Zero and a Zero 2 W): an
+// RPi without a bootable SD card waits in its boot ROM (USB 0a5c:2763, the
+// Zero 2 W's 0a5c:2764) for bootcode.bin; that then asks for
 // the rest (config.txt, start.elf, fixup.dat, kernel.img, ...) file
 // by file, and the page serves them from memory.
 //

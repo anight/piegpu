@@ -119,7 +119,7 @@ four); the Zero not yet. How it works: [DEVELOPMENT.md](DEVELOPMENT.md).
    └────────────┘                      │            │──────────►│ monitor │
                                        └─────┬──────┘           └─────────┘
                                              │ "USB" port, one cable:
-                                             │  power; its log; USB boot (a Zero)
+                                             │  power; its log; USB boot
                                              │  GL commands and video from a PC
                                              │    or a page (instead of I2S)
                                              │  the installer (web/installer)
@@ -194,11 +194,14 @@ there. Without the SDO wire it can't tell: set `panel=yes` (see below).
   - the USB monitor (below).
 
   Without a card that holds pico-gpu, many RPi boards can boot over USB from
-  a PC with `rpiboot` (Raspberry Pi's usbboot lists them). Here that's been
-  verified on a Zero:
+  a PC with `rpiboot` (Raspberry Pi's usbboot lists them). Both supported
+  boards do, from the installer page (below) or `rpiboot`:
   - `devtools/run.sh gpu` builds, boots and logs, with the Zero's 32-bit
     build (`make -C gpu`).
-  - A Zero 2 W didn't start over USB here (see the installer).
+  - A Zero 2 W boots its 64-bit build the same way: `rpiboot -d` on a folder
+    with the files of `web/installer/firmware/zero2`, a `config.txt` with
+    `arm_64bit=1` and a `cmdline.txt`. Verified with usbboot's
+    `bootcode.bin` there (its `msd` one), and from the page with Circle's.
   - `devtools/run.sh --log` captures the log of either board.
 
 ### Kernel command line (`cmdline.txt`)
@@ -338,7 +341,7 @@ Then open http://localhost:8765 and follow the steps:
 
 - **A blank or new card:** the RPi's boot ROM finds nothing to start and waits
   for USB. "Start a blank RPi" boots pico-gpu from the page (WebUSB, the
-  rpiboot protocol: `rpiboot.js`; verified on a Zero).
+  rpiboot protocol: `rpiboot.js`; verified on both boards).
   - The page serves both builds, and a `config.txt` whose `[pi02]` lines would
     make a Zero 2 W ask for its 64-bit `kernel8.img` (a Zero asks for
     `kernel.img`).
@@ -346,17 +349,14 @@ Then open http://localhost:8765 and follow the steps:
     board's files only.
   - A card without a FAT file system can be formatted there (one FAT32
     partition).
-- **A Zero 2 W with a blank card:** it didn't start over USB here, even with
-  Raspberry Pi's own `rpiboot`: its boot ROM took `bootcode.bin`, then stopped
-  answering. Raspberry Pi's usbboot does list the Zero 2 W (with its
-  mass-storage-gadget files), so this may be fixable. For now, write its card
-  on a PC instead:
-  - one FAT32 partition, type 0x0c;
-  - the files of `web/installer/firmware/zero2`;
-  - a `config.txt` with `arm_64bit=1`;
-  - a `cmdline.txt`.
-
-  Then Connect and Install work as on a Zero.
+- **If a USB start stalls:** twice, early on, a Zero 2 W's boot ROM took
+  `bootcode.bin` and then stopped answering, with `rpiboot` too; the cause
+  wasn't found. It then answers nothing until it loses power: unplug the
+  cable, plug it back in, and start again. Every start since has worked,
+  from the page and from `rpiboot`, with a blank card in the board or none.
+  Writing the card on a PC works too (verified on a Zero 2 W): one FAT32
+  partition (type 0x0c), the files of `web/installer/firmware/<board>`, a
+  `config.txt` (`arm_64bit=1` for a Zero 2 W) and a `cmdline.txt`.
 - **A card with pico-gpu:** "Connect" (Web Serial). Install again,
   or change the settings only. If pico-gpu doesn't answer (a program left it
   taking GL commands), the page restarts it; "Reset" restarts it any time.

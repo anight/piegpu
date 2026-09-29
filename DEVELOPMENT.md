@@ -213,14 +213,15 @@ look for the `runlog:` lines. Results:
 | Data abort | "crashed", with `except: Synchronous exception (PC 0x818A4, EC 0x25, ISS 0x46, FAR 0xFFFFFFF0, …)` and the stack lines |
 | Hang | "stopped without a word", with `gpu: Hanging, IRQs off` as the last line |
 
-Never make a test crash happen at boot: the board would crash on every start.
-A Zero 2 W doesn't start over USB here, so its card could then only be fixed
-on a PC.
+Never make a test crash happen at boot: the board would crash on every start,
+and its card would have to be written again: from the installer page, after
+starting the board over USB with the card taken out, or on a PC.
 
 ### Not verified yet
 
 - **The Zero (32 bit):** it builds, but no test has run on it. Its firmware
   may clear or use other areas. The address test above is the way to check.
-- **Power-off:** it should give "Run 1 since power-on", on the assumption
-  that the RAM loses the header. After a short power cut, the RAM may keep
-  it, and the report would then say "stopped without a word".
+- **A short power cut:** unplugging the Zero 2 W's USB cable and plugging it
+  back in gave "Run 1 since power-on" (three times, verified). A cut of a
+  fraction of a second might leave the header in the RAM; the report would
+  then say "stopped without a word".
