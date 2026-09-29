@@ -37,12 +37,52 @@ boolean CHDMIOutput::SetSize (unsigned nWidth, unsigned nHeight)
 		return TRUE;
 	}
 
+	// the old framebuffer goes first: Circle's holds a DMA channel (m_DMAChannel,
+	// SCREEN_DMA_BURST_LENGTH), and with the panel's and the link's taken there
+	// may be none for a second one at once (a monitor plugged in at run time
+	// halted the board: "assertion failed: m_nChannel != DMA_CHANNEL_NONE")
+	unsigned nOldWidth = m_pFrameBuffer ? m_nWidth : 0;
+	unsigned nOldHeight = m_nHeight;
+	delete m_pFrameBuffer;
+	m_pFrameBuffer = nullptr;
+
+	boolean bOK = TRUE;
+	CBcmFrameBuffer *pFrameBuffer = NewFrameBuffer (nWidth, nHeight);
+	if (!pFrameBuffer)
+	{
+		bOK = FALSE;
+		if (   nOldWidth == 0
+		    || !(pFrameBuffer = NewFrameBuffer (nOldWidth, nOldHeight)))
+		{
+			m_nWidth = m_nHeight = 0;
+
+			return FALSE;
+		}
+		LOGWARN ("Staying at %ux%u", nOldWidth, nOldHeight);
+		nWidth = nOldWidth;
+		nHeight = nOldHeight;
+	}
+
+	m_pFrameBuffer = pFrameBuffer;
+	m_nWidth = nWidth;
+	m_nHeight = nHeight;
+	m_nShown = 0;
+	m_bFlipped = FALSE;
+	LOGNOTE ("Framebuffer %ux%u RGB565, three pages at %08X", nWidth, nHeight,
+		 m_pFrameBuffer->GetBuffer ());
+
+	return bOK;
+}
+
+// a framebuffer of this size with three pages, or nullptr
+CBcmFrameBuffer *CHDMIOutput::NewFrameBuffer (unsigned nWidth, unsigned nHeight)
+{
 	CBcmFrameBuffer *pFrameBuffer = new CBcmFrameBuffer (nWidth, nHeight, 16, nWidth, Pages * nHeight);
 	if (!pFrameBuffer->Initialize ())
 	{
 		LOGERR ("No %ux%u framebuffer", nWidth, nHeight);
 		delete pFrameBuffer;
-		return FALSE;
+		return nullptr;
 	}
 	if (   pFrameBuffer->GetDepth () != 16
 	    || pFrameBuffer->GetPitch () != nWidth * 2
@@ -53,19 +93,10 @@ boolean CHDMIOutput::SetSize (unsigned nWidth, unsigned nHeight)
 			pFrameBuffer->GetVirtHeight (), pFrameBuffer->GetDepth (), pFrameBuffer->GetPitch (),
 			nWidth, nHeight);
 		delete pFrameBuffer;
-		return FALSE;
+		return nullptr;
 	}
 
-	delete m_pFrameBuffer;
-	m_pFrameBuffer = pFrameBuffer;
-	m_nWidth = nWidth;
-	m_nHeight = nHeight;
-	m_nShown = 0;
-	m_bFlipped = FALSE;
-	LOGNOTE ("Framebuffer %ux%u RGB565, three pages at %08X", nWidth, nHeight,
-		 m_pFrameBuffer->GetBuffer ());
-
-	return TRUE;
+	return pFrameBuffer;
 }
 
 u8 *CHDMIOutput::GetPage (unsigned nPage) const

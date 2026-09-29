@@ -11,7 +11,7 @@
 // while the firmware sets HDMI up again after a hot plug). So frames go out at
 // the monitor's rate, one a refresh, without tearing and without a copy: one
 // page is on screen, one waits for the sync, one is drawn.
-// SetSize allocates a new framebuffer (the firmware replaces the old one).
+// SetSize replaces the framebuffer, the old one first (the firmware has one).
 //
 #ifndef _hdmi_output_h
 #define _hdmi_output_h
@@ -46,6 +46,7 @@ public:
 
 private:
 	u8 *GetPage (unsigned nPage) const;
+	static CBcmFrameBuffer *NewFrameBuffer (unsigned nWidth, unsigned nHeight);
 
 private:
 	CBcmFrameBuffer *m_pFrameBuffer;
