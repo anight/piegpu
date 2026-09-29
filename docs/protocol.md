@@ -229,6 +229,8 @@ Coordinates follow OpenGL:
 - **The screen changes only between frames**: before the first draw of a
   frame. Both of its images are cleared then (a frame without a colour `CLEAR`
   starts from black), and its depth and stencil are undefined until cleared.
+  A host that sends nothing for a second in the middle of a frame is taken
+  to be gone: the RPi drops that frame's draws and changes the screen.
   The GL state does not change: the viewport and scissor box keep their values
   (pgl moves ones that covered the whole screen, [host-library.md](host-library.md#how-pgl-maps-gl-to-the-wire)).
 - After each change the RPi sends `DISPLAY` (§9), and `INFO` gives the new size.

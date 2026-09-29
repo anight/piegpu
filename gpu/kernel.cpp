@@ -19,6 +19,7 @@
 
 #define MAX_PACKETS_PER_LOOP	64
 #define MAX_US_PER_LOOP		1000	// then VCHIQ's tasks (video) get their turn
+#define QUIET_HOST_US		1000000	// no packets mid-frame: the host went away
 
 LOGMODULE ("gpu");
 
@@ -56,6 +57,8 @@ CKernel::CKernel (void)
 	m_pScreen (nullptr),
 	m_GUD (&m_Gadget),
 	m_bOutputPending (FALSE),
+	m_bFrameSeen (FALSE),
+	m_nLastFrame (0),
 	m_USBBulkLink (&m_Gadget),
 	m_USBLink (&m_DevLink),
 	m_Renderer (&m_V3D),
@@ -219,6 +222,10 @@ void CKernel::ApplyOutput (void)
 		if (pScreen == &m_HDMI)
 		{
 			ShowPanelNotice ();		// (the monitor's EDID came)
+			if (!bDesktop && HostIdle ())
+			{
+				ShowSplash (pScreen);	// with the monitor's name now
+			}
 		}
 		SendDisplay ();
 		return;
@@ -247,9 +254,9 @@ void CKernel::ApplyOutput (void)
 	{
 		m_GUD.Start (pScreen);
 	}
-	else if (bWasDesktop)
+	else if (bWasDesktop || HostIdle ())
 	{
-		ShowSplash (pScreen);			// (the desktop's gone: until the next frame)
+		ShowSplash (pScreen);			// (the desktop's gone, or no host draws: until the next frame)
 	}
 
 	// the panel says where the screen is (again when the monitor's EDID comes)
@@ -261,7 +268,13 @@ void CKernel::ApplyOutput (void)
 	SendDisplay ();
 }
 
-// with the screen on HDMI: the panel says so
+// no host draws: none has ended a frame, or not for a second
+boolean CKernel::HostIdle (void) const
+{
+	return !m_bFrameSeen || CTimer::GetClockTicks () - m_nLastFrame > QUIET_HOST_US;
+}
+
+// with the screen on HDMI: the panel says so, and what goes there
 void CKernel::ShowPanelNotice (void)
 {
 	if (!m_bPanelPresent)
@@ -269,20 +282,47 @@ void CKernel::ShowPanelNotice (void)
 		return;
 	}
 
-	// the HDMI signal: its size from the pixel valve, its rate measured
+	// the monitor (its EDID: name, preferred mode), the HDMI signal the
+	// firmware sends (the pixel valve's size, the rate measured; config.txt
+	// sets it at boot) and the screen GL renders into, which the firmware
+	// scales to the signal
 	const THDMIState &M = m_Monitor.GetState ();
-	CString Line;
+	CString Model, Native, Signal, Render;
 	if (!M.bConnected)
 	{
-		Line = "HDMI no monitor";
+		Model = "none";
+		Native = "-";
+		Signal = "-";
 	}
 	else
 	{
+		if (!M.bEDID)
+		{
+			Model = "(reading EDID)";
+			Native = "-";
+		}
+		else
+		{
+			Model = M.Name[0] ? M.Name : "(no name)";
+			Native.Format ("%ux%u@%uHz", M.nWidth, M.nHeight, (M.nRefreshMilliHz + 500) / 1000);
+		}
 		unsigned nRefresh = m_HDMI.MeasureRefresh ();
-		Line.Format ("HDMI %ux%u@%uHz", M.nSignalWidth, M.nSignalHeight, (nRefresh + 500) / 1000);
+		Signal.Format ("%ux%u@%uHz", M.nSignalWidth, M.nSignalHeight, (nRefresh + 500) / 1000);
 	}
-	ShowText (&m_Panel, Line, "", "");
-	LOGNOTE ("Panel: %s", (const char *) Line);
+	Render.Format ("%ux%u", m_HDMI.GetWidth (), m_HDMI.GetHeight ());
+
+	const char *Label[] = {"Monitor:", "Native resolution:", "HDMI resolution:", "Render resolution:"};
+	const char *Value[] = {Model, Native, Signal, Render};
+	CString Lines[4];
+	const char *pLines[4];
+	for (unsigned i = 0; i < 4; i++)
+	{
+		Lines[i].Format ("%-19s%s", Label[i], Value[i]);
+		pLines[i] = Lines[i];
+	}
+	ShowLines (&m_Panel, pLines, 4);
+	LOGNOTE ("Panel: monitor %s, native %s, HDMI %s, render %s", (const char *) Model,
+		 (const char *) Native, (const char *) Signal, (const char *) Render);
 }
 
 // the DISPLAY reply (docs/protocol.md 9)
@@ -342,16 +382,18 @@ TShutdownMode CKernel::Run (void)
 	LOGNOTE ("Screen: %ux%u on %s", nWidth, nHeight, pOutput == &m_HDMI ? "HDMI" : "the panel");
 	m_pScreen = pOutput;
 	m_GUD.SetScreen (nWidth, nHeight);
-	ShowSplash (pOutput);
-	if (pOutput == &m_HDMI)
-	{
-		ShowPanelNotice ();
-	}
 
 	if (   !m_V3D.Initialize ()
 	    || !m_Renderer.Initialize (pOutput))
 	{
 		LOGPANIC ("V3D init failed");
+	}
+	// after the renderer's start, which clears its buffers (on HDMI the
+	// framebuffer's pages)
+	ShowSplash (pOutput);
+	if (pOutput == &m_HDMI)
+	{
+		ShowPanelNotice ();
 	}
 	m_Commands.Reset ();
 	m_Commands.InitializeVideo ();
@@ -377,6 +419,7 @@ TShutdownMode CKernel::Run (void)
 	unsigned nLastReport = m_Timer.GetUptime ();
 	unsigned nWindowStart = CTimer::GetClockTicks ();	// microseconds
 	unsigned nBusyUs = 0;			// receiving and executing packets
+	unsigned nLastPacket = CTimer::GetClockTicks ();
 	while (1)
 	{
 		m_Scheduler.Yield ();			// VCHIQ's tasks
@@ -424,15 +467,21 @@ TShutdownMode CKernel::Run (void)
 			else
 			{
 				m_Commands.Execute (nHeader, pPayload);
-				if (m_bOutputPending && PGPU_HEADER_OP (nHeader) == PGPU_OP_FRAME_END)
+				if (PGPU_HEADER_OP (nHeader) == PGPU_OP_FRAME_END)
 				{
-					ApplyOutput ();
+					m_bFrameSeen = TRUE;
+					m_nLastFrame = CTimer::GetClockTicks ();
+					if (m_bOutputPending)
+					{
+						ApplyOutput ();
+					}
 				}
 			}
 		}
 		if (i)
 		{
 			nBusyUs += CTimer::GetClockTicks () - nLoopStart;
+			nLastPacket = CTimer::GetClockTicks ();
 		}
 
 		m_Commands.UpdateVideo ();
@@ -446,6 +495,14 @@ TShutdownMode CKernel::Run (void)
 		if (m_GUD.Update (m_pScreen))
 		{
 			m_bOutputPending = TRUE;
+		}
+		// a screen change waits for the frame's end, but not for a host
+		// that went quiet in its middle (killed, say): that frame is dropped
+		if (   m_bOutputPending && !m_Commands.IsBetweenFrames ()
+		    && CTimer::GetClockTicks () - nLastPacket > QUIET_HOST_US)
+		{
+			LOGNOTE ("The host went quiet in the middle of a frame: dropped for the new screen");
+			m_Commands.AbandonFrame ();
 		}
 		if (m_bOutputPending && m_Commands.IsBetweenFrames ())
 		{
@@ -568,9 +625,159 @@ void CKernel::DumpScreenshot (void)
 	m_DevLink.Update ();
 }
 
+// the idle screen: what piegpu is, where its screen is and what it waits
+// for. Laid out for 320x240 and scaled by a whole factor (the panel: 1,
+// 1024x600: 2, 1920x1080: 4); it stays until the host's first frame
 void CKernel::ShowSplash (COutput *pOutput)
 {
-	ShowText (pOutput, "piegpu", "waiting for the host", "build " __TIME__);
+	const THDMIState &M = m_Monitor.GetState ();
+	unsigned nWidth = pOutput->GetWidth (), nHeight = pOutput->GetHeight ();
+
+	CString Status, Monitor, Render, Board, Clocks, Build;
+	if (pOutput == &m_HDMI)
+	{
+		if (M.bConnected)
+		{
+			unsigned nRefresh = m_HDMI.MeasureRefresh ();
+			Status.Format ("HDMI %ux%u@%uHz ready", M.nSignalWidth, M.nSignalHeight,
+				       (nRefresh + 500) / 1000);
+		}
+		else
+		{
+			Status = "HDMI ready, no monitor";
+		}
+	}
+	else
+	{
+		Status.Format ("Panel %ux%u ready", nWidth, nHeight);
+	}
+	if (pOutput != &m_HDMI)
+	{
+		Monitor = "ST7789";			// the splash is on the panel
+	}
+	else if (!M.bConnected)
+	{
+		Monitor = "none";
+	}
+	else if (!M.bEDID)
+	{
+		Monitor = "(reading EDID)";
+	}
+	else
+	{
+		Monitor.Format ("%s %ux%u@%uHz", M.Name[0] ? M.Name : "(no name)", M.nWidth, M.nHeight,
+				(M.nRefreshMilliHz + 500) / 1000);
+	}
+	Render.Format ("%ux%u", nWidth, nHeight);
+	Board = CMachineInfo::Get ()->GetMachineName ();
+	Clocks.Format ("ARM %u MHz, V3D %u MHz", m_nARMClock / 1000000,
+		       CMachineInfo::Get ()->GetClockRate (5) / 1000000);	// (5: the V3D's clock id)
+	const char *pHost = m_HostMode == HostUSB ? "USB (host=usb)"
+			  : m_HostMode == HostI2S ? "I2S (host=i2s)" : "I2S or USB (host=auto)";
+	Build = GetBuildVersion ();
+
+	const char *Label[] = {"Monitor:", "Render:", "Board:", "Clocks:", "Host:", "Build:"};
+	const char *Value[] = {Monitor, Render, Board, Clocks, pHost, Build};
+	const unsigned Lines = sizeof Label / sizeof Label[0];
+
+	C2DGraphics Graphics (pOutput->GetDisplay ());
+	if (!Graphics.Initialize ())
+	{
+		return;
+	}
+	unsigned k = nWidth / 320 < nHeight / 240 ? nWidth / 320 : nHeight / 240;
+	k = k ? k : 1;
+	unsigned x0 = (nWidth - 320 * k) / 2, y0 = (nHeight - 240 * k) / 2;
+	Graphics.ClearScreen (COLOR2D (0, 0, 64));
+
+	// in 320x240 units: the title, the status, the block of labelled lines
+	// (left-aligned, centred as a block), what it waits for
+	unsigned y = 18;
+	DrawScaledText (Graphics, x0, y0, k, 160, y, TRUE, COLOR2D (255, 255, 255), "piegpu", Font12x22);
+	y += 30;
+	DrawScaledText (Graphics, x0, y0, k, 160, y, TRUE, COLOR2D (120, 255, 120), Status, Font8x16);
+	y += 28;
+	CString Line[Lines];
+	unsigned nChars = 0;
+	for (unsigned i = 0; i < Lines; i++)
+	{
+		Line[i].Format ("%-9s%s", Label[i], Value[i]);
+		nChars = Line[i].GetLength () > nChars ? Line[i].GetLength () : nChars;
+	}
+	unsigned xBlock = nChars * 8 < 320 ? (320 - nChars * 8) / 2 : 0;
+	for (unsigned i = 0; i < Lines; i++, y += 18)
+	{
+		DrawScaledText (Graphics, x0, y0, k, xBlock, y, FALSE, COLOR2D (255, 255, 255), Line[i], Font8x16);
+	}
+	y += 10;
+	DrawScaledText (Graphics, x0, y0, k, 160, y, TRUE, COLOR2D (160, 160, 160),
+			"waiting for OpenGL ES or video", Font8x16);
+	Graphics.UpdateDisplay ();
+	pOutput->WaitIdle ();
+	LOGNOTE ("Splash on %s: %s", pOutput == &m_HDMI ? "HDMI" : "the panel", (const char *) Status);
+}
+
+// text at (x, y) of a 320x240 layout (centred on x, or from it), every font
+// pixel drawn as a k x k square at (x0, y0) + k * (x, y)
+void CKernel::DrawScaledText (C2DGraphics &Graphics, unsigned x0, unsigned y0, unsigned k,
+			      unsigned x, unsigned y, boolean bCentre, T2DColor Color,
+			      const char *pText, const TFont &rFont)
+{
+	CCharGenerator Font (rFont);
+	unsigned nChars = strlen (pText);
+	if (bCentre)
+	{
+		unsigned nWidth = nChars * Font.GetCharWidth ();
+		x = nWidth < 2 * x ? x - nWidth / 2 : 0;
+	}
+	for (unsigned i = 0; i < nChars; i++)
+	{
+		for (unsigned fy = 0; fy < Font.GetUnderline (); fy++)
+		{
+			CCharGenerator::TPixelLine Line = Font.GetPixelLine (pText[i], fy);
+			for (unsigned fx = 0; fx < Font.GetCharWidth (); fx++)
+			{
+				if (Font.GetPixel (fx, Line))
+				{
+					unsigned px = x0 + k * (x + i * Font.GetCharWidth () + fx);
+					unsigned py = y0 + k * (y + fy);
+					if (px + k <= Graphics.GetWidth () && py + k <= Graphics.GetHeight ())
+					{
+						Graphics.DrawRect (px, py, k, k, Color);
+					}
+				}
+			}
+		}
+	}
+}
+
+// lines in one font and colour, as a left-aligned block in the middle of an
+// output (not while it shows frames)
+void CKernel::ShowLines (COutput *pOutput, const char *const *ppLines, unsigned nLines)
+{
+	C2DGraphics Graphics (pOutput->GetDisplay ());
+	if (!Graphics.Initialize ())
+	{
+		return;
+	}
+
+	const unsigned CharWidth = 8, LineHeight = 20;		// Font8x16, spaced
+	unsigned nChars = 0;
+	for (unsigned i = 0; i < nLines; i++)
+	{
+		unsigned n = strlen (ppLines[i]);
+		nChars = n > nChars ? n : nChars;
+	}
+	unsigned nBlock = nChars * CharWidth;
+	unsigned x = nBlock < Graphics.GetWidth () ? (Graphics.GetWidth () - nBlock) / 2 : 0;
+	unsigned y = (Graphics.GetHeight () - nLines * LineHeight) / 2;
+	Graphics.ClearScreen (COLOR2D (0, 0, 64));
+	for (unsigned i = 0; i < nLines; i++)
+	{
+		Graphics.DrawText (x, y + i * LineHeight, COLOR2D (255, 255, 255), ppLines[i]);
+	}
+	Graphics.UpdateDisplay ();
+	pOutput->WaitIdle ();
 }
 
 // a title and two lines in the middle of an output (not while it shows frames)

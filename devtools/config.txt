@@ -21,8 +21,9 @@ max_framebuffers=2
 otg_mode=1
 
 [all]
-# piegpu: memory for the VideoCore (firmware OpenGL ES needs it)
-gpu_mem=128
+# piegpu: memory for the VideoCore: the framebuffer (up to 1920x1200, three
+# pages) and the video decoder (128 MB left it out of resources at 1080p)
+gpu_mem=192
 # piegpu: core clock 300 MHz so that SPI0 can run at 75 MHz (300 / 4)
 core_freq=300
 core_freq_min=300
@@ -31,6 +32,11 @@ core_freq_min=300
 # watches the hot-plug line itself. No overscan borders.
 hdmi_force_hotplug=1
 disable_overscan=1
+# piegpu: the framebuffer holds three pages of a screen up to 1920x1200.
+# Without these the firmware stopped answering (a mailbox call never
+# returned) once a 1920x1080 screen (1920x3240 in all) was set up.
+max_framebuffer_width=2048
+max_framebuffer_height=4096
 # HDMI mode: the firmware picks it at boot and the RPi can't change it later
 # (the gpu app sizes its screen from the EDID; the firmware scales). By
 # default it prefers TV (CEA) modes: for the 1024x600 monitor it sent 720x576

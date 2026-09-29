@@ -20,4 +20,7 @@ extern const char g_BuildInfo[];	// with the framing
 // the line itself (without the framing)
 const char *GetBuildInfo (void);
 
+// the version and build time alone: "<git describe> <UTC>"
+const char *GetBuildVersion (void);
+
 #endif

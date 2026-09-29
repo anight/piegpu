@@ -67,6 +67,10 @@ public:
 	///	    (the screen may change size now)
 	boolean IsBetweenFrames (void) const;
 
+	/// \brief Drop the frame being drawn (a host that went quiet in the middle
+	///	   of one: the screen may change now)
+	void AbandonFrame (void);
+
 	/// \brief The renderer's screen has changed (another size or output)
 	void ScreenChanged (void);
 

@@ -11,7 +11,7 @@
 #define PIN_FRAME		26
 
 #define BIN_CL_SIZE		(512 * 1024)
-#define RENDER_CL_SIZE		(16 * 1024)
+#define RENDER_CL_SIZE		(64 + MAX_TILES * 43)	// 43 bytes a tile at most: loads, sublist, stores
 #define COPY_CL_SIZE		(12 * 1024)	// 11 bytes a tile, 2048x2048
 #define TILE_ALLOC_SIZE		(4 * 1024 * 1024)
 #define OVERFLOW_SIZE		(1 * 1024 * 1024)

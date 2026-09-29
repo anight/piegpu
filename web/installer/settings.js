@@ -43,8 +43,9 @@ export function makeConfig (s, board = 'zero')
 				: `# piegpu on a ${BOARDS[board]} (written by the installer page)`,
 		...(board === 'zero2' ? ['# 64 bit: the firmware starts kernel8.img', 'arm_64bit=1', ...V3D_400] : ['arm_64bit=0']),
 		'initial_turbo=0',
-		'# memory for the VideoCore (its video decoder)',
-		'gpu_mem=128',
+		'# memory for the VideoCore: the framebuffer (up to 1920x1200, three',
+		'# pages) and the video decoder (128 MB left it out of resources at 1080p)',
+		'gpu_mem=192',
 		'# core clock 300 MHz: the panel\'s SPI runs at 75 MHz (300 / 4)',
 		'core_freq=300',
 		'core_freq_min=300',
@@ -52,6 +53,10 @@ export function makeConfig (s, board = 'zero')
 		'# a picture (piegpu watches the hot-plug line); no overscan borders',
 		'hdmi_force_hotplug=1',
 		'disable_overscan=1',
+		'# the framebuffer: three pages of a screen up to 1920x1200 (without these',
+		'# the firmware stopped answering at 1920x1080, 1920x3240 in all)',
+		'max_framebuffer_width=2048',
+		'max_framebuffer_height=4096',
 	];
 	if (s.hdmiMode === 'monitor')
 	{

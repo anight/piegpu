@@ -33,3 +33,8 @@ const char *GetBuildInfo (void)
 
 	return Line;
 }
+
+const char *GetBuildVersion (void)
+{
+	return PGPU_VERSION " " PGPU_BUILT;
+}

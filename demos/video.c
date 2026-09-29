@@ -165,8 +165,13 @@ int main (void)
 		   video goes on */
 		if (screen_update ("video", vp))
 		{
-			tex_w = 32;			/* a power of two, the screen's width or more */
-			while (tex_w < (unsigned) vp[2])
+			/* a power of two, the screen's width or more, but not above the
+			   video's: a larger texture shows no more detail and costs the
+			   VideoCore's memory (at 1920x1080, a 2048-wide one left the
+			   decoder out of resources with gpu_mem=128) and the GPU's time */
+			unsigned want = (unsigned) vp[2] < mp4.width ? (unsigned) vp[2] : mp4.width;
+			tex_w = 32;
+			while (tex_w < want)
 			{
 				tex_w *= 2;
 			}

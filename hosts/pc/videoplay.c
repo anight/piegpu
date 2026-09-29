@@ -156,10 +156,12 @@ int main (int argc, char **argv)
 	unsigned screen_w, screen_h;
 	pglGetScreenSize (&screen_w, &screen_h);
 
-	/* the texture: a power-of-two width (the video texture's rule), the
-	   video's shape (height a multiple of 16); the quad letterboxed */
+	/* the texture: a power-of-two width (the video texture's rule), at least
+	   the screen's or the video's width, whichever is smaller; the video's
+	   shape (height a multiple of 16); the quad letterboxed */
+	unsigned want = screen_w < mp4.width ? screen_w : mp4.width;
 	unsigned tex_w = 32;
-	while (tex_w < screen_w)
+	while (tex_w < want)
 	{
 		tex_w *= 2;
 	}

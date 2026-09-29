@@ -12,6 +12,9 @@
 #include <circle/logger.h>
 #include <circle/sched/scheduler.h>
 #include <circle/types.h>
+#include <circle/2dgraphics.h>
+#include <circle/chargenerator.h>
+#include <circle/font.h>
 #include <devlink.h>
 #include <runlog.h>
 #include <pgpugadget.h>
@@ -52,9 +55,14 @@ private:
 	void ChooseOutput (COutput **ppOutput, unsigned *pWidth, unsigned *pHeight);
 	void HDMISize (unsigned *pWidth, unsigned *pHeight);
 	void ApplyOutput (void);
+	boolean HostIdle (void) const;
 	void SendDisplay (boolean bSend = TRUE);
 	void ShowText (COutput *pOutput, const char *pTitle, const char *pLine1, const char *pLine2);
+	void ShowLines (COutput *pOutput, const char *const *ppLines, unsigned nLines);
 	void ShowSplash (COutput *pOutput);
+	void DrawScaledText (C2DGraphics &Graphics, unsigned x0, unsigned y0, unsigned k,
+			     unsigned x, unsigned y, boolean bCentre, T2DColor Color,
+			     const char *pText, const TFont &rFont);
 	void ShowPanelNotice (void);
 	static u32 GetThrottled (void);
 	void DumpScreenshot (void);
@@ -99,6 +107,8 @@ private:
 	CGUDDisplay		m_GUD;			// a PC's desktop on the screen (a USB monitor)
 	COffscreenOutput	m_Offscreen;		// the GL frames' while the desktop shows
 	boolean			m_bOutputPending;	// to be chosen again between frames
+	boolean			m_bFrameSeen;		// a host's FRAME_END since boot
+	unsigned		m_nLastFrame;		// its time (CTimer::GetClockTicks)
 	CV3D			m_V3D;
 	CI2SLink		m_I2SLink;		// commands from the Pico
 	CUSBBulkLink		m_USBBulkLink;		// commands from a PC over USB: the GL interface (libusb)

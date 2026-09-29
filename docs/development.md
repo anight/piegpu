@@ -39,7 +39,10 @@ model is named below, the fact was measured on that one.
 - **Jobs:** each render target's draws are one V3D job (binning, then rendering
   64×64 tiles). Colour is loaded from memory unless cleared; depth and stencil
   are stored after every job (T-format, about 80 µs at 320×240) and loaded
-  unless cleared. A frame that switches targets renders several jobs.
+  unless cleared. A frame that switches targets renders several jobs. The
+  rendering list takes up to 43 bytes a tile, and its buffer is sized for the
+  largest screen's 32×32 tiles (a fixed 16 KB overflowed at 1920×1080: 510
+  tiles).
 - **Texture targets** are level 0 of a texture, in its tiled layout (T or LT
   RGBA8888, the tile buffer's format), not y-flipped: rows in GL order.
 - **Stencil:** every fragment shader writes the three TLB stencil setup words
@@ -89,6 +92,19 @@ model is named below, the fact was measured on that one.
   where it hung isn't known), and since the change it hasn't. The video demo
   on 1024×600 went from 38–51 to 57–60 fps. A page flip is still a firmware call
   (`SetVirtualOffset`).
+- **The firmware's framebuffer limits:** three pages of a 1920×1080 screen
+  make a framebuffer 1920×3240. With the firmware's default limits the
+  allocation succeeded, but the firmware then stopped answering: the next
+  mailbox call (the per-second ARM clock query) never returned, and the
+  watchdog restarted the board, at every boot while that monitor was
+  connected (measured on a Zero 2 W with a 1920×1080 monitor; 1024×1800
+  worked). `config.txt` sets `max_framebuffer_width=2048` and
+  `max_framebuffer_height=4096` (room for three pages of 1920×1200); the
+  firmware's defaults aren't documented. Circle's mailbox calls have no
+  timeout, so any firmware call hangs the same way.
+- **`gpu_mem=192`:** with 128 MB, a 1920×1080 framebuffer left the video
+  decoder "out of resources" (`MMAL_ENOSPC`, no frames) for a 2048×1152
+  texture; 192 MB plays it.
 - **Screen size on HDMI** (`gpu/kernel.cpp`, `gpu/display/`; the options
   `output=`, `panel=`, `hdmi_pixels=` are in the README's "Kernel command
   line"): the monitor's preferred mode (native: 1024×600 for a 1024×600
@@ -115,6 +131,25 @@ model is named below, the fact was measured on that one.
   plug from 2 s on (the firmware reads it too, over the same bus, and sets HDMI
   up again); while a connected monitor doesn't answer, it's tried again every
   second.
+- **The panel while the screen is on HDMI** (`ShowPanelNotice`), four
+  lines: Monitor and Native resolution (the monitor's EDID: its name and
+  preferred mode), HDMI resolution (the signal the firmware sends: the pixel
+  valve's size, the refresh measured; `config.txt` sets it at boot, so a mode
+  forced there stays whatever monitor is plugged in) and Render resolution
+  (the screen GL draws into, which the firmware scales to the signal).
+- **The splash** (`ShowSplash`) on the screen, panel or HDMI, while no host
+  draws (none has ended a frame, or not for a second): at boot, after a
+  screen change, when a monitor's EDID comes and when a PC's desktop lets go
+  of the screen. It says what the screen is ("HDMI 1920x1080@60Hz ready"),
+  the monitor, the render size, the board, its clocks, the host setting and
+  the build. It's laid out for 320x240 and every font pixel drawn as a k × k
+  square (the panel 1, 1024x600 2, 1920x1080 4); the host's first frame
+  replaces it. At boot it's drawn after the renderer's start, which clears
+  the framebuffer's pages.
+- **A screen change waits for the frame's end** (`IsBetweenFrames`), and a
+  host killed in the middle of a frame never sends it: after a second with no
+  packets mid-frame the frame is dropped (`CCommands::AbandonFrame`) and the
+  screen changes.
 - **HDMI mode:** the firmware chooses it at boot and doesn't change it later.
   `config.txt` has `hdmi_force_hotplug=1`, so that HDMI stays on (640×480)
   when the RPi boots without a monitor. By default the firmware prefers TV

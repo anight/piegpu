@@ -364,6 +364,13 @@ boolean CCommands::IsBetweenFrames (void) const
 	       && (m_nFramebuffer != 0 || m_pRenderer->GetDraws () == 0);
 }
 
+void CCommands::AbandonFrame (void)
+{
+	m_pRenderer->DiscardFrame ();
+	EndJob ();
+	m_bPanelDrawn = FALSE;
+}
+
 void CCommands::ScreenChanged (void)
 {
 	m_bPanelZSValid = FALSE;
