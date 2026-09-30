@@ -137,7 +137,7 @@ four); the Zero not yet. How it works:
                                              │  GL commands and media from a PC
                                              │    or a page (instead of I2S)
                                              │  the installer (web/installer)
-                                             │  a monitor for the PC's desktop
+                                             │  a monitor for the PC's desktop (gud=on)
                                              ▼
                                             PC
 ```
@@ -205,7 +205,7 @@ there. Without the SDO wire it can't tell: set `panel=yes` (see below).
   - the RPi's log;
   - the installer (below);
   - GL commands and media (video, sound) from a PC program or a page (below);
-  - the USB monitor (below).
+  - the USB monitor, with `gud=on` (below).
 
   Without a card that holds piegpu, many RPi boards can boot over USB from
   a PC with `rpiboot` (Raspberry Pi's usbboot lists them). Both supported
@@ -226,8 +226,8 @@ there. Without the SDO wire it can't tell: set `panel=yes` (see below).
 |---|---|
 | `host=auto` | the default: GL commands from a PC over USB once it opens its stream (until the RPi restarts), else from I2S |
 | `host=usb`, `host=i2s` | only a PC over USB, or only a Pico / ESP32-P4 over I2S (the log, the installer and the USB monitor work either way) |
-| `gud=on` | the default: the RPi is also a USB monitor for a Linux PC (below) |
-| `gud=off` | no monitor for a PC's desktop to take (the serial port and the GL interface stay) |
+| `gud=off` | the default: no monitor for a PC's desktop to take (the serial port and the GL interface stay) |
+| `gud=on` | the RPi is also a USB monitor for a Linux PC (below) |
 | `output=auto` | the default: HDMI while a monitor is connected, else the panel |
 | `output=panel`, `output=hdmi` | always this output |
 | `panel=auto` | the default: a panel if one answers on SDO (MISO) at boot |
@@ -382,7 +382,7 @@ USB port, with its settings. The settings are the command line above
 - where the GL commands come from;
 - the screen and the panel;
 - the HDMI mode;
-- the USB monitor.
+- the USB monitor (off unless chosen).
 
 The page needs Chrome or Edge on a desktop (WebUSB and Web Serial) and a
 secure origin (https, or `localhost`).
@@ -454,15 +454,16 @@ servers don't let a page fetch them).
 
 ## The RPi as a USB monitor for Linux
 
-Over its USB port the RPi is also a monitor for a Linux PC, with no driver
-to install: GUD, the kernel's Generic USB Display (`gud`).
+With `gud=on` (off by default) the RPi is also a monitor for a Linux PC over
+its USB port, with no driver to install: GUD, the kernel's Generic USB
+Display (`gud`).
 
 The RPi is one USB device, `1d50:614d` (the ID GUD's driver binds to), with
 three functions (`devtools/pgpugadget.h`):
 
 - the serial port (interfaces 0 and 1: the log, the installer, a GL stream);
 - the GL interface (2);
-- the display (3). `gud=off` leaves it out.
+- the display (3), with `gud=on` only (the default, `gud=off`, leaves it out).
 
 While the PC has the display on, its desktop takes the RPi's screen (the
 panel, or HDMI). A GL host's frames are rendered off screen until the PC turns
@@ -482,5 +483,5 @@ the display off (`gpu/display/gud_display`).
 - Don't unplug or reboot the RPi while GNOME uses it as a monitor: GNOME
   Shell 50.1 crashed once when it came back within seconds (it keeps the old
   device, and the new one had the same `/dev/dri` name). For a desktop that
-  must leave it alone, set `gud=off` on the RPi, or tag it in udev: `SUBSYSTEM=="drm", KERNEL=="card*",
+  must leave it alone, keep `gud=off` on the RPi (the default), or tag it in udev: `SUBSYSTEM=="drm", KERNEL=="card*",
   ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="614d", TAG+="mutter-device-ignore"`.

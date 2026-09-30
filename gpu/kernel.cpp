@@ -49,7 +49,7 @@ CKernel::CKernel (void)
 	m_VCHIQ (CMemorySystem::Get (), &m_Interrupt),
 	m_OutputMode (OutputAuto),
 	m_HostMode (HostAuto),
-	m_bGUD (TRUE),
+	m_bGUD (FALSE),
 	m_bJobCheck (TRUE),
 	m_nARMClock (0),
 	m_bPanelPresent (TRUE),
@@ -84,7 +84,7 @@ boolean CKernel::Initialize (void)
 	const char *pOutput = m_Options.GetAppOptionString ("output", "auto");
 	m_OutputMode =   strcmp (pOutput, "panel") == 0 ? OutputPanel
 		       : strcmp (pOutput, "hdmi") == 0 ? OutputHDMI : OutputAuto;
-	m_bGUD = strcmp (m_Options.GetAppOptionString ("gud", "on"), "off") != 0;
+	m_bGUD = strcmp (m_Options.GetAppOptionString ("gud", "off"), "on") == 0;	// (off by default)
 	m_bJobCheck = strcmp (m_Options.GetAppOptionString ("clcheck", "on"), "off") != 0;
 	m_nHDMIPixels = m_Options.GetAppOptionDecimal ("hdmi_pixels", m_nHDMIPixels);
 	m_Audio.SetDefaultVolume (m_Options.GetAppOptionDecimal ("volume", 10));	// percent

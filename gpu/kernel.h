@@ -127,7 +127,7 @@ private:
 	// its stream, else I2S), usb (only a PC), i2s (only a Pico or ESP32-P4)
 	enum THostMode {HostAuto, HostUSB, HostI2S};
 	THostMode		m_HostMode;
-	boolean			m_bGUD;			// gud=off: no USB monitor
+	boolean			m_bGUD;			// gud=on: a USB monitor (off by default)
 	boolean			m_bJobCheck;		// clcheck=on (the default): control lists checked (v3dcheck.h)
 	unsigned		m_nARMClock;		// the rate last logged, Hz
 	boolean			m_bPanelPresent;

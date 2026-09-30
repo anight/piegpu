@@ -4,7 +4,7 @@
 
 export const DEFAULTS = {
 	host: 'auto',		// GL commands from: auto (a PC over USB once it streams, else I2S), usb, i2s
-	gud: 'on',		// on: a USB monitor for a PC's desktop (GUD); off: none
+	gud: 'off',		// on: a USB monitor for a PC's desktop (GUD); off: none
 	output: 'auto',		// auto: HDMI while a monitor is connected, else the panel
 	panel: 'auto',		// auto: detect over SDO (MISO); yes; none
 	hdmiPixels: 0,		// 0: the monitor's native resolution
