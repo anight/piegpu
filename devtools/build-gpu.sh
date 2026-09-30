@@ -1,49 +1,84 @@
 #!/bin/bash
 #
-# Build the gpu app for a board (Circle configured by devtools/configure-
-# circle.sh first):
+# Build the gpu app for a board, with CMake on Circle's CMake build (circle,
+# the submodule: piegpu's fork, github.com/anight/circle, branch piegpu):
 #
 #   devtools/build-gpu.sh [zero|zero2|all]
 #
-#   zero    Pi Zero / Zero W, 32 bit: gpu/kernel.img (in place, as make -C gpu)
-#   zero2   Pi Zero 2 W, 64 bit: build/zero2/gpu/kernel8.img
+#   zero    Pi Zero / Zero W, 32 bit: build/zero/kernel.img
+#   zero2   Pi Zero 2 W, 64 bit: build/zero2/kernel8.img
 #
-# (The boards piegpu supports for now; more RPi boards are to come.)
+# (The boards piegpu supports for now; more RPi boards are to come.) One
+# Circle tree serves both: each board has its build directory, configured
+# here the first time (delete it to configure again). The submodule and
+# Circle's boot files (circle/boot: bootcode.bin, start.elf, fixup.dat) are
+# fetched if they aren't there.
 #
-# Circle's builds put the objects next to the sources, so the Zero 2 W's is
-# made in a copy of them (build/zero2: gpu, drivers, devtools, protocol,
-# synced before each build; its objects stay for the next one).
+# Toolchains: Arm GNU 15.2 in ~/toolchains (TOOLCHAINS): arm-none-eabi for
+# the Zero, aarch64-none-elf for the Zero 2 W.
+#
+# Circle's options (CIRCLE_DEFINES):
+#
+# Heap buckets up to 64 MB: Circle's heap puts a freed block back on the free
+# list of its size class (bucket) only if there is one - a block bigger than
+# the largest bucket (512 KB by default) is lost for good when freed (circle/
+# include/circle/sysconfig.h, HEAP_BLOCK_BUCKET_SIZES). The gpu app allocates
+# textures (up to ~22 MB with mipmaps at 2048x2048), buffers and depth/stencil
+# storage from the heap, and GL programs create and delete them all the time:
+# with the default buckets the dEQP texture tests ran the RPi out of memory
+# within minutes. PGPU_HEAP_BUCKETS tells the gpu app it was built this way
+# (gpu/textures.cpp).
+#
+# MEM_PERSISTENT_SIZE (the fork's "Memory: MEM_PERSISTENT_SIZE ..." commit):
+# Circle leaves the top 64 KB of the ARM memory to the app, for the log that
+# survives a restart (devtools/runlog.h).
+#
+# ARM_ALLOW_MULTI_CORE (the Zero 2 W, four cores): the gpu app decodes the
+# audio stream's AAC on core 1 (gpu/audio); the Zero has one core.
 #
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/.." && pwd)
+TOOLCHAINS=${TOOLCHAINS:-$HOME/toolchains}
 JOBS=$(( $(nproc) > 1 ? $(nproc) - 1 : 1 ))	# a core left free
+GENERATOR=$(command -v ninja >/dev/null && echo Ninja || echo "Unix Makefiles")
 
-# one build number for all the boards of this build (gpu/Makefile: the
-# version, VERSION's major.minor.patch and it)
+DEFINES="HEAP_BLOCK_BUCKET_SIZES=0x40,0x400,0x1000,0x4000,0x10000,0x40000,0x80000,0x100000,0x200000,0x400000,0x800000,0x1000000,0x2000000,0x4000000;PGPU_HEAP_BUCKETS;MEM_PERSISTENT_SIZE=0x10000"
+
+# one build number for all the boards of this build (the version:
+# VERSION's major.minor.patch and it; devtools/build-info.sh)
 export PGPU_BUILD=${PGPU_BUILD:-$("$HERE/next-build.sh")}
+
+if [ ! -f "$ROOT/circle/CMakeLists.txt" ]; then
+	git -C "$ROOT" submodule update --init circle
+fi
+if [ ! -f "$ROOT/circle/boot/start.elf" ]; then
+	make -C "$ROOT/circle/boot" firmware >/dev/null
+fi
+
+# build BOARD RASPPI PREFIX DEFINES IMAGE
+build ()
+{
+	local out=$ROOT/build/$1
+	if [ ! -f "$out/CMakeCache.txt" ]; then
+		cmake -S "$ROOT/gpu" -B "$out" -G "$GENERATOR" \
+			-DCMAKE_TOOLCHAIN_FILE="$ROOT/circle/cmake/toolchain.cmake" \
+			-DCIRCLE_PREFIX="$3" -DCIRCLE_RASPPI="$2" "-DCIRCLE_DEFINES=$4" >/dev/null
+	fi
+	cmake --build "$out" -j "$JOBS"
+	echo "$1: $out/$5"
+}
 
 build_zero ()
 {
-	make -C "$ROOT/gpu" -j"$JOBS"
-	echo "zero: $ROOT/gpu/kernel.img"
+	build zero 1 "$TOOLCHAINS/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi/bin/arm-none-eabi-" \
+		"$DEFINES" kernel.img
 }
 
 build_zero2 ()
 {
-	local out=$ROOT/build/zero2
-	if [ ! -f "$ROOT/circle-zero2/lib/libcircle.a" ]; then
-		echo "zero2: no Circle for it: devtools/configure-circle.sh zero2" >&2
-		exit 1
-	fi
-	mkdir -p "$out"
-	for dir in gpu drivers devtools protocol; do
-		rsync -a --delete --exclude '*.o' --exclude '*.d' --exclude '*.a' --exclude '*.elf' \
-			--exclude '*.img' --exclude '*.lst' --exclude '*.map' --exclude logs/ \
-			--exclude usbboot/ "$ROOT/$dir/" "$out/$dir/"
-	done
-	make -C "$out/gpu" -j"$JOBS" CIRCLEHOME="$ROOT/circle-zero2"
-	echo "zero2: $out/gpu/kernel8.img"
+	build zero2 3 "$TOOLCHAINS/arm-gnu-toolchain-15.2.rel1-x86_64-aarch64-none-elf/bin/aarch64-none-elf-" \
+		"$DEFINES;ARM_ALLOW_MULTI_CORE" kernel8.img
 }
 
 case "${1:-zero}" in

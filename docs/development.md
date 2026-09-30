@@ -231,7 +231,7 @@ played on HDMI through the VideoCore's audio service.
   priming frames, so the frames of unit k start at unit k's pts.
 - **A core of its own:** on the Zero 2 W the decoder runs on core 1
   (`CCores` in `gpu/kernel.h`; Circle configured with `ARM_ALLOW_MULTI_CORE`,
-  `devtools/configure-circle.sh`; cores 2 and 3 halt). On the Zero, one
+  `devtools/build-gpu.sh`; cores 2 and 3 halt). On the Zero, one
   core, it runs in the main loop, up to 2 ms a turn. Between the cores:
   rings with one writer and one reader each and memory barriers, no locks.
   The compressed samples: `Data` (core 0) publishes a sample once its last
@@ -293,7 +293,7 @@ run says how the previous one ended and shows its last lines.
 |---|---|
 | `devtools/runlog.{h,cpp}` | `CRunLog`: the ring, the event hook, the report |
 | piegpu's fork of Circle (github.com/anight/circle, branch `piegpu`) | Circle leaves the top of the ARM memory to the app (the commit "Memory: MEM_PERSISTENT_SIZE …") |
-| `devtools/configure-circle.sh` | `-d MEM_PERSISTENT_SIZE=0x10000` |
+| `devtools/build-gpu.sh` | Circle's option `MEM_PERSISTENT_SIZE=0x10000` (CIRCLE_DEFINES) |
 | `gpu/kernel.cpp` | `m_RunLog.Initialize ()` right after the logger's; `Report ()` after the boot lines |
 | `gpu/main.cpp`, `gpu/install/installer.cpp`, `devtools/devlink.cpp` | Mark the restarts that were asked for |
 
@@ -327,8 +327,8 @@ subtracts `MEM_PERSISTENT_SIZE` from that size in `CMemorySystem`
 no allocator ever returns it. The run log finds it with the same property
 tag, at `nBaseAddress + nSize - MEM_PERSISTENT_SIZE`.
 
-`configure-circle.sh` clones the fork into a board's tree when it isn't
-there, and configures it with `MEM_PERSISTENT_SIZE`. Without `MEM_PERSISTENT_SIZE`, `runlog.cpp` stops the
+`build-gpu.sh` configures each board's build with `MEM_PERSISTENT_SIZE`
+(Circle's CMake option `CIRCLE_DEFINES`). Without it, `runlog.cpp` stops the
 build with an `#error`, rather than writing to memory the heap might use.
 
 How the reserved memory is mapped differs between the boards, because the

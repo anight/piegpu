@@ -1,6 +1,3 @@
-# Circle is a separate clone per board (piegpu's fork, github.com/anight/circle,
-# branch piegpu: devtools/configure-circle.sh)
-/circle/
 
 # Circle build outputs
 *.o
@@ -44,6 +41,4 @@ web/installer/firmware/
 web/installer/demos/
 web/installer/videos/
 
-# the Zero 2 W: its Circle (devtools/configure-circle.sh zero2) and build
-/circle-zero2/
 /build/

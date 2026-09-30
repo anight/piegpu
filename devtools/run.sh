@@ -137,14 +137,22 @@ APP=$(cd "$1" && pwd)
 SECS=${2:-10}
 
 log "Building $APP"
-make -C "$APP" -s -j"$(( $(nproc) > 1 ? $(nproc) - 1 : 1 ))"
+if [ "$APP" = "$(cd "$HERE/../gpu" && pwd)" ]; then
+	"$HERE/build-gpu.sh" zero >/dev/null	# (CMake: build/zero)
+	KERNEL=$HERE/../build/zero/kernel.img
+else
+	# another app: its Makefile, on a Circle configured in place (circle:
+	# ./configure -r 1 -p <arm-none-eabi- toolchain>; ./makeall)
+	make -C "$APP" -s -j"$(( $(nproc) > 1 ? $(nproc) - 1 : 1 ))"
+	KERNEL=$APP/kernel.img
+fi
 
 mkdir -p "$BOOTDIR"
 cp "$CIRCLEBOOT"/{bootcode.bin,start.elf,fixup.dat} "$BOOTDIR/"
 cp "$HERE/config.txt" "$BOOTDIR/config.txt"
 # the kernel command line (Circle's options and the app's, e.g. CMDLINE="output=hdmi")
 printf '%s\n' "${CMDLINE:-}" > "$BOOTDIR/cmdline.txt"
-cp "$APP/kernel.img" "$BOOTDIR/kernel.img"
+cp "$KERNEL" "$BOOTDIR/kernel.img"
 
 reboot_app
 

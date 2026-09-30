@@ -1,0 +1,82 @@
+#
+# The gpu app, the RPi's firmware, built with CMake on Circle's CMake build
+# (circle/CMakeLists.txt, the submodule): a build directory a board, e.g.
+# build/zero (the Zero: kernel.img) and build/zero2 (the Zero 2 W:
+# kernel8.img). devtools/build-gpu.sh configures and builds them:
+#
+#   cmake -S gpu -B build/zero2 -G Ninja -DCMAKE_TOOLCHAIN_FILE=circle/cmake/toolchain.cmake \
+#         -DCIRCLE_PREFIX=<aarch64-none-elf- toolchain> -DCIRCLE_RASPPI=3 "-DCIRCLE_DEFINES=..."
+#
+cmake_minimum_required(VERSION 3.20)
+project(piegpu_gpu C CXX ASM)
+
+get_filename_component(ROOT ${CMAKE_CURRENT_SOURCE_DIR}/.. ABSOLUTE)	# (normalized: the prefix maps)
+add_subdirectory(${ROOT}/circle circle)
+include(${ROOT}/circle/cmake/circle-kernel.cmake)
+
+# MMAL (video/userland, BSD-3): the client of the VideoCore's video components
+set(ul video/userland/interface/mmal)
+set(mmal ${ul}/core/mmal_format.c ${ul}/core/mmal_port.c ${ul}/core/mmal_port_clock.c
+	 ${ul}/core/mmal_component.c ${ul}/core/mmal_buffer.c ${ul}/core/mmal_queue.c
+	 ${ul}/core/mmal_pool.c ${ul}/core/mmal_events.c ${ul}/core/mmal_logging.c
+	 ${ul}/core/mmal_clock.c
+	 ${ul}/util/mmal_util.c ${ul}/util/mmal_connection.c ${ul}/util/mmal_list.c
+	 ${ul}/util/mmal_util_params.c ${ul}/util/mmal_util_rational.c
+	 ${ul}/vc/mmal_vc_client.c ${ul}/vc/mmal_vc_api.c ${ul}/vc/mmal_vc_msgnames.c
+	 ${ul}/vc/mmal_vc_opaque_alloc.c ${ul}/vc/mmal_vc_shm.c)
+
+add_executable(gpu
+	main.cpp build_info.cpp kernel.cpp commands.cpp geometry.cpp textures.cpp programs.cpp renderer.cpp
+	link/i2s_link.cpp link/byte_stream_link.cpp link/usb_link.cpp link/usb_bulk_link.cpp
+	display/panel_output.cpp display/hdmi_output.cpp display/hdmi_monitor.cpp display/gud_display.cpp
+	video/video.cpp audio/audio.cpp audio/audio_out.cpp install/installer.cpp
+	${ROOT}/drivers/v3d.cpp ${ROOT}/drivers/v3dcheck.cpp ${ROOT}/drivers/st7789dma.cpp
+	${ROOT}/devtools/devlink.cpp ${ROOT}/devtools/runlog.cpp ${ROOT}/devtools/pgpugadget.cpp
+	video/compat/circle_vcos.c video/compat/circle_micros.cpp ${mmal}
+	${CMAKE_CURRENT_BINARY_DIR}/shaders.h ${CMAKE_CURRENT_BINARY_DIR}/build_info_values.h)
+target_include_directories(gpu PRIVATE ${CIRCLE_INCLUDE_DIRS}	# (Circle's first, as Rules.mk)
+	${ROOT}/drivers ${ROOT}/devtools ${ROOT}/protocol ${ROOT}/circle/addon audio
+	video/compat video/userland video/userland/interface/mmal
+	${CMAKE_CURRENT_BINARY_DIR})			# (shaders.h, build_info_values.h)
+# the MMAL sources (C; their messages 32-bit on any client: video/userland/
+# interface/mmal/vc/mmal_vc_msgs.h): what they need beyond Circle's vcos and
+# their warnings, for the app's every source (as the Makefile had it). In 64
+# bit, MMAL reads its messages where VCHIQ has them, in Circle's coherent
+# region: Device memory, where an unaligned access faults (GCC merges
+# neighbouring fields into one); Circle's VCHIQ is built the same way
+target_compile_options(gpu PRIVATE
+	$<$<COMPILE_LANGUAGE:C,CXX>:-include ${CMAKE_CURRENT_SOURCE_DIR}/video/compat/mmal_circle.h
+	-Wno-format -Wno-unused-parameter -Wno-sign-compare -Wno-missing-field-initializers
+	-Wno-unused-but-set-variable $<$<EQUAL:${CIRCLE_AARCH},64>:-mstrict-align>>
+	# __FILE__ as the Makefile's build in gpu/ gave it
+	-fmacro-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}/=
+	-fmacro-prefix-map=${ROOT}/drivers/=../drivers/ -fmacro-prefix-map=${ROOT}/devtools/=../devtools/)
+
+# the shaders (gpu/shaders.py: the fixed function's QPU programs)
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/shaders.h
+	COMMAND python3 shaders.py ${CMAKE_CURRENT_BINARY_DIR}/shaders.h
+	DEPENDS shaders.py ${ROOT}/devtools/qpuasm.py
+	WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+# this build's version, time and configuration (build_info.h), at every build
+add_custom_target(build_info_values
+	COMMAND ${ROOT}/devtools/build-info.sh ${CMAKE_CURRENT_BINARY_DIR}/build_info_values.h ${ROOT}/circle
+	BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/build_info_values.h)
+add_dependencies(gpu build_info_values)
+
+# AAC: audio/aac.c with FAAD2 (audio/faad2, GPL 2 or later), a library of its
+# own flags: its shims first (audio/faad2/compat), its defines, no warnings;
+# libfaad's sources with the C library shim force-included
+file(GLOB libfaad audio/faad2/libfaad/*.c)
+add_library(aac STATIC ${libfaad} audio/faad2/compat/faad_circle.c audio/aac.c)
+target_link_libraries(aac PUBLIC circle_flags)
+target_include_directories(aac PRIVATE audio/faad2/compat ${CIRCLE_INCLUDE_DIRS} audio/faad2 audio/faad2/libfaad)
+target_compile_options(aac PRIVATE -DHAVE_INTTYPES_H=1 -DHAVE_STRING_H=1 -DHAVE_MEMCPY=1 -DHAVE_LRINTF=1
+	"-DPACKAGE_VERSION=\"2.11.3\"" -w $<$<EQUAL:${CIRCLE_AARCH},64>:-mstrict-align>
+	-fmacro-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}/audio/faad2/=)
+set_source_files_properties(${libfaad} PROPERTIES
+	COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/audio/faad2/compat/faad_circle.h")
+
+target_link_libraries(gpu PRIVATE aac circle_sdcard circle_fatfs circle_vcos circle_vchiqsound circle_vchiq
+	circle_linuxemu circle_usb circle_usbgadget circle_input circle_fs circle_sched circle_sound circle)
+circle_kernel(gpu)

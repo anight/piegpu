@@ -1,10 +1,12 @@
 //
 // build_info.cpp
 //
-// Compiled at every build of the gpu app (gpu/Makefile): the Makefile
-// defines PGPU_FW_VERSION, PGPU_FW_GIT, PGPU_BUILT and PGPU_CIRCLE.
+// Compiled at every build of the gpu app (gpu/CMakeLists.txt), with
+// build_info_values.h written then (devtools/build-info.sh): PGPU_FW_VERSION,
+// PGPU_FW_GIT, PGPU_BUILT and PGPU_CIRCLE.
 //
 #include "build_info.h"
+#include "build_info_values.h"		// (devtools/build-info.sh: PGPU_FW_VERSION, ...)
 
 #define STR2(x)	#x
 #define STR(x)	STR2 (x)

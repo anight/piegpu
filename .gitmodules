@@ -1,0 +1,4 @@
+[submodule "circle"]
+	path = circle
+	url = https://github.com/anight/circle.git
+	branch = piegpu

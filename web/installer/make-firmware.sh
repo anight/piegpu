@@ -4,8 +4,8 @@
 # set per board (the ones piegpu supports for now: the Zero / Zero W and the
 # Zero 2 W): the Raspberry Pi firmware (Circle's boot/: bootcode.bin,
 # start.elf, fixup.dat) and the gpu app built for it (devtools/build-gpu.sh:
-# firmware/zero/kernel.img; firmware/zero2/kernel8.img if Circle is
-# configured for the Zero 2 W), with a manifest the page reads. config.txt and
+# firmware/zero/kernel.img, firmware/zero2/kernel8.img), with a manifest the
+# page reads. config.txt and
 # cmdline.txt come from the page's settings. And the demos the page runs (Test
 # OpenGL, Test video: hosts/web, into web/installer/demos/), if Emscripten is
 # there (EMSDK, default ~/emsdk), with the test video (web/installer/videos/).
@@ -23,16 +23,11 @@ JOBS=$(( $(nproc) > 1 ? $(nproc) - 1 : 1 ))	# a core left free
 rm -rf "$OUT"
 # one build number for both boards' kernels: one version (gpu/Makefile)
 export PGPU_BUILD=${PGPU_BUILD:-$("$ROOT/devtools/next-build.sh")}
-BOARDS=zero
-"$ROOT/devtools/build-gpu.sh" zero >/dev/null
-mkdir -p "$OUT/zero"
-cp "$BOOT/bootcode.bin" "$BOOT/start.elf" "$BOOT/fixup.dat" "$ROOT/gpu/kernel.img" "$OUT/zero/"
-if [ -f "$ROOT/circle-zero2/lib/libcircle.a" ]; then
-	BOARDS="zero zero2"
-	"$ROOT/devtools/build-gpu.sh" zero2 >/dev/null
-	mkdir -p "$OUT/zero2"
-	cp "$BOOT/bootcode.bin" "$BOOT/start.elf" "$BOOT/fixup.dat" "$ROOT/build/zero2/gpu/kernel8.img" "$OUT/zero2/"
-fi
+BOARDS="zero zero2"
+"$ROOT/devtools/build-gpu.sh" all >/dev/null	# (build/zero, build/zero2)
+mkdir -p "$OUT/zero" "$OUT/zero2"
+cp "$BOOT/bootcode.bin" "$BOOT/start.elf" "$BOOT/fixup.dat" "$ROOT/build/zero/kernel.img" "$OUT/zero/"
+cp "$BOOT/bootcode.bin" "$BOOT/start.elf" "$BOOT/fixup.dat" "$ROOT/build/zero2/kernel8.img" "$OUT/zero2/"
 
 # shellcheck disable=SC2086
 python3 - "$OUT" "$(git -C "$ROOT" describe --always --dirty)" $BOARDS <<'PY'

@@ -56,32 +56,32 @@ piegpu supports two boards for now:
   gears frame;
 - a Zero 2 W: 64 bit, `kernel8.img`, 0.9 ms.
 
-piegpu builds with its fork of Circle: the branch `piegpu` of
-[github.com/anight/circle](https://github.com/anight/circle/tree/piegpu),
+piegpu builds with its fork of Circle, the submodule `circle`: the branch
+`piegpu` of [github.com/anight/circle](https://github.com/anight/circle/tree/piegpu),
 Circle Step51.1 with piegpu's changes as commits (the USB gadget's CDC and
-EP0, FatFs' `f_mkfs`, `MEM_PERSISTENT_SIZE`, vcos in 64 bit). Circle builds
-in its source tree, so each board has its own copy, `circle` and
-`circle-zero2`: `configure-circle.sh` clones the fork into the one it's
-given if it isn't there, then configures and builds it.
+EP0, FatFs' `f_mkfs`, `MEM_PERSISTENT_SIZE`, vcos in 64 bit, the VideoCore's
+dry-spell flags in VCHIQ sound, and a CMake build). With CMake one Circle tree
+serves every board: each board has a build directory (`build/zero`,
+`build/zero2`) with its toolchain and Circle's options, and the gpu app
+(`gpu/CMakeLists.txt`) builds on it. `build-gpu.sh` fetches the submodule
+and Circle's boot files if they aren't there, configures a board's directory
+the first time (delete it to configure again), and builds.
 
 Toolchains: Arm GNU 15.2 in `~/toolchains` (`arm-none-eabi` and
 `aarch64-none-elf`).
 
 ```bash
-devtools/configure-circle.sh zero
-```
-
-```bash
-devtools/configure-circle.sh zero2
+git submodule update --init
 ```
 
 ```bash
 devtools/build-gpu.sh all
 ```
 
-This gives `gpu/kernel.img` (the Zero) and `build/zero2/gpu/kernel8.img` (the
-Zero 2 W). `web/installer/make-firmware.sh` puts both builds on the installer
-page, which picks the one for the board.
+This gives `build/zero/kernel.img` (the Zero) and `build/zero2/kernel8.img`
+(the Zero 2 W). Verified: the same kernels as the earlier Makefile build but
+for the build time's digits. `web/installer/make-firmware.sh` puts both
+builds on the installer page, which picks the one for the board.
 
 **Versions:** `major.minor.patch.build`. `VERSION` holds `major.minor.patch`
 (set by hand); every firmware build takes the next build number of the
@@ -207,7 +207,9 @@ there. Without the SDO wire it can't tell: set `panel=yes` (see below).
   a PC with `rpiboot` (Raspberry Pi's usbboot lists them). Both supported
   boards do, from the installer page (below) or `rpiboot`:
   - `devtools/run.sh gpu` builds, boots and logs, with the Zero's 32-bit
-    build (`make -C gpu`).
+    build (`build/zero`). Other apps (`experiments/`) keep their Makefiles,
+    which need a Circle configured in place (`./configure`, `./makeall` in a
+    copy of it).
   - A Zero 2 W boots its 64-bit build the same way: `rpiboot -d` on a folder
     with the files of `web/installer/firmware/zero2`, a `config.txt` with
     `arm_64bit=1` and a `cmdline.txt`. Verified with usbboot's
