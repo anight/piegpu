@@ -50,6 +50,10 @@ h2 .step
 {
 	color: var(--muted); margin: 0 0 12px;
 }
+.sub b
+{
+	color: var(--text);
+}
 .note
 {
 	border-left: 3px solid var(--warn); padding: 6px 12px; margin: 0 0 20px;
@@ -84,6 +88,10 @@ button.danger
 button:disabled
 {
 	opacity: 0.5; cursor: default;
+}
+h2 button.toggle
+{
+	margin-left: auto; padding: 4px 12px; font-size: 14px; font-weight: normal;
 }
 .buttons
 {
@@ -173,6 +181,18 @@ progress
 {
 	width: 100%; height: 10px; margin: 10px 0 2px;
 }
+.panel
+{
+	border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin: 14px 0 0;
+}
+code
+{
+	font: 13px ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+a
+{
+	color: var(--accent);
+}
 [hidden]
 {
 	display: none !important;
@@ -182,33 +202,64 @@ progress
 <body>
 <main>
 	<h1>piegpu installer</h1>
-	<p class="sub">Puts piegpu on the Raspberry Pi's (RPi's) microSD card from this page, over the
-		RPi's USB port. <span id="version"></span></p>
-	<p class="note"><b>Supported for now: the Raspberry Pi Zero / Zero W and the Zero 2 W.</b>
-		More RPi boards are to come.</p>
+	<p class="sub">Puts piegpu on the Raspberry Pi's microSD card from this page. Step by
+		step, with what to do if something doesn't work: the
+		<a href="https://github.com/anight/piegpu/blob/main/docs/installation.md">installation guide</a>.<br><span id="version"></span></p>
+	<p class="note"><b>Supported for now: the Raspberry Pi Zero / Zero W and the Zero 2 W.</b></p>
 
 	<section id="unsupported" hidden>
-		<div class="status bad">This browser can't talk to USB devices. Use Chrome or Edge on a
-			desktop computer (they have WebUSB and Web Serial).</div>
+		<div class="status bad">This browser can't talk to USB devices: use Chrome or Edge on a
+			desktop computer (they have WebUSB and Web Serial). Here you can still prepare a card
+			in this computer's card reader, as a zip (Prepare a card).</div>
 	</section>
 
 	<section>
 		<h2><span class="step">1</span>Connect the RPi</h2>
-		<p>Put a microSD card in the RPi, then connect the RPi's <b>USB</b> port (not PWR IN)
-			to this computer.</p>
+		<p><b>A new card:</b> put piegpu on it first. <b>Prepare a card</b> writes it onto the card
+			in this computer's card reader; with no card reader, start the RPi over USB (below).
+			<b>A card with piegpu:</b> connect the RPi's <b>USB</b> port (not PWR IN) to this
+			computer with a data cable, and press <b>Connect</b>
+			(<a href="https://github.com/anight/piegpu/blob/main/docs/installation.md#step-2-connect">step 2 of the guide</a>).</p>
 		<div class="buttons">
 			<button id="connect" class="primary">Connect</button>
-			<button id="boot">Start a blank RPi</button>
+			<button id="prepare">Prepare a card</button>
 			<button id="reset" disabled>Reset</button>
 			<button id="continue" class="primary" hidden>Continue</button>
 		</div>
+		<div id="prepare-panel" class="panel" hidden>
+			<p>Put the microSD card in this computer's card reader. It must be <b>FAT32</b>: cards
+				up to 32 GB usually are; a bigger one (exFAT) needs formatting first
+				(<a href="https://github.com/anight/piegpu/blob/main/docs/installation.md#formatting-a-card-as-fat32">how</a>). Choose the board: the Zero 2 W's
+				big chip is marked RP3A0. The settings (section 3) go on the card too.
+				(<a href="https://github.com/anight/piegpu/blob/main/docs/installation.md#way-a-with-a-card-reader">Way A in the guide</a>.)</p>
+			<label>Board <select id="prepare-board">
+				<option value="" selected disabled>Choose the board…</option>
+				<option value="zero">Raspberry Pi Zero / Zero W</option>
+				<option value="zero2">Raspberry Pi Zero 2 W</option>
+			</select></label>
+			<div class="buttons">
+				<button id="prepare-write" class="primary" disabled>Choose the card and write</button>
+				<button id="prepare-zip" disabled>Download a .zip</button>
+			</div>
+			<progress id="prepare-progress" max="1" value="0" hidden></progress>
+			<div id="prepare-status" class="status" hidden></div>
+		</div>
 		<p class="hint" style="margin-top: 12px">
-			<b>Connect</b> if the card already has piegpu (the panel shows it).
-			<b>Start a blank RPi</b> if the card is new or empty: the RPi then waits for this
-			computer, and the page starts piegpu on it (a Zero or a Zero 2 W: the board takes its
-			own build). If the card holds another system
-			(Raspberry Pi OS, say), take it out first and put it back when the page asks.
+			<b>Choose the card and write</b> writes the files straight onto the card (Chrome, Edge);
+			<b>Download a .zip</b> gives them to unpack onto the card (any browser).
 			<b>Reset</b> restarts a connected RPi from its card.</p>
+		<details id="usb-boot">
+			<summary>No card reader? Start a blank RPi over USB</summary>
+			<p class="hint">An RPi whose card is new or empty waits for this computer over USB,
+				and the page starts piegpu on it (a Zero or a Zero 2 W: the board takes its own
+				build); then Install piegpu writes its card. If the card holds another system
+				(Raspberry Pi OS, say), take it out first and put it back when the page asks. Once
+				per computer the browser needs access to the RPi's boot mode: on Linux
+				<code>sudo apt install rpiboot</code> (or a udev rule), on Windows the WinUSB driver
+				(<a href="https://github.com/anight/piegpu/blob/main/docs/installation.md#access-to-usb-devices">how</a>;
+				<a href="https://github.com/anight/piegpu/blob/main/docs/installation.md#way-b-without-a-card-reader">Way B in the guide</a>).</p>
+			<div class="buttons"><button id="boot">Start a blank RPi</button></div>
+		</details>
 		<div id="connect-status" class="status" hidden></div>
 	</section>
 
@@ -223,8 +274,9 @@ progress
 	</section>
 
 	<section id="settings-section" hidden>
-		<h2><span class="step">3</span>Settings</h2>
-		<p id="settings-source" class="hint">The defaults.</p>
+		<h2><span class="step">3</span>Settings
+			<button id="settings-toggle" class="toggle" aria-expanded="false" aria-controls="settings-body">Show</button></h2>
+		<div id="settings-body" hidden>
 		<fieldset>
 			<legend>Host</legend>
 			<label class="choice"><input type="radio" name="host" value="auto">
@@ -286,6 +338,7 @@ progress
 			<pre id="preview-cmdline"></pre>
 			<pre id="preview-config"></pre>
 		</details>
+		</div>
 	</section>
 
 	<section id="actions-section" hidden>

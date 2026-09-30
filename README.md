@@ -375,8 +375,12 @@ tools/deqp/build-deqp.sh
 
 ## Installing on an SD card (`web/installer`)
 
-A static page puts piegpu on the microSD card in the RPi, over the RPi's
-USB port, with its settings. The settings are the command line above
+**Step by step, on Linux, Windows or macOS, with what to do when something
+doesn't work: [docs/installation.md](docs/installation.md).**
+
+A static page puts piegpu on the RPi's microSD card, with its settings, and
+then manages it over the RPi's USB port. The settings (section 3 of the
+page, folded until its Show button opens it) are the command line above
 (`cmdline.txt`) and `config.txt`:
 
 - where the GL commands come from;
@@ -384,8 +388,12 @@ USB port, with its settings. The settings are the command line above
 - the HDMI mode;
 - the USB monitor (off unless chosen).
 
-The page needs Chrome or Edge on a desktop (WebUSB and Web Serial) and a
-secure origin (https, or `localhost`).
+The page needs Chrome or Edge on a desktop (WebUSB, Web Serial, the File
+System Access API) and a secure origin (https, or `localhost`). It's
+published at **https://anight.github.io/piegpu/**: `devtools/publish-installer.sh`
+builds it (`make-firmware.sh`: both boards' firmware, the demos, the test
+media) and pushes it to the `gh-pages` branch, one commit that replaces the
+last (GitHub Pages serves that branch). From a checkout:
 
 ```bash
 web/installer/make-firmware.sh
@@ -395,34 +403,43 @@ web/installer/make-firmware.sh
 python3 -m http.server 8765 --bind 127.0.0.1 --directory web/installer
 ```
 
-Then open http://localhost:8765 and follow the steps:
+How its parts work:
 
-- **A blank or new card:** the RPi's boot ROM finds nothing to start and waits
-  for USB. "Start a blank RPi" boots piegpu from the page (WebUSB, the
-  rpiboot protocol: `rpiboot.js`; verified on both boards).
-  - The page serves both builds, and a `config.txt` whose `[pi02]` lines would
-    make a Zero 2 W ask for its 64-bit `kernel8.img` (a Zero asks for
-    `kernel.img`).
-  - Once piegpu runs, it says which board it is, and Install writes that
-    board's files only.
-  - A card without a FAT file system can be formatted there (one FAT32
-    partition).
-- **If a USB start stalls:** twice, early on, a Zero 2 W's boot ROM took
-  `bootcode.bin` and then stopped answering, with `rpiboot` too; the cause
-  wasn't found. It then answers nothing until it loses power: unplug the
-  cable, plug it back in, and start again. Every start since has worked,
-  from the page and from `rpiboot`, with a blank card in the board or none.
-  Writing the card on a PC works too (verified on a Zero 2 W): one FAT32
-  partition (type 0x0c), the files of `web/installer/firmware/<board>`, a
-  `config.txt` (`arm_64bit=1` for a Zero 2 W) and a `cmdline.txt`.
-- **A card with piegpu:** "Connect" (Web Serial). Install again,
-  or change the settings only. When the page's kernel has a higher version
-  than the card's, "Upgrade" next to the card's firmware writes the kernel
-  alone and restarts the RPi. After every restart the
-  page reads the board, the card and its settings again. If piegpu doesn't answer (a program left it
-  taking GL commands), the page restarts it; "Reset" restarts it any time.
-- **A card with another system:** take it out, start the RPi from the page,
-  and put the card in when the page asks.
+- **Prepare a card** (a card in the computer's card reader; `card.js`): the
+  chosen board's firmware and kernel, and the `config.txt` and `cmdline.txt`
+  of the settings, written into the folder the user picks (the File System
+  Access API: the system's own mount of the card, so no permissions), each
+  read back and checked by its CRC; a folder that holds other things makes
+  the page ask first. Or the same files in a zip (stored, no compression) to
+  unpack by hand. The card's side is verified: a card written on a PC (one
+  FAT32 partition, type 0x0c, those files) started a Zero 2 W. The page's
+  writing is tested into a browser-private folder (read back) and the zip
+  with `unzip -t`; not yet onto a real card through the folder picker.
+- **Start a blank RPi** (no card reader; `rpiboot.js`): the RPi's boot ROM,
+  finding nothing to start, waits for USB, and the page boots piegpu from
+  it (WebUSB, the rpiboot protocol; verified on both boards). The page
+  serves both builds, and a `config.txt` whose `[pi02]` lines make a Zero 2
+  W ask for its 64-bit `kernel8.img` (a Zero asks for `kernel.img`). Once
+  piegpu runs, it says which board it is, and Install writes that board's
+  files only; a card without a FAT file system can be formatted there (one
+  FAT32 partition). The browser needs access to the boot ROM's USB device
+  (`0a5c:2763`, `2764`): on Linux a udev rule (Ubuntu's `rpiboot` package
+  has one), on Windows the WinUSB driver (not tried). Twice, early on, a Zero
+  2 W's boot ROM took `bootcode.bin` and then stopped answering, with
+  `rpiboot` too; the cause wasn't found. It then answers nothing until it
+  loses power. Every start since has worked, from the page and from
+  `rpiboot`, with a blank card in the board or none.
+- **Connect** (Web Serial): the RPi's USB serial port. On Linux the user
+  needs access to it (the `dialout` group, or a uaccess rule such as the one
+  `esptool`'s package installs; when opening fails, the page says so). Install
+  again, or change the settings only. When the page's kernel has a higher
+  version than the card's, "Upgrade" next to the card's firmware writes the
+  kernel alone and restarts the RPi. After every restart the page reads the
+  board, the card and its settings again. If piegpu doesn't answer (a
+  program left it taking GL commands), the page restarts it; "Reset"
+  restarts it any time.
+- **A card with another system:** for Prepare a card, format it first; to
+  start the RPi from the page, take it out, and put it in when the page asks.
 
 piegpu writes the files itself (`gpu/install`): each is checked by its CRC,
 then renamed into place. At the end the RPi restarts from the card, and the

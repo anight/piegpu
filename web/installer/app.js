@@ -1,14 +1,18 @@
 // app.js - the installer page: connects to the RPi (Web Serial to a running
 // piegpu, or WebUSB to start a blank RPi first: rpiboot.js), shows its
-// card, and writes the firmware and the settings onto it (pgi.js).
+// card, and writes the firmware and the settings onto it (pgi.js); or
+// prepares a card in this computer's card reader (card.js).
 
 import {USB_FILTERS, bootStage, waitForBootDevice} from './rpiboot.js';
 import {SERIAL_FILTERS, Installer, crc32} from './pgi.js';
 import {BOARDS, DEFAULTS, makeCmdline, makeConfig, parseSettings} from './settings.js';
 import {GLStream, runDemo} from './gl.js';
+import {makeZip, otherEntries, writeFiles} from './card.js';
 
 const $ = id => document.getElementById (id);
 const STORE = 'piegpu-installer-settings';
+// the installation guide (docs/installation.md), linked from the messages
+const GUIDE = 'https://github.com/anight/piegpu/blob/main/docs/installation.md';
 
 let manifest = null;
 let firmware = {};			// board -> Map name -> Uint8Array (fetched once)
@@ -30,12 +34,21 @@ function log (line)
 	}
 }
 
-function status (id, text, kind = '')
+// a status line; link: [text, a section of the guide] after it
+function status (id, text, kind = '', link = null)
 {
 	const el = $(id);
 	el.hidden = !text;
 	el.textContent = text || '';
 	el.className = 'status' + (kind ? ' ' + kind : '');
+	if (text && link)
+	{
+		const a = document.createElement ('a');
+		a.href = `${GUIDE}#${link[1]}`;
+		a.target = '_blank';
+		a.textContent = link[0];
+		el.append (' ', a);
+	}
 }
 
 // ---- settings -------------------------------------------------------------------
@@ -119,14 +132,11 @@ async function loadManifest ()
 	try
 	{
 		manifest = await (await fetch ('firmware/manifest.json', {cache: 'no-cache'})).json ();
-		// the kernels' own build times (their build lines, as the card's is
-		// shown): one if they're the same, else each board's
-		const boards = Object.keys (manifest.boards || {});
-		const built = boards.map (b => manifest.boards[b].build?.built || manifest.built);
-		const version = manifest.version + (manifest.git ? ` (${manifest.git})` : '');
-		$('version').textContent = built.every (t => t === built[0])
-			? `Firmware ${version} for the ${boards.map (b => BOARDS[b]).join (' and ')}, built ${utc (built[0])}.`
-			: `Firmware ${version} for the ${boards.map ((b, i) => `${BOARDS[b]} (built ${utc (built[i])})`).join (' and ')}.`;
+		// the version alone (the boards: the notice below; the build times:
+		// the card's firmware shows its own)
+		const version = document.createElement ('b');
+		version.textContent = manifest.version + (manifest.git ? ` (${manifest.git})` : '');
+		$('version').replaceChildren ('Current version: ', version);
 	}
 	catch (e)
 	{
@@ -253,8 +263,40 @@ async function connect ()
 	await run (async () =>
 	{
 		const known = (await navigator.serial.getPorts ()).filter (p => matchesSerial (p));
-		const port = known[0] || await navigator.serial.requestPort ({filters: SERIAL_FILTERS});
-		await openInstaller (port);
+		let port = known[0];
+		if (!port)
+		{
+			try
+			{
+				port = await navigator.serial.requestPort ({filters: SERIAL_FILTERS});
+			}
+			catch (e)
+			{
+				if (e.name !== 'NotFoundError')
+				{
+					throw e;
+				}
+				status ('connect-status', 'No port picked. If piegpu wasn\'t in the list:', 'warn',
+					['what to check', 'troubleshooting']);
+				return;
+			}
+		}
+		try
+		{
+			await openInstaller (port);
+		}
+		catch (e)
+		{
+			// the port picked, but the system didn't let the browser open it
+			if (e.name === 'NetworkError' && /open/i.test (e.message) && /Linux/.test (navigator.userAgent))
+			{
+				status ('connect-status', `${e.message} Your user may have no access to the RPi's serial port: `
+					+ 'run "sudo usermod -aG dialout $USER" once, then log out and in again.', 'bad',
+					['more', 'access-to-usb-devices']);
+				return;
+			}
+			throw e;
+		}
 	});
 }
 
@@ -293,7 +335,21 @@ async function bootBlank ()
 {
 	await run (async () =>
 	{
-		let device = await navigator.usb.requestDevice ({filters: USB_FILTERS});	// (the click's)
+		let device;
+		try
+		{
+			device = await navigator.usb.requestDevice ({filters: USB_FILTERS});	// (the click's)
+		}
+		catch (e)
+		{
+			if (e.name !== 'NotFoundError')
+			{
+				throw e;
+			}
+			status ('connect-status', 'No device picked. If the RPi wasn\'t in the list:', 'warn',
+				['what to check', 'troubleshooting']);
+			return;
+		}
 		const files = await bootFiles ();
 		for (let stage = 0; stage < 3; stage++)
 		{
@@ -345,6 +401,104 @@ function pickAgain (pick)
 			}
 		};
 	});
+}
+
+// ---- a card prepared on this computer ---------------------------------------------
+
+// the panel open: the settings (section 3) show too, as they go on the card
+function preparing ()
+{
+	return !$('prepare-panel').hidden;
+}
+
+// a card's files for this board: the firmware and the settings
+async function cardFiles (board)
+{
+	const s = readForm ();
+	if (!settingsValid (s))
+	{
+		throw new Error ('The HDMI mode in the settings is out of range.');
+	}
+	const files = new Map (await loadFirmware (board));
+	files.set ('config.txt', new TextEncoder ().encode (makeConfig (s, board)));
+	files.set ('cmdline.txt', new TextEncoder ().encode (makeCmdline (s)));
+	return files;
+}
+
+// the files written into the folder the user picks (the mounted card)
+async function prepareWrite ()
+{
+	const board = $('prepare-board').value;
+	if (!('showDirectoryPicker' in window))
+	{
+		status ('prepare-status', 'This browser can\'t write into a folder: download the zip and unpack it '
+			+ 'onto the card.', 'warn', ['how', 'way-a-with-a-card-reader']);
+		return;
+	}
+	await run (async () =>
+	{
+		status ('prepare-status', 'Choose the card (its top folder)…');
+		let dir;
+		try
+		{
+			dir = await window.showDirectoryPicker ({id: 'piegpu-card', mode: 'readwrite'});
+		}
+		catch (e)
+		{
+			if (e.name !== 'AbortError')	// (the picker was closed)
+			{
+				status ('prepare-status', `${e.message} Pick the card itself, or download the zip.`, 'bad',
+					['more', 'troubleshooting']);
+				return;
+			}
+			status ('prepare-status', 'Nothing written.');
+			return;
+		}
+		const files = await cardFiles (board);
+		const others = await otherEntries (dir, new Set (files.keys ()));
+		if (others.length && !confirm (`"${dir.name}" holds ${others.length} other item${others.length > 1 ? 's' : ''} `
+					       + `(${others.slice (0, 5).join (', ')}${others.length > 5 ? ', …' : ''}). `
+					       + 'Is it the card? Write piegpu\'s files there?'))
+		{
+			status ('prepare-status', 'Nothing written.');
+			return;
+		}
+		const total = [...files.values ()].reduce ((n, b) => n + b.length, 0);
+		const bar = $('prepare-progress');
+		bar.hidden = false;
+		bar.max = total;
+		bar.value = 0;
+		status ('prepare-status', `Writing to "${dir.name}"…`);
+		try
+		{
+			await writeFiles (dir, files, n => bar.value = n);
+		}
+		finally
+		{
+			bar.hidden = true;
+		}
+		log (`(page) wrote ${files.size} files, ${total} bytes, to "${dir.name}", each read back and checked`);
+		status ('prepare-status', `Done: piegpu ${manifest.version} for the ${BOARDS[board]} on "${dir.name}" `
+			+ `(${files.size} files, each read back and checked). Eject the card, put it in the RPi, `
+			+ 'connect the RPi\'s USB port and press Connect.', 'ok');
+	}, 'prepare-status');
+}
+
+// the same files as a zip, to unpack onto the card by hand
+async function prepareZip ()
+{
+	const board = $('prepare-board').value;
+	await run (async () =>
+	{
+		const zip = makeZip (await cardFiles (board));
+		const a = document.createElement ('a');
+		a.href = URL.createObjectURL (zip);
+		a.download = `piegpu-${manifest.version}-${board}.zip`;
+		a.click ();
+		setTimeout (() => URL.revokeObjectURL (a.href), 60000);
+		status ('prepare-status', `Downloaded ${a.download}: unpack it onto the card (its top folder), eject `
+			+ 'the card, put it in the RPi, connect the RPi\'s USB port and press Connect.', 'ok');
+	}, 'prepare-status');
 }
 
 // ---- the card -------------------------------------------------------------------
@@ -407,7 +561,6 @@ async function refreshCard (loadSettings)
 				const cmdline = decode (await installer.read ('cmdline.txt'));
 				writeForm (parseSettings (config, cmdline, readForm ()));
 				cardHost = parseSettings (null, cmdline, DEFAULTS).host;
-				$('settings-source').textContent = 'Read from the card.';
 			}
 		}
 		else
@@ -762,15 +915,36 @@ function updateButtons ()
 	$('test-video').disabled = busy || !installer;
 	$('test-audio').disabled = busy || !installer;
 	$('reset').disabled = busy || !installer;
+	$('prepare').disabled = busy;
+	$('prepare-write').disabled = busy || !$('prepare-board').value;
+	$('prepare-zip').disabled = busy || !$('prepare-board').value;
 
 	// the board, its settings and the actions: while a board is connected
-	// (kept while an action restarts it)
+	// (kept while an action restarts it); the settings while preparing a card
 	if (!busy)
 	{
 		for (const id of ['card-section', 'settings-section', 'actions-section'])
 		{
-			$(id).hidden = !(installer && card);
+			$(id).hidden = !(installer && card) && !(id === 'settings-section' && preparing ());
 		}
+	}
+}
+
+// section 3 shown or hidden (its button; hidden until shown, remembered in
+// this browser)
+const SETTINGS_OPEN = 'piegpu-settings-open';
+
+function showSettings (open)
+{
+	$('settings-body').hidden = !open;
+	$('settings-toggle').textContent = open ? 'Hide' : 'Show';
+	$('settings-toggle').setAttribute ('aria-expanded', String (open));
+	try
+	{
+		localStorage.setItem (SETTINGS_OPEN, open ? '1' : '0');
+	}
+	catch (e)
+	{
 	}
 }
 
@@ -791,6 +965,14 @@ function init ()
 	}
 	$('connect').onclick = connect;
 	$('boot').onclick = bootBlank;
+	$('prepare').onclick = () =>
+	{
+		$('prepare-panel').hidden = !$('prepare-panel').hidden;
+		updateButtons ();
+	};
+	$('prepare-board').onchange = updateButtons;
+	$('prepare-write').onclick = prepareWrite;
+	$('prepare-zip').onclick = prepareZip;
 	$('format').onclick = format;
 	$('card-retry').onclick = () => run (() => refreshCard (true));
 	$('install').onclick = () => install (false);
@@ -808,6 +990,16 @@ function init ()
 		}
 	};
 	$('reset').onclick = reset;
+	$('settings-toggle').onclick = () => showSettings ($('settings-body').hidden);
+	let open = false;
+	try
+	{
+		open = localStorage.getItem (SETTINGS_OPEN) === '1';
+	}
+	catch (e)
+	{
+	}
+	showSettings (open);
 	loadManifest ();
 	updateButtons ();
 	if ('usb' in navigator && 'serial' in navigator)
