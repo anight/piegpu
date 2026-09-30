@@ -201,8 +201,8 @@ model is named below, the fact was measured on that one.
 
 ## Audio
 
-The audio stream (protocol §7.13, `gpu/audio/`): AAC or MP3 decoded on the
-ARM, played on HDMI through the VideoCore's audio service.
+The audio stream (protocol §7.13, `gpu/audio/`): AAC, MP3 or Ogg Vorbis
+decoded on the ARM, played on HDMI through the VideoCore's audio service.
 
 - **Output** (`CAudioOut`): Circle's VCHIQ sound device
   (`addon/vc4/sound`), destination HDMI, 16-bit stereo in chunks of 2048
@@ -240,6 +240,33 @@ ARM, played on HDMI through the VideoCore's audio service.
   the stack (about 16 KB; Circle's stacks are 128 KB). Checked on a PC
   against ffmpeg with the host's reader (`libpgpu/pgpu_mp3.c`): the same
   sound to within 1 of 32768 (host-library.md).
+- **Decoding Ogg Vorbis** (`vorbis.c`): Tremor, Xiph's integer Vorbis
+  decoder (libvorbisidec), with libogg's framing (`gpu/audio/tremor`,
+  vendored unchanged; BSD-3-Clause; `README.piegpu` there says what's
+  from where). stb_vorbis was tried first and dropped: it mis-decodes
+  6-channel files (its open issue nothings/stb#1594; 1 to 5 channels were
+  right). libogg takes the pages apart and checks their CRCs, Tremor's
+  synthesis layer decodes the packets (as libvorbis' is used, without
+  vorbisfile), 32-bit fixed point out (16-bit samples shifted left 9, as
+  its `ov_read` has it); mono doubled, 3 to 6 channels mixed down in
+  Vorbis' order (FL C FR RL RR LFE: centre and rears at −3 dB, the LFE
+  left out, normalized), the volume applied. A sample is one Ogg page:
+  up to 64 KB, of any number of packets (seconds of sound), so a page is
+  fed once and decoded 1024 frames a step as the output has room, each
+  step's time the page's plus the frames before it (`CAudio::DecodePage`),
+  and freed for the host when all of it is decoded; `MaxUnit` is 64 KB
+  for it. A packet's sound overlaps the packet before, so a stream opened
+  at a page in the middle (a jump) gives the first packet no sound: the
+  first page then only primes the decoder (its sound dropped: its pages
+  are numbered on from the header pages' when it's the stream's start),
+  and the host starts one page early (`pgpu_ogg_seek`); the stream's first
+  page again (a loop) resets the decoder (`ogg_stream_reset`,
+  `vorbis_synthesis_restart`). Circle has no `toupper`, `labs` or `memchr`:
+  `tremor/compat/`, force-included; `alloca` is the compiler's builtin.
+  Checked on a PC against libvorbis and ffmpeg (host-library.md), and on the
+  Zero 2 W: the demo track with jumps and loops, and 6-channel files (840
+  kbps) with 0 ms of silence. Not yet run on the Zero (its decoding in the
+  main loop, 1024 frames a turn).
 - **A core of its own:** on the Zero 2 W the decoder runs on core 1
   (`CCores` in `gpu/kernel.h`; Circle configured with `ARM_ALLOW_MULTI_CORE`,
   `devtools/build-gpu.sh`; cores 2 and 3 halt). On the Zero, one

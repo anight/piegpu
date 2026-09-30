@@ -496,33 +496,44 @@ the GL frame rate.
 
 ### 7.13 Audio
 
-One **audio stream**, stream 3: AAC access units or MPEG audio frames (MP3),
-decoded by the RPi and played on HDMI (when the monitor takes audio), mixed
+One **audio stream**, stream 3: AAC access units, MPEG audio frames (MP3) or
+Ogg Vorbis pages, decoded by the RPi and played on HDMI (when the monitor takes audio), mixed
 down to stereo. It can
 be the clock of a video stream: that stream then shows the frame due at the
 time being heard, so picture and sound stay together.
 
 | Op | Name | Payload | Meaning |
 |---|---|---|---|
-| `0xC4` | AUDIO_OPEN | `u32 stream` (3), `u32 codec` (2 = AAC, 3 = MP3), `u32 video_stream` (0: none, or 1–2), `u32 config_bytes`, `u8 config[config_bytes]` (padded to words) | The stream is (re)opened. Codec 2: AAC with this AudioSpecificConfig (an MP4's esds has it); its samples are raw access units, as MP4 stores them. Codec 3: MPEG-1, 2 or 2.5 audio, layer 3 (MP3), 2 or 1, config the first frame's 4-byte header (the sample rate and channels); its samples are whole frames, header first, as an MP3 file has them (without its ID3 tags or a Xing/Info frame); every frame at the first one's sample rate; not free format. With a video stream, that stream's clock follows the sound from now on (without `PLAY`), and it shows its first frame until the sound starts. The volume is the RPi's default (its `volume=` option, 10%). `ENUM` for another codec or a configuration the decoder doesn't take. An open stream is closed first. |
+| `0xC4` | AUDIO_OPEN | `u32 stream` (3), `u32 codec` (2 = AAC, 3 = MP3, 4 = Vorbis), `u32 video_stream` (0: none, or 1–2), `u32 config_bytes`, `u8 config[config_bytes]` (padded to words) | The stream is (re)opened. Codec 2: AAC with this AudioSpecificConfig (an MP4's esds has it); its samples are raw access units, as MP4 stores them. Codec 3: MPEG-1, 2 or 2.5 audio, layer 3 (MP3), 2 or 1, config the first frame's 4-byte header (the sample rate and channels); its samples are whole frames, header first, as an MP3 file has them (without its ID3 tags or a Xing/Info frame); every frame at the first one's sample rate; not free format. Codec 4: Vorbis in Ogg (stereo from up to five channels in Vorbis' order, FL C FR RL RR; the LFE and any more left out), config the stream's three header packets (identification, comment, setup) as Ogg pages with their CRCs, the comment may be emptied (`libpgpu/pgpu_ogg.c` sends it without its tags), the pages numbered as the stream's are (the setup's page just before the first page of sound); its samples are the stream's Ogg pages as the file has them, whole, one a sample (other logical streams' pages left out). With a video stream, that stream's clock follows the sound from now on (without `PLAY`), and it shows its first frame until the sound starts. The volume is the RPi's default (its `volume=` option, 10%). `ENUM` for another codec or a configuration the decoder doesn't take. An open stream is closed first. |
 
 The stream's other commands and its reply are a video stream's, with stream
 3:
 
-- `MEDIA_DATA`: a sample is one access unit (an MP3 frame) (flags `FIRST`,
-  `LAST`, `EOS` as there; `KEYFRAME` and `CONFIG` are ignored); its `pts` is
-  its first frame's time. An MP3 frame's bit reservoir may start in the
-  frames before it, so the frames go in order; the first ones after the open
-  may give no sound.
+- `MEDIA_DATA`: a sample is one access unit (an MP3 frame, an Ogg page), at
+  most 65536 bytes (flags `FIRST`, `LAST`, `EOS` as there; `KEYFRAME` and
+  `CONFIG` are ignored); its `pts` is its first frame's time (an Ogg page's:
+  the granule position of the page before it, in samples, as time). An MP3
+  frame's bit reservoir may start in the frames before it, so the frames go
+  in order; the first ones after the open may give no sound. A Vorbis
+  packet's sound needs the packet before it: when the first page after the
+  open isn't the stream's first page of sound (the pages start somewhere in
+  the middle), it only primes the decoder, and its sound is left out (up to
+  the end of the first page where a packet ends); the next page's sound then
+  comes in full, from its `pts`. So to be heard from a page, the host starts
+  with the one before it. The stream's first page of sound again (the host
+  looping the file) starts the decoding again as a new stream's.
 - `MEDIA_CONTROL`: `PLAY` (after a pause: the sound goes on; `arg` is
   ignored), `PAUSE` (silence; the sound, and so the video that follows it,
   stops), `CLOSE`, and op 5 `VOLUME`: `arg` the volume in percent, 0 … 100
-  (from the next access unit).
+  (from the next access unit; an Ogg page's sound is decoded a piece at a
+  time, 1024 frames, and takes it from the next piece).
 - `MEDIA_STATUS` (every 100 ms while it's open, and on `MEDIA_GET_STATUS`):
   flags as a video stream's, and bits 15–8 the volume (percent); `bytes_done`, `ring_bytes`, `samples_done`,
-  `max_samples` for flow control as there; `decoded`: access units decoded;
+  `max_samples` for flow control as there (an Ogg page is done once all its
+  sound is decoded); `decoded`: access units (pages) decoded;
   `shown`: milliseconds of silence played because no sound was decoded yet
-  (the stream ran dry); `dropped`: access units that didn't decode;
+  (the stream ran dry); `dropped`: access units that didn't decode (Vorbis: pages after which
+  the decoder had lost packets: a page's CRC wrong, pages missing);
   `shown_pts`: the time being heard; `waiting`: milliseconds of sound decoded
   and waiting.
 - **Flow control** as a video stream's: 512 KB and 1024 samples not yet

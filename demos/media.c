@@ -1,5 +1,5 @@
 /*
- * media.c - an MP4 or an MP3 played by the GPU.
+ * media.c - an MP4, an MP3 or an Ogg Vorbis file played by the GPU.
  *
  * An MP4's H.264 track (pgpu_mp4) goes to the RPi's decoder sample by sample
  * as it is in the file (pgpu_media_sample_read: from the file straight into
@@ -12,8 +12,9 @@
  * together round after round.
  *
  * An MP3 (pgpu_mp3: MPEG audio frames) goes to the audio stream frame by
- * frame the same way. Sound alone (an MP3, or an MP4 without video) shows
- * what's playing: title, artist, the stream, the time on a bar.
+ * frame the same way, an Ogg Vorbis file (pgpu_ogg) page by page. Sound alone
+ * (an MP3, an Ogg, or an MP4 without video) shows what's playing: title,
+ * artist, the stream, the time on a bar.
  *
  * The file: PGPU_MEDIA_PATH (a host with a filesystem: the ESP32-P4's microSD
  * card, the page's file for hosts/web), the PGPU_MEDIA environment variable
@@ -38,6 +39,7 @@
 #include "pgpu.h"
 #include "pgpu_mp4.h"
 #include "pgpu_mp3.h"
+#include "pgpu_ogg.h"
 #include "hud.h"
 #include "pgpu_perf.h"
 #include "screen.h"
@@ -119,58 +121,76 @@ static bool file_read (void *ctx, uint64_t offset, void *buffer, uint32_t bytes)
 #endif
 #endif
 
-/* the sound: an MP4's AAC track or an MP3's frames */
+/* the sound: an MP4's AAC track, an MP3's frames or an Ogg's pages */
 typedef struct
 {
-	bool mp3;				/* else amp4 */
+	enum { SOUND_AAC, SOUND_MP3, SOUND_OGG } kind;
 	pgpu_mp4_t amp4;
 	pgpu_mp3_t mp3s;
+	pgpu_ogg_t oggs;
 } sound_t;
 
 static bool sound_next (sound_t *s, pgpu_mp4_sample_t *sample)
 {
-	if (!s->mp3)
+	if (s->kind == SOUND_AAC)
 	{
 		return pgpu_mp4_next (&s->amp4, sample);
 	}
 	pgpu_mp3_sample_t f;
-	if (!pgpu_mp3_next (&s->mp3s, &f))
+	pgpu_ogg_sample_t p;
+	bool got = s->kind == SOUND_MP3 ? pgpu_mp3_next (&s->mp3s, &f) : pgpu_ogg_next (&s->oggs, &p);
+	if (!got)
 	{
 		return false;
 	}
-	sample->offset = f.offset;
-	sample->size = f.size;
-	sample->pts_us = sample->dts_us = f.pts_us;
+	sample->offset = s->kind == SOUND_MP3 ? f.offset : p.offset;
+	sample->size = s->kind == SOUND_MP3 ? f.size : p.size;
+	sample->pts_us = sample->dts_us = s->kind == SOUND_MP3 ? f.pts_us : p.pts_us;
 	sample->keyframe = true;
 	return true;
 }
 
 static void sound_rewind (sound_t *s)
 {
-	if (s->mp3)
+	switch (s->kind)
 	{
-		pgpu_mp3_rewind (&s->mp3s);
-	}
-	else
-	{
-		pgpu_mp4_rewind (&s->amp4);
+	case SOUND_AAC:	pgpu_mp4_rewind (&s->amp4); break;
+	case SOUND_MP3:	pgpu_mp3_rewind (&s->mp3s); break;
+	case SOUND_OGG:	pgpu_ogg_rewind (&s->oggs); break;
 	}
 }
 
-static bool sound_error (const sound_t *s)		{ return s->mp3 ? s->mp3s.error : s->amp4.error; }
-static int64_t sound_duration (const sound_t *s)	{ return s->mp3 ? s->mp3s.duration_us : s->amp4.duration_us; }
-static pgpu_read_t sound_reader (const sound_t *s)	{ return s->mp3 ? s->mp3s.read : s->amp4.read; }
-static void *sound_ctx (const sound_t *s)		{ return s->mp3 ? s->mp3s.ctx : s->amp4.ctx; }
+static bool sound_error (const sound_t *s)
+{
+	return s->kind == SOUND_AAC ? s->amp4.error : s->kind == SOUND_MP3 ? s->mp3s.error : s->oggs.error;
+}
+static int64_t sound_duration (const sound_t *s)
+{
+	return   s->kind == SOUND_AAC ? s->amp4.duration_us : s->kind == SOUND_MP3 ? s->mp3s.duration_us
+	       : s->oggs.duration_us;
+}
+static pgpu_read_t sound_reader (const sound_t *s)
+{
+	return s->kind == SOUND_AAC ? s->amp4.read : s->kind == SOUND_MP3 ? s->mp3s.read : s->oggs.read;
+}
+static void *sound_ctx (const sound_t *s)
+{
+	return s->kind == SOUND_AAC ? s->amp4.ctx : s->kind == SOUND_MP3 ? s->mp3s.ctx : s->oggs.ctx;
+}
 
 static void sound_open (const sound_t *s, uint32_t video_stream)
 {
-	if (s->mp3)
+	switch (s->kind)
 	{
-		pgpu_audio_open (PGPU_AUDIO_MP3, video_stream, s->mp3s.header, sizeof s->mp3s.header);
-	}
-	else
-	{
+	case SOUND_AAC:
 		pgpu_audio_open (PGPU_AUDIO_AAC, video_stream, s->amp4.asc, s->amp4.asc_size);
+		break;
+	case SOUND_MP3:
+		pgpu_audio_open (PGPU_AUDIO_MP3, video_stream, s->mp3s.header, sizeof s->mp3s.header);
+		break;
+	case SOUND_OGG:
+		pgpu_audio_open (PGPU_AUDIO_VORBIS, video_stream, s->oggs.config, s->oggs.config_size);
+		break;
 	}
 }
 
@@ -208,9 +228,23 @@ static bool seek_video (pgpu_mp4_t *m, int64_t target, pgpu_mp4_sample_t *sample
 	return true;
 }
 
-/* the sound from its first sample at or after target */
+/* the sound from its first sample at or after target (an Ogg's from the page
+   before it, which the RPi's decoder only primes itself on: pgpu_ogg_seek) */
 static bool sound_seek (sound_t *s, int64_t target, pgpu_mp4_sample_t *sample)
 {
+	if (s->kind == SOUND_OGG)
+	{
+		pgpu_ogg_sample_t p;
+		if (!pgpu_ogg_seek (&s->oggs, target, &p))
+		{
+			return false;
+		}
+		sample->offset = p.offset;
+		sample->size = p.size;
+		sample->pts_us = sample->dts_us = p.pts_us;
+		sample->keyframe = true;
+		return true;
+	}
 	sound_rewind (s);
 	while (sound_next (s, sample))
 	{
@@ -309,7 +343,7 @@ int main (void)
 	}
 
 	/* the file: an MP4 (its H.264 track and its AAC track, either may be
-	   missing) or an MP3 */
+	   missing), an Ogg Vorbis file or an MP3 */
 	pgpu_mp4_t mp4;
 	static sound_t snd;
 	bool video = false, audio = false, file = false;
@@ -335,9 +369,13 @@ int main (void)
 	{
 		video = pgpu_mp4_open (&mp4, reader, ctx, size);
 		audio = pgpu_mp4_open_audio (&snd.amp4, reader, ctx, size);
-		if (!video && !audio)
+		if (!video && !audio && (audio = pgpu_ogg_open (&snd.oggs, reader, ctx, size)))
 		{
-			audio = snd.mp3 = pgpu_mp3_open (&snd.mp3s, reader, ctx, size);
+			snd.kind = SOUND_OGG;
+		}
+		if (!video && !audio && (audio = pgpu_mp3_open (&snd.mp3s, reader, ctx, size)))
+		{
+			snd.kind = SOUND_MP3;
 		}
 		file = video || audio;
 		if (file)
@@ -346,7 +384,7 @@ int main (void)
 		}
 		else
 		{
-			printf ("media: %s isn't an MP4 with an H.264 or AAC track, or an MP3\n", path);
+			printf ("media: %s isn't an MP4 with an H.264 or AAC track, an Ogg Vorbis file or an MP3\n", path);
 		}
 	}
 	else if (path)
@@ -359,14 +397,18 @@ int main (void)
 		size_t size = (size_t) (media_file_end - media_file);
 		video = pgpu_mp4_open_memory (&mp4, media_file, size);
 		audio = pgpu_mp4_open_memory_audio (&snd.amp4, media_file, size);
-		if (!video && !audio)
+		if (!video && !audio && (audio = pgpu_ogg_open_memory (&snd.oggs, media_file, size)))
 		{
-			audio = snd.mp3 = pgpu_mp3_open_memory (&snd.mp3s, media_file, size);
+			snd.kind = SOUND_OGG;
+		}
+		if (!video && !audio && (audio = pgpu_mp3_open_memory (&snd.mp3s, media_file, size)))
+		{
+			snd.kind = SOUND_MP3;
 		}
 	}
 	if (!video && !audio)
 	{
-		printf ("media: the file isn't an MP4 with an H.264 or AAC track, or an MP3\n");
+		printf ("media: the file isn't an MP4 with an H.264 or AAC track, an Ogg Vorbis file or an MP3\n");
 		return 1;
 	}
 	if (video)
@@ -380,9 +422,25 @@ int main (void)
 		printf ("media: %s: no H.264 track: sound only\n", source);
 	}
 	char stream[80] = "";			/* the sound, for the screen */
-	const char *title = video ? mp4.title : snd.mp3 ? snd.mp3s.title : snd.amp4.title;
-	const char *artist = snd.mp3 ? snd.mp3s.artist : "";
-	if (snd.mp3)
+	const char *title =   video ? mp4.title : snd.kind == SOUND_MP3 ? snd.mp3s.title
+			    : snd.kind == SOUND_OGG ? snd.oggs.title : snd.amp4.title;
+	const char *artist = snd.kind == SOUND_MP3 ? snd.mp3s.artist : snd.kind == SOUND_OGG ? snd.oggs.artist : "";
+	if (snd.kind == SOUND_OGG)
+	{
+		const pgpu_ogg_t *o = &snd.oggs;
+		printf ("media: Ogg Vorbis: %u Hz, %u channels, %u kbps, %.2f s, %u bytes of headers%s%s%s%s\n",
+			(unsigned) o->sample_rate, (unsigned) o->channels, (unsigned) (o->bitrate / 1000),
+			o->duration_us / 1e6, (unsigned) o->config_size, o->title[0] ? ", title " : "", o->title,
+			o->artist[0] ? ", artist " : "", o->artist);
+		int n = snprintf (stream, sizeof stream, "OGG VORBIS  %u.%u KHZ  %s", (unsigned) o->sample_rate / 1000,
+				  (unsigned) o->sample_rate % 1000 / 100,
+				  o->channels == 1 ? "MONO" : o->channels == 2 ? "STEREO" : "SURROUND");
+		if (o->bitrate)
+		{
+			snprintf (stream + n, sizeof stream - n, "  %u KBPS", (unsigned) (o->bitrate / 1000));
+		}
+	}
+	else if (snd.kind == SOUND_MP3)
 	{
 		const pgpu_mp3_t *m = &snd.mp3s;
 		printf ("media: MP3 (layer %u): %u Hz, %u channels, %u kbps, %s%.2f s%s%s%s%s\n",

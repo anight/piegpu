@@ -1,0 +1,16 @@
+Tremor (libvorbisidec), the Xiph.Org Foundation's integer Vorbis decoder,
+vendored for the RPi's Ogg Vorbis decoding (gpu/audio/vorbis.c), with the
+parts of libogg it needs:
+
+- *.c, *.h, COPYING: https://gitlab.xiph.org/xiph/tremor, commit 820fb32
+  (2025-04-03), unchanged; without vorbisfile.c (files: the host reads them)
+  and the build files.
+- libogg/: bitwise.c, framing.c, crctable.h, COPYING from
+  https://gitlab.xiph.org/xiph/ogg, commit 06a5e02 (2026-03-02), unchanged.
+- ogg/: that libogg's ogg.h and os_types.h, unchanged, and config_types.h,
+  which libogg's configure writes, written here (the types Tremor's own
+  config_types.h has).
+- compat/: written here, the C library functions they need that Circle
+  hasn't (toupper, labs, memchr).
+
+License: BSD-3-Clause, Copyright (c) 2002 Xiph.org Foundation (both).

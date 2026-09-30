@@ -67,13 +67,15 @@ print('firmware/: piegpu %s (%s) for %s' % (manifest['version'], manifest.get('g
 PY
 
 # the files Test Video and Test Audio play (their servers don't let a page
-# fetch them), downloaded once: what, file, URL
+# fetch them), downloaded once: what, file, URL (with a User-Agent that says
+# who asks, as Wikimedia's User-Agent policy asks of scripts)
 fetch_media ()
 {
 	local what=$1 file=$HERE/media/$2 url=$3
 	if [ ! -f "$file" ]; then
 		mkdir -p "$HERE/media"
-		curl -sSfL -o "$file.part" "$url" && mv "$file.part" "$file" && echo "media/: $what" \
+		curl -sSfL -A "piegpu-make-firmware (https://github.com/anight/piegpu)" -o "$file.part" "$url" \
+			&& mv "$file.part" "$file" && echo "media/: $what" \
 			|| echo "media/: no $2 (the download failed): the page can't play it"
 	fi
 }
@@ -84,6 +86,9 @@ fetch_media "the Big Buck Bunny trailer" bbb_trailer-480p.mov \
 # MP3, 44.1 kHz stereo, 320 kbps, 2:05
 fetch_media '"Monkeys Spinning Monkeys"' monkeys_spinning_monkeys.mp3 \
 	"https://incompetech.com/music/royalty-free/mp3-royaltyfree/Monkeys%20Spinning%20Monkeys.mp3"
+# ... as Ogg Vorbis (Wikimedia Commons), 44.1 kHz stereo, 128 kbps, 2:05
+fetch_media '"Monkeys Spinning Monkeys" (Ogg Vorbis)' monkeys_spinning_monkeys.ogg \
+	"https://upload.wikimedia.org/wikipedia/commons/4/47/Kevin_MacLeod_~_Monkeys_Spinning_Monkeys.ogg"
 
 # the page's demos (WebAssembly)
 EMSDK_ENV=${EMSDK:-$HOME/emsdk}/emsdk_env.sh

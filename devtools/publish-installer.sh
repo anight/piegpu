@@ -27,7 +27,7 @@ fi
 "$PAGE/make-firmware.sh"
 
 for f in firmware/manifest.json firmware/LICENCE.broadcom demos/gears.js demos/media.js \
-	 media/bbb_trailer-480p.mov media/monkeys_spinning_monkeys.mp3; do
+	 media/bbb_trailer-480p.mov media/monkeys_spinning_monkeys.mp3 media/monkeys_spinning_monkeys.ogg; do
 	if [ ! -f "$PAGE/$f" ]; then
 		echo "publish-installer.sh: no $f: the page would be incomplete" >&2
 		exit 1

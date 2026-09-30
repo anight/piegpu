@@ -146,7 +146,8 @@ void pgpu_media_request_status (uint32_t stream);
    HDMI with the video stream video_stream (0: none), whose clock then follows
    the sound. codec PGPU_AUDIO_AAC: AAC access units (raw, as MP4 has them),
    config the AudioSpecificConfig (pgpu_mp4's asc); PGPU_AUDIO_MP3: MPEG audio
-   frames, config the first frame's 4-byte header (pgpu_mp3's header). Its
+   frames, config the first frame's 4-byte header (pgpu_mp3's header);
+   PGPU_AUDIO_VORBIS: Ogg pages, config the header pages (pgpu_ogg's config). Its
    samples, room, control and status as a video stream's, with stream
    PGPU_AUDIO_STREAM: pgpu_media_sample_read, pgpu_media_room, ... */
 void pgpu_audio_open (uint32_t codec, uint32_t video_stream, const void *config, uint32_t config_bytes);

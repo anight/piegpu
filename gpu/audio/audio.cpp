@@ -4,6 +4,7 @@
 #include "audio.h"
 #include "aac.h"
 #include "mp3.h"
+#include "vorbis.h"
 #include <pgpu_protocol.h>
 #include <circle/logger.h>
 #include <circle/timer.h>
@@ -12,6 +13,9 @@
 #include <assert.h>
 
 LOGMODULE ("audio");
+
+#define MAX_FRAMES	(AAC_MAX_FRAMES > MP3_MAX_FRAMES ? AAC_MAX_FRAMES : MP3_MAX_FRAMES)
+#define PCM_FRAMES	(MAX_FRAMES > VORBIS_CHUNK_FRAMES ? MAX_FRAMES : VORBIS_CHUNK_FRAMES)
 
 #define STATUS_US	100000		// MEDIA_STATUS while open (as a video stream's)
 #define DECODE_US	2000		// the main loop's turn when no core of its own decodes
@@ -32,6 +36,7 @@ CAudio::CAudio (CVCHIQDevice *pVCHIQ, CVideo *pVideo)
 	m_nCodec (0),
 	m_pAAC (nullptr),
 	m_pMP3 (nullptr),
+	m_pVorbis (nullptr),
 	m_nMaxFrames (AAC_MAX_FRAMES),
 	m_pOut (nullptr),
 	m_pLastOut (nullptr),
@@ -54,7 +59,10 @@ CAudio::CAudio (CVCHIQDevice *pVCHIQ, CVideo *pVideo)
 	m_nErrors (0),
 	m_bEOS (FALSE),
 	m_pUnit (new u8[MaxUnit]),
-	m_pPCM (new s16[2 * (AAC_MAX_FRAMES > MP3_MAX_FRAMES ? AAC_MAX_FRAMES : MP3_MAX_FRAMES)]),
+	m_pPCM (new s16[2 * PCM_FRAMES]),
+	m_bPageFed (FALSE),
+	m_nPageFrames (0),
+	m_nLosses (0),
 	m_nLastStatus (0),
 	m_nLastDebug (0)
 {
@@ -78,7 +86,7 @@ void CAudio::SetDefaultVolume (unsigned nPercent)
 u32 CAudio::Open (u32 nCodec, unsigned nVideoStream, const u8 *pConfig, unsigned nConfigBytes)
 {
 	Close ();
-	if (nCodec != PGPU_AUDIO_AAC && nCodec != PGPU_AUDIO_MP3)
+	if (nCodec != PGPU_AUDIO_AAC && nCodec != PGPU_AUDIO_MP3 && nCodec != PGPU_AUDIO_VORBIS)
 	{
 		return PGPU_ERR_ENUM;
 	}
@@ -94,15 +102,19 @@ u32 CAudio::Open (u32 nCodec, unsigned nVideoStream, const u8 *pConfig, unsigned
 		m_pAAC = aac_open (pConfig, nConfigBytes, &nRate, &nChannels);
 		m_nMaxFrames = AAC_MAX_FRAMES;
 	}
-	else
+	else if (nCodec == PGPU_AUDIO_MP3)
 	{
 		m_pMP3 = mp3_open (pConfig, nConfigBytes, &nRate, &nChannels);
 		m_nMaxFrames = MP3_MAX_FRAMES;
 	}
-	if (!m_pAAC && !m_pMP3)
+	else
 	{
-		LOGWARN ("The %s decoder doesn't take this configuration (%u bytes)",
-			 nCodec == PGPU_AUDIO_AAC ? "AAC" : "MP3", nConfigBytes);
+		m_pVorbis = vorbis_open (pConfig, nConfigBytes, &nRate, &nChannels);
+		m_nMaxFrames = VORBIS_CHUNK_FRAMES;
+	}
+	if (!m_pAAC && !m_pMP3 && !m_pVorbis)
+	{
+		LOGWARN ("The %s decoder doesn't take this configuration (%u bytes)", CodecName (nCodec), nConfigBytes);
 		return PGPU_ERR_ENUM;
 	}
 
@@ -138,6 +150,8 @@ u32 CAudio::Open (u32 nCodec, unsigned nVideoStream, const u8 *pConfig, unsigned
 	m_nDecoded = 0;
 	m_nErrors = 0;
 	m_bEOS = FALSE;
+	m_bPageFed = FALSE;
+	m_nLosses = 0;
 
 	// the decoder may take it now
 	DataMemBarrier ();
@@ -149,7 +163,7 @@ u32 CAudio::Open (u32 nCodec, unsigned nVideoStream, const u8 *pConfig, unsigned
 		m_pVideo->SetClock (m_nVideoStream, this);
 	}
 	LOGNOTE ("Stream: %s, %u Hz, %u channels (as stereo), volume %u%%, %s%s",
-		 nCodec == PGPU_AUDIO_AAC ? "AAC" : "MP3", nRate, nChannels,
+		 CodecName (nCodec), nRate, nChannels,
 		 m_nVolume, m_bOwnCore ? "decoded on a core of its own" : "decoded in the main loop",
 		 m_nVideoStream ? ", the video's clock" : "");
 
@@ -341,7 +355,14 @@ boolean CAudio::DecodeOne (void)
 	}
 
 	const TSample &S = m_Samples[nDone % MaxSamples];
-	if (S.nSize)
+	if (S.nSize && m_nCodec == PGPU_AUDIO_VORBIS)
+	{
+		if (!DecodePage (S))
+		{
+			return TRUE;			// (the rest of it next time)
+		}
+	}
+	else if (S.nSize)
 	{
 		CopyFromRing (S.nOffset, m_pUnit, S.nSize);
 		int nFrames = Decode (m_pUnit, S.nSize, m_pPCM);
@@ -377,6 +398,51 @@ boolean CAudio::DecodeOne (void)
 	return TRUE;
 }
 
+// Vorbis: an Ogg page, of any number of packets (seconds of sound, maybe):
+// fed to the decoder once, then decoded a step at a time as the output has
+// room; each step's time is the page's plus the frames before it. The page
+// is done (its room back to the host) when all of it is decoded
+boolean CAudio::DecodePage (const TSample &S)
+{
+	if (!m_bPageFed)
+	{
+		CopyFromRing (S.nOffset, m_pUnit, S.nSize);
+		vorbis_feed (m_pVorbis, m_pUnit, S.nSize);
+		m_bPageFed = TRUE;
+		m_nPageFrames = 0;
+	}
+
+	bool bMore;
+	int nFrames = vorbis_decode (m_pVorbis, m_pPCM, m_nMaxFrames, &bMore);
+	if (nFrames > 0)
+	{
+		TMark &M = m_Marks[m_nMarks % MaxMarks];
+		M.nFrame = m_pOut->GetWritten ();
+		M.nPTS = S.nPTS + (s64) m_nPageFrames * 1000000 / m_nRate;
+		DataMemBarrier ();
+		m_nMarks = m_nMarks + 1;
+		m_pOut->Write (m_pPCM, nFrames);
+		m_nPageFrames += nFrames;
+	}
+	if (!bMore)
+	{
+		return FALSE;
+	}
+
+	m_bPageFed = FALSE;
+	unsigned nLosses = vorbis_losses (m_pVorbis);
+	if (nLosses != m_nLosses)
+	{
+		if (m_nErrors++ < 10)
+		{
+			LOGWARN ("%u packets lost before %d ms", nLosses - m_nLosses, (int) (S.nPTS / 1000));
+		}
+		m_nLosses = nLosses;
+	}
+	m_nDecoded = m_nDecoded + 1;
+	return TRUE;
+}
+
 int CAudio::Decode (const u8 *pUnit, unsigned nBytes, s16 *pFrames)
 {
 	return   m_nCodec == PGPU_AUDIO_AAC ? aac_decode (m_pAAC, pUnit, nBytes, pFrames)
@@ -389,9 +455,13 @@ void CAudio::SetDecoderVolume (void)
 	{
 		aac_set_volume (m_pAAC, m_nVolume * 65536 / 100);
 	}
-	else
+	else if (m_nCodec == PGPU_AUDIO_MP3)
 	{
 		mp3_set_volume (m_pMP3, m_nVolume * 65536 / 100);
+	}
+	else
+	{
+		vorbis_set_volume (m_pVorbis, m_nVolume * 65536 / 100);
 	}
 }
 
@@ -404,8 +474,16 @@ void CAudio::CloseDecoder (void)
 {
 	aac_close (m_pAAC);
 	mp3_close (m_pMP3);
+	vorbis_close (m_pVorbis);
 	m_pAAC = nullptr;
 	m_pMP3 = nullptr;
+	m_pVorbis = nullptr;
+}
+
+const char *CAudio::CodecName (u32 nCodec)
+{
+	return   nCodec == PGPU_AUDIO_AAC ? "AAC"
+	       : nCodec == PGPU_AUDIO_MP3 ? "MP3" : "Vorbis";
 }
 
 void CAudio::DecodeLoop (void)

@@ -67,11 +67,19 @@ add_dependencies(gpu build_info_values)
 # the audio decoders, a library of their own flags: AAC, audio/aac.c with
 # FAAD2 (audio/faad2, GPL 2 or later): its shims first (audio/faad2/compat),
 # its defines, no warnings; libfaad's sources with the C library shim
-# force-included. MP3, audio/mp3.c with minimp3 (audio/minimp3, CC0, a header)
+# force-included. MP3, audio/mp3.c with minimp3 (audio/minimp3, CC0, a header).
+# Ogg Vorbis, audio/vorbis.c with Tremor and libogg (audio/tremor, BSD-3-Clause:
+# <ogg/ogg.h> from there; alloca is the compiler's; its C library shim
+# force-included)
 file(GLOB libfaad audio/faad2/libfaad/*.c)
-add_library(audio_codecs STATIC ${libfaad} audio/faad2/compat/faad_circle.c audio/aac.c audio/mp3.c)
+file(GLOB tremor audio/tremor/*.c audio/tremor/libogg/*.c)
+add_library(audio_codecs STATIC ${libfaad} audio/faad2/compat/faad_circle.c audio/aac.c audio/mp3.c
+	${tremor} audio/tremor/compat/tremor_circle.c audio/vorbis.c)
 target_link_libraries(audio_codecs PUBLIC circle_flags)
-target_include_directories(audio_codecs PRIVATE audio/faad2/compat ${CIRCLE_INCLUDE_DIRS} audio/faad2 audio/faad2/libfaad)
+target_include_directories(audio_codecs PRIVATE audio/faad2/compat ${CIRCLE_INCLUDE_DIRS} audio/faad2 audio/faad2/libfaad
+	audio/tremor)
+set_source_files_properties(${tremor} PROPERTIES
+	COMPILE_OPTIONS "-Dalloca=__builtin_alloca;-include;${CMAKE_CURRENT_SOURCE_DIR}/audio/tremor/compat/tremor_circle.h")
 target_compile_options(audio_codecs PRIVATE -DHAVE_INTTYPES_H=1 -DHAVE_STRING_H=1 -DHAVE_MEMCPY=1 -DHAVE_LRINTF=1
 	"-DPACKAGE_VERSION=\"2.11.3\"" -w $<$<EQUAL:${CIRCLE_AARCH},64>:-mstrict-align>
 	-fmacro-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}/audio/faad2/=

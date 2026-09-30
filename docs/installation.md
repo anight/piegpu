@@ -167,8 +167,9 @@ driver built in (not tested).
   also be edited by hand (the [README](../README.md#kernel-command-line-cmdlinetxt)
   lists the options).
 - Section 4: **Test OpenGL** runs glxgears-style gears on the RPi from the
-  page; **Test Video** plays a film with its sound, **Test Audio** an MP3
-  (sound needs an HDMI monitor with speakers). **Stop** ends it.
+  page; **Test Video** plays a film with its sound, **Test Audio** a song as
+  an MP3 or as Ogg Vorbis, the format beside it (sound needs an HDMI monitor
+  with speakers). **Stop** ends it.
 
 ## Updating
 
@@ -303,7 +304,7 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory web/installer
 
 `make-firmware.sh` builds the firmware for both boards (it needs the Arm
 toolchains: [README](../README.md#boards-and-building)), the page's demos if
-Emscripten is installed, and downloads the test video and MP3. Then open
+Emscripten is installed, and downloads the test video, MP3 and Ogg. Then open
 http://localhost:8765. Another computer can use the served files as well:
 copy `web/installer` there and serve it the same way (Python 3 on Windows:
 `py -m http.server 8765 --bind 127.0.0.1 --directory installer`).

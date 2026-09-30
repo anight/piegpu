@@ -32,8 +32,9 @@ The host library (`libpgpu/`, board independent) has two layers:
 - **Audio** ([protocol](protocol.md) §7.13): `pgpu_audio_open (codec,
   video_stream, config, config_bytes)` opens the audio stream (stream
   `PGPU_AUDIO_STREAM`, 3) for AAC (`PGPU_AUDIO_AAC`, config the
-  AudioSpecificConfig) or MP3 (`PGPU_AUDIO_MP3`, config the first frame's
-  header) and makes it the clock of that video stream; its samples, room and
+  AudioSpecificConfig), MP3 (`PGPU_AUDIO_MP3`, config the first frame's
+  header) or Ogg Vorbis (`PGPU_AUDIO_VORBIS`, config the header pages:
+  `pgpu_ogg`'s `config`) and makes it the clock of that video stream; its samples, room and
   status go through the media stream calls with stream 3
   (`pgpu_media_sample_read`, `pgpu_media_room`, `pgpu_media_get_status`); `pgpu_audio_volume (percent)` sets the volume,
   and its status says it (`PGPU_AUDIO_STATUS_VOLUME (flags)`: the RPi's
@@ -68,6 +69,30 @@ The host library (`libpgpu/`, board independent) has two layers:
     VBR file with 768 bytes of garbage put in: the same frames, and the same
     sound to within 1 of 32768 (ffmpeg drops LAME's encoder delay, 1105
     frames, which this plays).
+  - `libpgpu/pgpu_ogg.{h,c}` reads an Ogg Vorbis file page by page through
+    it: a page's header at a time, no index; the pages go to the RPi as they
+    are (its decoder checks their CRCs). The first logical stream is taken
+    (its first page must begin a Vorbis stream), other streams' pages and
+    bytes that aren't a page are skipped. The three header packets become
+    the open's config, rebuilt as two pages with the comment emptied (it may
+    hold pictures: 200 KB in one test file; its `TITLE` and `ARTIST` are
+    kept) and numbered so that the first page of sound follows them. A
+    page's time is the granule position of the page before it; the
+    duration, the last page's (read from the end of the file).
+    `pgpu_ogg_seek` goes to the page before the first one at or after a
+    time: the RPi's decoder primes itself on it (a Vorbis packet needs the
+    one before). Checked on a PC, decoding with the RPi's own
+    `gpu/audio/vorbis.c`, against libvorbis (GStreamer's `vorbisdec`),
+    mixed down the same way: 1 to 6 channels, quality −1 to 10, the demo
+    track (the same as ffmpeg's to within 1 of 32768) and a 6-channel file with
+    a 200 KB comment: within 3 of 32768 (Tremor is integer, libvorbis
+    float); after a start in the middle (a jump) the same samples as from
+    the start, sample for sample. A mono file with 1 KB of garbage put into
+    a page: that page is dropped (its CRC), 0.51 s of sound, and the rest is
+    the same as the whole file's.
+    (The demo track's granule positions, written by ffmpeg's muxer, wander
+    by up to 37 samples, under 1 ms, from what its packets decode to; its
+    times do too.)
   - `pgpu_media_sample_read` sends a sample in `MEDIA_DATA` packets, reading
     each packet's data through the callback straight into the packet (the
     samples go as they are: format AVCC). So the only copy on the host is the
@@ -88,7 +113,7 @@ The host library (`libpgpu/`, board independent) has two layers:
     filesystem (POSIX `open`/`lseek`/`read`; on a PC, `media_host`, the file
     the `PGPU_MEDIA` environment variable names), else a file linked into
     the host's image (memory as the file, `pgpu_mp4_open_memory`; CMake
-    `PGPU_MEDIA_EMBED`). The file is an MP4 or, if it's none, an MP3. When the screen
+    `PGPU_MEDIA_EMBED`). The file is an MP4, else an Ogg Vorbis file, else an MP3. When the screen
     changes (panel ↔ HDMI) it resizes the texture; the video keeps its place.
     If the file has an AAC track, its samples go to the audio stream the same
     way, in time order with the video's, and the video follows the sound's
@@ -96,7 +121,7 @@ The host library (`libpgpu/`, board independent) has two layers:
     Buck Bunny trailer: video 32.48 s, audio 32.98 s), so they stay together
     round after round. A file with one of the two tracks plays that one:
     video alone on its own clock, or sound alone, paced by the sound's heard
-    time. Sound alone (an MP3, or an MP4 without video) shows what's
+    time. Sound alone (an MP3, an Ogg, or an MP4 without video) shows what's
     playing: the title and artist, the stream (codec, rate, channels,
     bitrate), the time on a bar and the volume. The volume: `+` and `-` on the console
     (10% a step; a PC's terminal in line mode: then Enter), `m` mutes and
@@ -105,7 +130,8 @@ The host library (`libpgpu/`, board independent) has two layers:
     forward and back, `F` and `B` 5 minutes: from the last keyframe before
     the place (the video track's tables walked from the start: 0.2–0.6 s to
     25 minutes into the film on the P4), both streams closed and opened
-    again there, the sound from the keyframe's time. (The P4's console
+    again there, the sound from the keyframe's time (an Ogg's from the page
+    before it: `pgpu_ogg_seek`). (The P4's console
     needed its UART driver for keys: `hosts/esp32p4/main/app_main.c`.) A
     MEDIA_STATUS of the stream before it was opened again can still come
     after the open: the library drops one that says more is in flight than
@@ -117,8 +143,8 @@ The host library (`libpgpu/`, board independent) has two layers:
     app): SDMMC slot 0, 4 bits at 40 MHz (CLK GPIO43, CMD 44, D0–D3 39–42);
     the card's supply is on-chip LDO channel 4 through a P-MOSFET that GPIO45
     switches on (low). FAT32 at `/sdcard` (ESP-IDF 5.5's FatFs has exFAT
-    off), the file `/sdcard/video1.mp4` (CMake `PGPU_MEDIA_FILE`: an MP4 or an
-    MP3). Measured
+    off), the file `/sdcard/video1.mp4` (CMake `PGPU_MEDIA_FILE`: an MP4, an
+    Ogg or an MP3). Measured
     on a 64 GB card: POSIX `read` into the packet 12.8 MB/s (16.4 MB/s into
     DMA-capable memory); unbuffered stdio (`fread` with no buffer) managed
     84 KB/s, buffered 2.1 MB/s. With stdio a 1920×800 24 fps film (1.9 GB,

@@ -6,7 +6,7 @@ Pico or an ESP32): the microcontroller sends OpenGL ES 2.0 commands (and 1.1's
 fixed function), and the RPi renders them with its VideoCore IV V3D, to an
 ST7789 panel or to HDMI. Video (H.264, e.g. from an MP4) is decoded by the
 VideoCore into textures that any draw can use, and sound (AAC, e.g. the
-MP4's, or MP3) is decoded by the RPi and played on HDMI, with the picture
+MP4's, MP3 or Ogg Vorbis) is decoded by the RPi and played on HDMI, with the picture
 following it.
 
 The host can be any microcontroller board capable of the link: I2S as the
@@ -43,9 +43,9 @@ Documentation ([docs/](docs/README.md)):
 
 | Directory | What |
 |---|---|
-| `gpu/` | the RPi's firmware: links (`link/`), outputs (`display/`), renderer, video (`video/`), audio (`audio/`, with FAAD2 and minimp3), SD card installer (`install/`) |
+| `gpu/` | the RPi's firmware: links (`link/`), outputs (`display/`), renderer, video (`video/`), audio (`audio/`, with FAAD2, minimp3 and Tremor), SD card installer (`install/`) |
 | `drivers/` | the RPi's V3D and ST7789 (DMA) drivers |
-| `libpgpu/` | the host library: protocol encoding, pgl (the GL ES API), MP4 reader, HUD, self tests |
+| `libpgpu/` | the host library: protocol encoding, pgl (the GL ES API), MP4, MP3 and Ogg readers, HUD, self tests |
 | `transports/` | links for the host library: `pico-i2s`, `esp32p4-i2s`, `pc-usb` |
 | `hosts/` | builds per host: `pico`, `esp32p4`, `pc`, `web` (a page, WebAssembly) |
 | `demos/` | the demos, for every host |
@@ -308,7 +308,7 @@ cmake -S hosts/pc -B hosts/pc/build && make -C hosts/pc/build -j$(($(nproc) - 1)
   the screen), so programs pace on the RPi's frames as on the Pico's. The
   demos build for the PC as `DEMO_host` (`hosts/pc/build/gears_host`: 60
   fps on the panel, render 1.2 ms a frame). `media_host` plays the file
-  the `PGPU_MEDIA` environment variable names, an MP4 or an MP3 (else its
+  the `PGPU_MEDIA` environment variable names, an MP4, an Ogg Vorbis file or an MP3 (else its
   linked-in test video).
 - While a PC's desktop uses the RPi as a monitor (below), GL frames are
   rendered off screen: turn that monitor off first.
@@ -467,19 +467,23 @@ needed. Test OpenGL runs `demos/gears.c` (60 fps, render 1.2 ms, as
 (853x480 H.264, Blender Foundation, CC BY 3.0), decoded by the RPi's
 VideoCore: 25 fps, 0 dropped; with its sound on an HDMI monitor that has
 speakers (5.1 AAC, mixed down to stereo, at the `volume=` setting). Test
-Audio runs it on an MP3, "Monkeys Spinning Monkeys" by Kevin MacLeod
-(incompetech.com, CC BY 4.0; 44.1 kHz stereo, 320 kbps, 2:05), decoded by
-the RPi (minimp3), with the title, artist and time on the screen. Verified on
+Audio runs it on "Monkeys Spinning Monkeys" by Kevin MacLeod
+(incompetech.com, CC BY 4.0), as the format beside the button says: an MP3
+(44.1 kHz stereo, 320 kbps, 2:05; decoded by minimp3) or Ogg Vorbis (from
+Wikimedia Commons: 44.1 kHz stereo, 128 kbps; decoded by Tremor), decoded by
+the RPi, with the title, artist and time on the screen. Verified on
 the Zero 2 W with the Dell S2421H: 0 broken frames, 0 ms of silence; the
 webcam's microphone heard the track in order and at its speed (3 s windows
 over 21 s, each found on its own in the track's first 40 s: 7 of 8 at the
-same place within 5 ms, the eighth under a noise in the room). Stop
+same place within 5 ms, the eighth under a noise in the room); the Ogg,
+through the page's WebAssembly demo run by Node on the RPi's serial port
+(the page's own code, not in Chrome): 0 broken pages, 0 ms of silence. Stop
 ends the demo's session (`STREAM_END`, docs/protocol.md §13): the RPi resets
 and its serial port carries the log and the installer again (firmware
 without it restarts instead). `make-firmware.sh`
 builds the demos when Emscripten is installed (`EMSDK`, default `~/emsdk`)
-and downloads the trailer and the MP3 into `web/installer/media/` (their
-servers don't let a page fetch them).
+and downloads the trailer, the MP3 and the Ogg into `web/installer/media/`
+(their servers don't let a page fetch them).
 
 ## The RPi as a USB monitor for Linux
 
@@ -529,6 +533,7 @@ source.
 | Raspberry Pi firmware (`bootcode.bin`, `start.elf`, `fixup.dat`) | fetched into `third_party/circle/boot` | Broadcom's licence: binary redistribution ([LICENCE.broadcom](third_party/circle/boot/LICENCE.broadcom) there) | starting the RPi; the VideoCore's H.264 decoder, ISP and audio service | the card, the installer page |
 | [FAAD2](https://github.com/knik0/faad2) 2.11.3 | `gpu/audio/faad2` | GPL-2.0-or-later | AAC decoding | the firmware |
 | [minimp3](https://github.com/lieff/minimp3) | `gpu/audio/minimp3` | CC0-1.0 | MP3 decoding | the firmware |
+| [Tremor](https://gitlab.xiph.org/xiph/tremor) (libvorbisidec) and [libogg](https://gitlab.xiph.org/xiph/ogg) | `gpu/audio/tremor` | BSD-3-Clause | Ogg Vorbis decoding | the firmware |
 | [Raspberry Pi userland](https://github.com/raspberrypi/userland) (its MMAL client) | `gpu/video/userland` (a copy), `third_party/userland` | BSD-3-Clause | talking to the VideoCore's video components | the firmware |
 | GCC runtime (`libgcc`), newlib's `libm` (Arm GNU Toolchain 15.2) | the toolchain | GPL-3.0 with the GCC Runtime Library Exception; newlib: BSD-style | runtime support linked into the firmware | the firmware |
 | [Raspberry Pi Pico SDK](https://github.com/raspberrypi/pico-sdk) | fetched by `hosts/pico` | BSD-3-Clause | the Pico host | Pico images |

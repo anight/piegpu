@@ -1,9 +1,10 @@
 //
 // audio.h
 //
-// The audio stream (docs/protocol.md 7.13): AAC access units or MP3 frames
-// from the host (MEDIA_DATA on stream 3) into a ring, decoded (aac.c, FAAD2;
-// mp3.c, minimp3) to 16-bit stereo at the stream's volume, played on HDMI
+// The audio stream (docs/protocol.md 7.13): AAC access units, MP3 frames or
+// Ogg Vorbis pages from the host (MEDIA_DATA on stream 3) into a ring, decoded
+// (aac.c, FAAD2; mp3.c, minimp3; vorbis.c, Tremor) to 16-bit stereo at the
+// stream's volume, played on HDMI
 // through the VideoCore's audio service (CAudioOut). The sound is the clock
 // of the video stream it plays with (CVideo::SetClock): GetTime says which
 // time is being heard now.
@@ -24,12 +25,13 @@
 
 struct aac_s;
 struct mp3_s;
+struct vorbis_s;
 
 class CAudio : public CMediaClock
 {
 public:
 	static const unsigned RingBytes = 512 * 1024;	// compressed data
-	static const unsigned MaxSamples = 1024;	// (21 s of 48 kHz AAC, 26 s of 44.1 kHz MP3)
+	static const unsigned MaxSamples = 1024;	// (21 s of 48 kHz AAC, 26 s of 44.1 kHz MP3; Ogg pages: more)
 	static const unsigned StatusWords = 12;
 
 	CAudio (CVCHIQDevice *pVCHIQ, CVideo *pVideo);
@@ -78,15 +80,17 @@ private:
 		s64 nPTS;
 	};
 	static const unsigned MaxMarks = 256;	// (5 s of 1024-frame units)
-	static const unsigned MaxUnit = 16384;	// bytes of an access unit (AAC: 6144 bits a channel; MP3: 2881)
+	static const unsigned MaxUnit = 65536;	// bytes of a unit (AAC: 6144 bits a channel; MP3: 2881; an Ogg page: 65307)
 	static const unsigned MaxRates = 4;	// outputs kept, one a sample rate
 
 	boolean DecodeOne (void);		// the decoder's step: FALSE if nothing to do
+	boolean DecodePage (const TSample &S);	// Vorbis': FALSE while the page has more
 	// the stream's codec's
 	int Decode (const u8 *pUnit, unsigned nBytes, s16 *pFrames);
 	void SetDecoderVolume (void);
 	const char *DecoderError (void);
 	void CloseDecoder (void);
+	static const char *CodecName (u32 nCodec);
 	void CopyFromRing (u32 nOffset, u8 *pTo, unsigned nBytes) const;
 
 private:
@@ -98,10 +102,11 @@ private:
 	// the stream (core 0 opens and closes it while the decoder is parked)
 	volatile boolean m_bOpen;
 	unsigned m_nVideoStream;
-	u32 m_nCodec;				// PGPU_AUDIO_AAC, PGPU_AUDIO_MP3
+	u32 m_nCodec;				// PGPU_AUDIO_AAC, PGPU_AUDIO_MP3, PGPU_AUDIO_VORBIS
 	struct aac_s *m_pAAC;			// the stream's decoder, one of these
 	struct mp3_s *m_pMP3;
-	unsigned m_nMaxFrames;			// frames a unit decodes to, at most
+	struct vorbis_s *m_pVorbis;
+	unsigned m_nMaxFrames;			// frames a unit decodes to, at most (Vorbis: a step)
 	CAudioOut *m_pOut;			// the stream's (one of m_pOuts)
 	CAudioOut *m_pOuts[MaxRates];		// set up once each (the VideoCore's service)
 	CAudioOut *m_pLastOut;
@@ -132,6 +137,9 @@ private:
 	volatile boolean m_bEOS;
 	u8 *m_pUnit;				// one unit, contiguous
 	s16 *m_pPCM;				// its frames
+	boolean m_bPageFed;			// Vorbis: the sample being decoded is fed (a step at a time)
+	unsigned m_nPageFrames;			// ... and has decoded to these frames so far
+	unsigned m_nLosses;			// the decoder's packets lost, when last seen
 
 	u64 m_nLastStatus;
 	u64 m_nLastDebug;

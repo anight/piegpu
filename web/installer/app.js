@@ -755,9 +755,10 @@ async function restartRPi (how)
 // the files the Test Video and Test Audio buttons play (web/installer/
 // make-firmware.sh puts them here): the Big Buck Bunny trailer (Blender
 // Foundation, CC BY 3.0), "Monkeys Spinning Monkeys" (Kevin MacLeod,
-// incompetech.com, CC BY 4.0)
+// incompetech.com, CC BY 4.0) as an MP3 and as an Ogg Vorbis file (the
+// format beside the button)
 const TEST_VIDEO = 'media/bbb_trailer-480p.mov';
-const TEST_AUDIO = 'media/monkeys_spinning_monkeys.mp3';
+const TEST_AUDIO = {mp3: 'media/monkeys_spinning_monkeys.mp3', ogg: 'media/monkeys_spinning_monkeys.ogg'};
 
 let demo = null;			// the running demo's GLStream
 
@@ -773,10 +774,10 @@ async function testVideo ()
 
 async function testAudio ()
 {
-	await runMedia (TEST_AUDIO, 'sound', 'The sound');
+	await runMedia (TEST_AUDIO[$('test-audio-format').value], 'sound', 'The sound');
 }
 
-// the media demo (demos/media.c) playing url, an MP4 or an MP3 (what: its
+// the media demo (demos/media.c) playing url, an MP4, an Ogg or an MP3 (what: its
 // name in the messages)
 async function runMedia (url, what, title)
 {
@@ -920,6 +921,7 @@ function updateButtons ()
 	$('run-gears').disabled = busy || !installer;
 	$('test-video').disabled = busy || !installer;
 	$('test-audio').disabled = busy || !installer;
+	$('test-audio-format').disabled = busy || !installer;
 	$('reset').disabled = busy || !installer;
 	$('prepare').disabled = busy;
 	$('prepare-write').disabled = busy || !$('prepare-board').value;

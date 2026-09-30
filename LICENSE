@@ -38,6 +38,10 @@ them all, with what each is used for):
 
   gpu/audio/minimp3/        minimp3, CC0 1.0, with its LICENSE file.
 
+  gpu/audio/tremor/         Tremor (libvorbisidec) and libogg, BSD-3-Clause,
+                            Copyright (c) 2002 Xiph.org Foundation, with
+                            their COPYING files (compat/ is piegpu's).
+
   gpu/video/userland/       The MMAL client of the Raspberry Pi userland,
                             BSD-3-Clause, with its LICENCE file.
 

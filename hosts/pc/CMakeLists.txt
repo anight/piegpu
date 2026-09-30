@@ -63,6 +63,6 @@ foreach(app gears breakout flight toy-tunnel toy-spheres toy-clouds toy-voronoi 
 	target_link_libraries(${app}_host pgl)
 	pgpu_demo(${app}_host ${app})
 endforeach()
-# media_host plays the file PGPU_MEDIA names (an MP4 or an MP3), else the one
+# media_host plays the file PGPU_MEDIA names (an MP4, an Ogg or an MP3), else the one
 # linked in
 target_compile_definitions(media_host PRIVATE PGPU_MEDIA_ENV=1)
