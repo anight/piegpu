@@ -96,8 +96,9 @@ already has piegpu needs neither: go to [Step 2](#step-2-connect).
      checks it. If the folder holds other things, the page asks first:
      that's the moment to notice a wrong folder.
    - Any browser: press **Download a .zip**, and unpack the zip onto the
-     card, so that the six files are at the top of the card (not in a
-     folder of their own).
+     card, so that the files are at the top of the card (not in a folder of
+     their own). The zip also holds `LICENCE.broadcom`, the terms of the
+     Raspberry Pi's firmware files.
 
    The files: `bootcode.bin`, `start.elf`, `fixup.dat` (the Raspberry Pi's
    firmware), `kernel.img` (Zero) or `kernel8.img` (Zero 2 W), and

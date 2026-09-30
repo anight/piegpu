@@ -490,7 +490,13 @@ async function prepareZip ()
 	const board = $('prepare-board').value;
 	await run (async () =>
 	{
-		const zip = makeZip (await cardFiles (board));
+		const files = await cardFiles (board);
+		const licence = await fetch ('firmware/LICENCE.broadcom');	// (goes along with the RPi's firmware)
+		if (licence.ok)
+		{
+			files.set ('LICENCE.broadcom', new Uint8Array (await licence.arrayBuffer ()));
+		}
+		const zip = makeZip (files);
 		const a = document.createElement ('a');
 		a.href = URL.createObjectURL (zip);
 		a.download = `piegpu-${manifest.version}-${board}.zip`;

@@ -29,6 +29,7 @@ BOARDS="zero zero2"
 mkdir -p "$OUT/zero" "$OUT/zero2"
 cp "$BOOT/bootcode.bin" "$BOOT/start.elf" "$BOOT/fixup.dat" "$ROOT/build/zero/kernel.img" "$OUT/zero/"
 cp "$BOOT/bootcode.bin" "$BOOT/start.elf" "$BOOT/fixup.dat" "$ROOT/build/zero2/kernel8.img" "$OUT/zero2/"
+cp "$BOOT/LICENCE.broadcom" "$OUT/"	# (the Raspberry Pi firmware's terms: its notice goes along)
 
 # shellcheck disable=SC2086
 python3 - "$OUT" "$(git -C "$ROOT" describe --always --dirty)" $BOARDS <<'PY'

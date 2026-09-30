@@ -502,3 +502,35 @@ the display off (`gpu/display/gud_display`).
   device, and the new one had the same `/dev/dri` name). For a desktop that
   must leave it alone, keep `gud=off` on the RPi (the default), or tag it in udev: `SUBSYSTEM=="drm", KERNEL=="card*",
   ATTRS{idVendor}=="1d50", ATTRS{idProduct}=="614d", TAG+="mutter-device-ignore"`.
+
+## Licence and third-party software
+
+piegpu's own code is under the BSD 2-Clause licence ([LICENSE](LICENSE)).
+The RPi firmware built from it (`kernel.img`, `kernel8.img`) links Circle
+(GPL-3.0) and FAAD2 (GPL-2.0-or-later), so those binaries are distributed
+under the GPL, version 3, with this repository and its submodules as their
+source.
+
+| Software | Where | Licence | Used for | In what's distributed |
+|---|---|---|---|---|
+| [Circle](https://github.com/rsta2/circle) Step51.1 (piegpu's [fork](https://github.com/anight/circle/tree/piegpu)) | `third_party/circle` | GPL-3.0; its FatFs add-on ChaN's BSD-style licence, its VCHIQ add-on BSD-3-Clause or GPL-2.0 | the RPi firmware's base: drivers, USB gadget, VCHIQ, FatFs | the firmware |
+| Raspberry Pi firmware (`bootcode.bin`, `start.elf`, `fixup.dat`) | fetched into `third_party/circle/boot` | Broadcom's licence: binary redistribution ([LICENCE.broadcom](third_party/circle/boot/LICENCE.broadcom) there) | starting the RPi; the VideoCore's H.264 decoder, ISP and audio service | the card, the installer page |
+| [FAAD2](https://github.com/knik0/faad2) 2.11.3 | `gpu/audio/faad2` | GPL-2.0-or-later | AAC decoding | the firmware |
+| [minimp3](https://github.com/lieff/minimp3) | `gpu/audio/minimp3` | CC0-1.0 | MP3 decoding | the firmware |
+| [Raspberry Pi userland](https://github.com/raspberrypi/userland) (its MMAL client) | `gpu/video/userland` (a copy), `third_party/userland` | BSD-3-Clause | talking to the VideoCore's video components | the firmware |
+| GCC runtime (`libgcc`), newlib's `libm` (Arm GNU Toolchain 15.2) | the toolchain | GPL-3.0 with the GCC Runtime Library Exception; newlib: BSD-style | runtime support linked into the firmware | the firmware |
+| [Raspberry Pi Pico SDK](https://github.com/raspberrypi/pico-sdk) | fetched by `hosts/pico` | BSD-3-Clause | the Pico host | Pico images |
+| [ESP-IDF](https://github.com/espressif/esp-idf) 5.5 | installed separately | Apache-2.0 | the ESP32-P4 host | P4 images |
+| [libusb](https://libusb.info) 1.0 | the system's | LGPL-2.1-or-later | the PC host's USB (linked dynamically) | — |
+| [Emscripten](https://emscripten.org) | installed separately | MIT or University of Illinois/NCSA | the installer page's demos (WebAssembly; its runtime code is in the output) | the installer page |
+| [Jet](https://github.com/CubeCoders/Jet) | `demos/jet/Jet` | MIT | the Jet demos' renderer | Jet demo images |
+| JetExamples scenes (CubeCoders) | `demos/jet/examples` | MIT | the Jet demos | Jet demo images |
+| picojet (its model viewer, runtime pieces, asset converter) | `demos/jet`, `demos/assets` | BSD-2-Clause | the Jet demos, the demos' models | demo images |
+| Meshes and textures: radio, column, biplane | `demos/assets` | CC0 (opengameart.org) | flight, the Jet viewer | demo images |
+| Meshes and textures: cube, f117, f22, efa, sphere, crab, the pikuma texture | `demos/assets` | not stated: shipped with Gustavo Pezzi's pikuma.com 3D graphics course, kept under the terms they arrived with | the Jet viewer, flight | demo images |
+| [Mesa](https://mesa3d.org) 26.2.3 (patched: `patches/mesa-vc4-dump.patch`) | `third_party/mesa` | MIT (mostly; per file) | `tools/glslc`: GLSL to QPU code, on the PC | — (its output: the demos' shader binaries) |
+| [VK-GL-CTS](https://github.com/KhronosGroup/VK-GL-CTS) (dEQP) | `third_party/VK-GL-CTS` | Apache-2.0 | conformance tests (`tools/deqp`) | — |
+| [usbboot](https://github.com/raspberrypi/usbboot) (`rpiboot`) | installed separately | Apache-2.0 | `devtools/run.sh`; the protocol `web/installer/rpiboot.js` speaks | — |
+| Arm GNU Toolchain 15.2 | installed separately | GPL-3.0 (GCC, binutils) | building the firmware | — |
+| *Big Buck Bunny* trailer (Blender Foundation) | downloaded by `make-firmware.sh` | CC BY 3.0 | Test Video | the installer page |
+| "Monkeys Spinning Monkeys" (Kevin MacLeod, incompetech.com) | downloaded by `make-firmware.sh` | CC BY 4.0 | Test Audio | the installer page |

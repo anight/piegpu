@@ -1,0 +1,71 @@
+BSD 2-Clause License
+
+Copyright (c) 2026, Andrei Nigmatulin
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+--------------------------------------------------------------------------------
+Components under their own terms
+--------------------------------------------------------------------------------
+
+The above covers piegpu's own code. These parts came from elsewhere and keep
+the licences they arrived with (the README's "Third-party software" lists
+them all, with what each is used for):
+
+  gpu/audio/faad2/          FAAD2 (libfaad), GPL-2.0-or-later, with its
+                            COPYING file.
+
+  gpu/audio/minimp3/        minimp3, CC0 1.0, with its LICENSE file.
+
+  gpu/video/userland/       The MMAL client of the Raspberry Pi userland,
+                            BSD-3-Clause, with its LICENCE file.
+
+  demos/jet/Jet/            Jet, MIT, Copyright (c) 2026 CubeCoders Limited,
+                            with its LICENSE file.
+
+  demos/jet/examples/       Scenes from CubeCoders' JetExamples, MIT, with
+                            their LICENSE file.
+
+  demos/jet/viewer/,        From picojet, BSD-2-Clause, Copyright (c) 2026,
+  demos/jet/runtime/        Andrei Nigmatulin (the parts demos/jet/README.md
+  (parts)                   names as picojet's).
+
+  demos/assets/             Meshes and textures converted by picojet's tools:
+                              radio, column, biplane: opengameart.org, CC0;
+                              cube, f117, f22, efa, sphere, crab, the pikuma
+                              texture: shipped with the renderer from Gustavo
+                              Pezzi's pikuma.com 3D graphics course, and
+                              retained under whatever terms they arrived with.
+
+  third_party/              Submodules, each under its own licence: Circle
+                            (GPL-3.0), Mesa (MIT and others), VK-GL-CTS
+                            (Apache-2.0), the Raspberry Pi userland
+                            (BSD-3-Clause).
+
+The RPi firmware built from gpu/ links Circle (GPL-3.0) and FAAD2
+(GPL-2.0-or-later): the firmware binaries (kernel.img, kernel8.img) are
+therefore distributed under the GPL, version 3; their source is this
+repository and its submodules. They run with the Raspberry Pi's own firmware
+(bootcode.bin, start.elf, fixup.dat), which is distributed in binary form
+under Broadcom's licence (third_party/circle/boot/LICENCE.broadcom).
