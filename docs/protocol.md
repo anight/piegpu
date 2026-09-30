@@ -511,7 +511,7 @@ The stream's other commands and its reply are a video stream's, with stream
   stops), `CLOSE`, and op 5 `VOLUME`: `arg` the volume in percent, 0 … 100
   (from the next access unit).
 - `VIDEO_STATUS` (every 100 ms while it's open, and on `VIDEO_GET_STATUS`):
-  flags as a video stream's; `bytes_done`, `ring_bytes`, `samples_done`,
+  flags as a video stream's, and bits 15–8 the volume (percent); `bytes_done`, `ring_bytes`, `samples_done`,
   `max_samples` for flow control as there; `decoded`: access units decoded;
   `shown`: milliseconds of silence played because no sound was decoded yet
   (the stream ran dry); `dropped`: access units that didn't decode;

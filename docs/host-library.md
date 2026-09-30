@@ -34,7 +34,10 @@ The host library (`libpgpu/`, board independent) has two layers:
   AAC with its AudioSpecificConfig and makes it the clock of that video
   stream; its samples, room and status go through the video calls with
   stream 3 (`pgpu_video_sample_read`, `pgpu_video_room`,
-  `pgpu_video_get_status`); `pgpu_audio_volume (percent)` sets the volume.
+  `pgpu_video_get_status`); `pgpu_audio_volume (percent)` sets the volume,
+  and its status says it (`PGPU_AUDIO_STATUS_VOLUME (flags)`: the RPi's
+  `volume=` until a host changes it). A stream without video
+  (`video_stream` 0) keeps its own clock: sound alone.
 - **The data path from a file:** a file is read through a callback
   (`pgpu_read_t`: bytes at an offset), so it needn't be in memory: on an SD
   card the filesystem reads its sectors as needed.
@@ -72,7 +75,12 @@ The host library (`libpgpu/`, board independent) has two layers:
     way, in time order with the video's, and the video follows the sound's
     clock. Both tracks loop with the same period, the longer track's (the Big
     Buck Bunny trailer: video 32.48 s, audio 32.98 s), so they stay together
-    round after round.
+    round after round. A file with one of the two tracks plays that one:
+    video alone on its own clock, or sound alone (a black screen, the HUD),
+    paced by the sound's heard time. The volume: `+` and `-` on the console
+    (10% a step; a PC's terminal in line mode: then Enter), `m` mutes and
+    unmutes; the installer page has a slider (its `volumeRequest`, read by
+    the WebAssembly demo each frame).
     `hosts/pc/videoplay` plays a file on the PC, through a reader that does as
     an SD filesystem does (whole sectors, a one-sector cache).
   - **The ESP32-P4's microSD card** (`hosts/esp32p4/main/sdcard.c`, the video

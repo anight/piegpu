@@ -552,6 +552,7 @@ async function runOnRPi (name, title, files)
 		demo = new GLStream (bytes => connection.writeRaw (bytes));
 		connection.rawSink = chunk => demo.push (chunk);
 		$('stop-demo').hidden = false;
+		$('volume-control').hidden = name !== 'video';
 		status ('action-status', 'Starting…');
 		let code;
 		try
@@ -561,6 +562,12 @@ async function runOnRPi (name, title, files)
 				if (line.trim ())
 				{
 					log (`(${name}) ${line}`);
+				}
+				const v = line.match (/^video: volume (\d+)%/);
+				if (v)
+				{
+					$('volume').value = v[1];		// (the RPi's, or the last set)
+					$('volume-value').textContent = `${v[1]}%`;
 				}
 				const m = line.match (new RegExp (`^${name}: (.*fps.*)$`));
 				if (m || / running$/.test (line))
@@ -574,6 +581,7 @@ async function runOnRPi (name, title, files)
 			connection.rawSink = null;
 			demo = null;
 			$('stop-demo').hidden = true;
+			$('volume-control').hidden = true;
 		}
 
 		// the session ends (STREAM_END): the RPi resets and answers this page
@@ -689,6 +697,14 @@ function init ()
 	$('run-gears').onclick = testOpenGL;
 	$('test-video').onclick = testVideo;
 	$('stop-demo').onclick = () => demo?.stop ();
+	$('volume').oninput = () =>
+	{
+		$('volume-value').textContent = `${$('volume').value}%`;
+		if (demo)
+		{
+			demo.volumeRequest = Number ($('volume').value);	// (demos/video.c takes it)
+		}
+	};
 	$('reset').onclick = reset;
 	loadManifest ();
 	updateButtons ();

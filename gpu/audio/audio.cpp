@@ -478,7 +478,8 @@ boolean CAudio::GetStatus (u32 *pPayload, boolean bDue)
 	pPayload[0] = PGPU_AUDIO_STREAM;
 	pPayload[1] =   (m_bOpen ? PGPU_VIDEO_OPEN_FLAG : 0)
 		      | (m_bOpen && !m_bPaused ? PGPU_VIDEO_PLAYING : 0)
-		      | (m_bOpen && m_bEOS && nSamplesDone == m_nSamplesIn ? PGPU_VIDEO_ENDED : 0);
+		      | (m_bOpen && m_bEOS && nSamplesDone == m_nSamplesIn ? PGPU_VIDEO_ENDED : 0)
+		      | m_nVolume << 8;			// (the audio stream's: its volume)
 	pPayload[2] = m_nBytesDone;
 	pPayload[3] = RingBytes;
 	pPayload[4] = m_nDecoded;

@@ -14,6 +14,7 @@ export class GLStream
 		this.offset = 0;			// into chunks[0]
 		this.waiter = null;
 		this.stopped = false;
+		this.volumeRequest = -1;		// a new volume for the demo (percent), or -1
 	}
 
 	// bytes from the port

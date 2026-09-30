@@ -36,9 +36,24 @@ static inline bool time_reached (absolute_time_t t)	{ return pgpu_time_us () >= 
 
 #define PICO_ERROR_TIMEOUT	(-1)
 
-/* console input without waiting: none here (the Pico's self test takes 's'
-   for a screenshot) */
+/* console input, waiting at most us: a character, or PICO_ERROR_TIMEOUT
+   (stdin as it is: a terminal in line mode gives the characters after Enter;
+   a page's WebAssembly has none) */
+#ifdef __EMSCRIPTEN__
 static inline int getchar_timeout_us (uint32_t us)	{ (void) us; return PICO_ERROR_TIMEOUT; }
+#else
+#include <poll.h>
+static inline int getchar_timeout_us (uint32_t us)
+{
+	struct pollfd p = {0, POLLIN, 0};
+	unsigned char c;
+	if (poll (&p, 1, (int) (us / 1000)) == 1 && (p.revents & POLLIN) && read (0, &c, 1) == 1)
+	{
+		return c;
+	}
+	return PICO_ERROR_TIMEOUT;
+}
+#endif
 
 static inline void sleep_ms (uint32_t ms)	{ usleep (ms * 1000u); }
 static inline void sleep_us (uint64_t us)	{ usleep ((useconds_t) us); }

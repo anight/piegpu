@@ -177,6 +177,7 @@ enum pgpu_reply
 #define PGPU_AUDIO_AAC			2	/* AUDIO_OPEN codec: raw AAC access units, config: the AudioSpecificConfig */
 #define PGPU_AUDIO_OPEN_WORDS		4	/* before the config */
 #define PGPU_AUDIO_VOLUME		5	/* VIDEO_CONTROL on the audio stream: arg the volume, percent (0 .. 100) */
+#define PGPU_AUDIO_STATUS_VOLUME(flags)	(((flags) >> 8) & 0xFFu)	/* its VIDEO_STATUS flags: the volume */
 
 enum pgpu_error
 {

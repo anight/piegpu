@@ -12,7 +12,9 @@
  * Its AAC track, if it has one, goes the same way to the RPi's audio stream
  * (pgpu_audio_open: decoded there, played on HDMI; the video follows the
  * sound's clock). Both tracks loop with the same period, the longer track's,
- * so they stay together round after round.
+ * so they stay together round after round. The volume: '+' and '-' on the
+ * console (10% a step), 'm' mutes and unmutes; on the installer page, its
+ * slider.
  *
  * The samples go as far ahead as the RPi's buffers take (pgpu_video_room),
  * at most AHEAD_US ahead of the frame on screen.
@@ -28,7 +30,17 @@
 #include "pgpu_perf.h"
 #include "screen.h"
 #include "video_program.h"
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
 
+/* the page's volume slider (web/installer: GLStream.volumeRequest): a new
+   volume in percent, or -1 */
+EM_JS (int, web_volume_request, (void), {
+	const v = Module.glIO.volumeRequest;
+	Module.glIO.volumeRequest = -1;
+	return v === undefined ? -1 : v;
+});
+#endif
 #define STREAM		1
 #ifndef AHEAD_US
 #define AHEAD_US	1500000
@@ -91,22 +103,25 @@ int main (void)
 	{
 	}
 
-	pgpu_mp4_t mp4;
-	bool opened = false;
+	/* the file: its H.264 track and its AAC track, either may be missing */
+	pgpu_mp4_t mp4, amp4;
+	bool video = false, audio = false, file = false;
 	const char *source = "the MP4 linked in";
 #ifdef PGPU_VIDEO_PATH
 	int fd = open (PGPU_VIDEO_PATH, O_RDONLY);
-	if (fd >= 0)
+	off_t size = fd >= 0 ? lseek (fd, 0, SEEK_END) : 0;
+	if (size > 0)
 	{
-		off_t size = lseek (fd, 0, SEEK_END);
-		opened = size > 0 && pgpu_mp4_open (&mp4, file_read, (void *) (intptr_t) fd, (uint64_t) size);
-		if (opened)
+		video = pgpu_mp4_open (&mp4, file_read, (void *) (intptr_t) fd, (uint64_t) size);
+		audio = pgpu_mp4_open_audio (&amp4, file_read, (void *) (intptr_t) fd, (uint64_t) size);
+		file = video || audio;
+		if (file)
 		{
 			source = PGPU_VIDEO_PATH;
 		}
 		else
 		{
-			printf ("video: %s isn't an MP4 with an H.264 track this reads\n", PGPU_VIDEO_PATH);
+			printf ("video: %s has no H.264 or AAC track this reads\n", PGPU_VIDEO_PATH);
 		}
 	}
 	else
@@ -114,19 +129,27 @@ int main (void)
 		printf ("video: no %s\n", PGPU_VIDEO_PATH);
 	}
 #endif
-	if (!opened && !pgpu_mp4_open_memory (&mp4, video_mp4, (size_t) (video_mp4_end - video_mp4)))
+	if (!file)
 	{
-		printf ("video: the linked-in file isn't an MP4 with an H.264 track\n");
+		size_t size = (size_t) (video_mp4_end - video_mp4);
+		video = pgpu_mp4_open_memory (&mp4, video_mp4, size);
+		audio = pgpu_mp4_open_memory_audio (&amp4, video_mp4, size);
+	}
+	if (!video && !audio)
+	{
+		printf ("video: the file has no H.264 or AAC track this reads\n");
 		return 1;
 	}
-	printf ("video: %s: %ux%u H.264, %u samples, %.2f s, %u MB%s%s\n", source, (unsigned) mp4.width,
-		(unsigned) mp4.height, (unsigned) mp4.samples, mp4.duration_us / 1e6,
-		(unsigned) (mp4.size >> 20), mp4.title[0] ? ", title " : "", mp4.title);
-
-	/* its AAC track, from the same file */
-	pgpu_mp4_t amp4;
-	bool audio = mp4.memory ? pgpu_mp4_open_memory_audio (&amp4, mp4.memory, (size_t) mp4.size)
-				: pgpu_mp4_open_audio (&amp4, mp4.read, mp4.ctx, mp4.size);
+	if (video)
+	{
+		printf ("video: %s: %ux%u H.264, %u samples, %.2f s, %u MB%s%s\n", source, (unsigned) mp4.width,
+			(unsigned) mp4.height, (unsigned) mp4.samples, mp4.duration_us / 1e6,
+			(unsigned) (mp4.size >> 20), mp4.title[0] ? ", title " : "", mp4.title);
+	}
+	else
+	{
+		printf ("video: %s: no H.264 track: sound only\n", source);
+	}
 	if (audio)
 	{
 		printf ("video: AAC track: %u Hz, %u channels, %u samples, %.2f s\n",
@@ -138,15 +161,18 @@ int main (void)
 		printf ("video: no AAC track: no sound\n");
 	}
 	/* the loop's period: the longer track's */
-	int64_t period = audio && amp4.duration_us > mp4.duration_us ? amp4.duration_us : mp4.duration_us;
+	int64_t period =   !video ? amp4.duration_us
+			 : audio && amp4.duration_us > mp4.duration_us ? amp4.duration_us : mp4.duration_us;
 
 	/* the bottom line: the file's title, in the HUD's capitals */
-	char label[sizeof mp4.title] = "VIDEO";
-	if (mp4.title[0])
+	const char *title = video ? mp4.title : amp4.title;
+	char label[sizeof mp4.title];
+	strcpy (label, video ? "VIDEO" : "SOUND ONLY");
+	if (title[0])
 	{
 		for (size_t i = 0; i < sizeof label; i++)
 		{
-			label[i] = (char) toupper ((unsigned char) mp4.title[i]);
+			label[i] = (char) toupper ((unsigned char) title[i]);
 		}
 	}
 
@@ -175,10 +201,12 @@ int main (void)
 	int64_t pts_base = 0;			/* the round's offset (looping) */
 	bool streaming = false;
 	pgpu_mp4_sample_t sample, asample;
-	bool have = pgpu_mp4_next (&mp4, &sample);
+	bool have = video && pgpu_mp4_next (&mp4, &sample);
 	bool ahave = audio && pgpu_mp4_next (&amp4, &asample);
 	int64_t apts_base = 0;
 	unsigned asent = 0;
+	int volume = -1;			/* percent (-1: not known yet, the RPi's status says) */
+	bool muted = false;
 	unsigned windows = 0, sent = 0, demux_us = 0;
 	perf_t m;
 	memset (&m, 0, sizeof m);
@@ -188,7 +216,13 @@ int main (void)
 		   video's shape (height a multiple of 16); the quad letterboxed on the
 		   screen. Again when the screen changes: the texture's resized, the
 		   video goes on */
-		if (screen_update ("video", vp))
+		bool screen_changed = screen_update ("video", vp);
+		if (!video && !streaming)
+		{
+			pgpu_audio_open (0, amp4.asc, amp4.asc_size);	/* sound only: its own clock */
+			streaming = true;
+		}
+		if (video && screen_changed)
 		{
 			/* a power of two, the screen's width or more, but not above the
 			   video's: a larger texture shows no more detail and costs the
@@ -228,7 +262,7 @@ int main (void)
 
 		/* samples: as many as the RPi takes, up to AHEAD_US ahead */
 		pgpu_video_status_t st;
-		pgpu_video_get_status (STREAM, &st);
+		pgpu_video_get_status (video ? STREAM : PGPU_AUDIO_STREAM, &st);	/* (sound only: the time heard) */
 		int64_t shown = st.shown_pts == PGPU_VIDEO_TIME_NONE ? 0 : st.shown_pts;
 		while (   have && pts_base + sample.pts_us - shown < AHEAD_US
 		       && pgpu_video_room (STREAM) >= sample.size)
@@ -268,14 +302,60 @@ int main (void)
 			}
 		}
 
+		/* the volume: the console's keys, the page's slider */
+		if (audio)
+		{
+			pgpu_video_status_t as;
+			if (   volume < 0 && pgpu_video_get_status (PGPU_AUDIO_STREAM, &as)
+			    && (as.flags & PGPU_VIDEO_OPEN_FLAG))
+			{
+				volume = (int) PGPU_AUDIO_STATUS_VOLUME (as.flags);	/* the RPi's volume= */
+				printf ("video: volume %d%% ('+', '-', 'm' on the console)\n", volume);
+			}
+			bool changed = false;
+			int c;
+			while ((c = getchar_timeout_us (0)) != PICO_ERROR_TIMEOUT)
+			{
+				if (volume >= 0 && (c == '+' || c == '=' || c == '-'))
+				{
+					volume += c == '-' ? -10 : 10;
+					muted = false;
+					changed = true;
+				}
+				else if (volume >= 0 && (c == 'm' || c == 'M'))
+				{
+					muted = !muted;
+					changed = true;
+				}
+			}
+#ifdef __EMSCRIPTEN__
+			int w = web_volume_request ();
+			if (w >= 0)
+			{
+				volume = w;
+				muted = false;
+				changed = true;
+			}
+#endif
+			if (changed)
+			{
+				volume = volume < 0 ? 0 : volume > 100 ? 100 : volume;
+				pgpu_audio_volume (muted ? 0 : (uint32_t) volume);
+				printf ("video: volume %d%%%s\n", volume, muted ? ", muted" : "");
+			}
+		}
+
 		glClear (GL_COLOR_BUFFER_BIT);
-		glUseProgram (prog);
-		glActiveTexture (GL_TEXTURE0);
-		glBindTexture (GL_TEXTURE_2D, texture);
-		glBindBuffer (GL_ARRAY_BUFFER, buffer);
-		glEnableVertexAttribArray (a_pos);
-		glVertexAttribPointer (a_pos, 2, GL_FLOAT, GL_FALSE, 0, (void *) 0);
-		glDrawArrays (GL_TRIANGLES, 0, 6);
+		if (video)
+		{
+			glUseProgram (prog);
+			glActiveTexture (GL_TEXTURE0);
+			glBindTexture (GL_TEXTURE_2D, texture);
+			glBindBuffer (GL_ARRAY_BUFFER, buffer);
+			glEnableVertexAttribArray (a_pos);
+			glVertexAttribPointer (a_pos, 2, GL_FLOAT, GL_FALSE, 0, (void *) 0);
+			glDrawArrays (GL_TRIANGLES, 0, 6);
+		}
 		hud_draw ();
 		pglSwapBuffers ();
 
@@ -290,13 +370,16 @@ int main (void)
 			if (++windows % 5 == 0)
 			{
 				GLenum e = glGetError ();
-				printf ("video: %.1f fps, GPU %.0f%% CPU-G %.0f%% CPU-H %.0f%%; decoded %u shown %u "
-					"dropped %u, waiting %u, at %.2f s, %u samples sent, room %u KB, "
-					"flags %x, GL error 0x%x\n", m.fps, m.gpu * 100, m.cpu_g * 100,
-					m.cpu_h * 100, (unsigned) st.decoded, (unsigned) st.shown,
-					(unsigned) st.dropped, (unsigned) st.waiting, shown / 1e6, sent,
-					(unsigned) (pgpu_video_room (STREAM) / 1024), (unsigned) st.flags,
-					(unsigned) e);
+				if (video)
+				{
+					printf ("video: %.1f fps, GPU %.0f%% CPU-G %.0f%% CPU-H %.0f%%; decoded %u shown %u "
+						"dropped %u, waiting %u, at %.2f s, %u samples sent, room %u KB, "
+						"flags %x, GL error 0x%x\n", m.fps, m.gpu * 100, m.cpu_g * 100,
+						m.cpu_h * 100, (unsigned) st.decoded, (unsigned) st.shown,
+						(unsigned) st.dropped, (unsigned) st.waiting, shown / 1e6, sent,
+						(unsigned) (pgpu_video_room (STREAM) / 1024), (unsigned) st.flags,
+						(unsigned) e);
+				}
 				sent = 0;
 				if (audio)
 				{
