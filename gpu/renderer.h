@@ -118,6 +118,9 @@ public:
 	///	   frames: waits for the current output); both buffers are cleared
 	/// \return FALSE if the output can't have the size (nothing changes then)
 	boolean SetOutput (COutput *pOutput, unsigned nWidth, unsigned nHeight);
+	/// \brief The buffers as after SetOutput: cleared, buffer 0 on screen (the
+	///	   output's first page), the next frame into buffer 1
+	void ResetBuffers (void);
 	COutput *GetOutput (void) const		{ return m_pOutput; }
 
 	/// \return Number of varyings of a shader variant

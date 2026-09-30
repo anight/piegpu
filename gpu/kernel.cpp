@@ -813,6 +813,14 @@ void CKernel::ShowSplash (COutput *pOutput)
 	const char *Value[] = {Monitor, Render, Board, Clocks, pHost, Build};
 	const unsigned Lines = sizeof Label / sizeof Label[0];
 
+	// on HDMI the splash goes into the framebuffer's first page: that page on
+	// screen again (after a host's frames another one may be), the renderer's
+	// next frame into another
+	if (pOutput == &m_HDMI && m_Renderer.GetOutput () == &m_HDMI)
+	{
+		m_Renderer.ResetBuffers ();
+	}
+
 	C2DGraphics Graphics (pOutput->GetDisplay ());
 	if (!Graphics.Initialize ())
 	{

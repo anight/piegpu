@@ -136,6 +136,14 @@ boolean CRenderer::SetOutput (COutput *pOutput, unsigned nWidth, unsigned nHeigh
 	return TRUE;
 }
 
+void CRenderer::ResetBuffers (void)
+{
+	m_pOutput->WaitIdle ();
+	UseBuffers ();
+	m_pOutput->Show (m_pFrameBuffer[0], nullptr, nullptr);
+	m_pOutput->WaitIdle ();
+}
+
 // the output's buffers if it has them (at least three: one on screen, one
 // waiting for the vertical sync, one being drawn), else our own two; cleared.
 // The first frame goes into buffer 1: the output shows buffer 0 at first.
