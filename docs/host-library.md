@@ -101,7 +101,16 @@ The host library (`libpgpu/`, board independent) has two layers:
     bitrate), the time on a bar and the volume. The volume: `+` and `-` on the console
     (10% a step; a PC's terminal in line mode: then Enter), `m` mutes and
     unmutes; the installer page has a slider (its `volumeRequest`, read by
-    the WebAssembly demo each frame).
+    the WebAssembly demo each frame). Jumps, on the console: `f` and `b` 30 s
+    forward and back, `F` and `B` 5 minutes: from the last keyframe before
+    the place (the video track's tables walked from the start: 0.2–0.6 s to
+    25 minutes into the film on the P4), both streams closed and opened
+    again there, the sound from the keyframe's time. (The P4's console
+    needed its UART driver for keys: `hosts/esp32p4/main/app_main.c`.) A
+    MEDIA_STATUS of the stream before it was opened again can still come
+    after the open: the library drops one that says more is in flight than
+    the RPi's buffer holds (`pgpu.c`), else the room would read 0 and
+    nothing more would be sent.
     `hosts/pc/videoplay` plays a file on the PC, through a reader that does as
     an SD filesystem does (whole sectors, a one-sector cache).
   - **The ESP32-P4's microSD card** (`hosts/esp32p4/main/sdcard.c`, the media

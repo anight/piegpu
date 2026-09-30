@@ -23,7 +23,9 @@
  * next round's times follow on, so the RPi's clock just runs.
  *
  * The volume: '+' and '-' on the console (10% a step), 'm' mutes and unmutes;
- * on the installer page, its slider. The samples go as far ahead as the RPi's
+ * on the installer page, its slider. Jumps, on the console: 'f' and 'b' 30 s
+ * forward and back, 'F' and 'B' 5 minutes (from the last keyframe before the
+ * place: both streams are opened again there). The samples go as far ahead as the RPi's
  * buffers take (pgpu_media_room), at most AHEAD_US ahead of what's shown or
  * heard.
  */
@@ -170,6 +172,55 @@ static void sound_open (const sound_t *s, uint32_t video_stream)
 	{
 		pgpu_audio_open (PGPU_AUDIO_AAC, video_stream, s->amp4.asc, s->amp4.asc_size);
 	}
+}
+
+/* the video track from its last keyframe at or before target (the file's
+   time, microseconds): *sample is that keyframe, the next one after it
+   follows; false if the track has none */
+static bool seek_video (pgpu_mp4_t *m, int64_t target, pgpu_mp4_sample_t *sample)
+{
+	static pgpu_mp4_t at;			/* (the reader's state after the keyframe: big) */
+	pgpu_mp4_sample_t s;
+	bool found = false;
+	unsigned n = 0;
+	uint64_t t0 = time_us_64 ();
+	pgpu_mp4_rewind (m);
+	while (pgpu_mp4_next (m, &s) && s.dts_us <= target)
+	{
+		if (++n % 4096 == 0)			/* (a long way: say how it goes) */
+		{
+			printf ("media: seeking: %u samples, at %.1f s, %u ms\n", n, s.dts_us / 1e6,
+				(unsigned) ((time_us_64 () - t0) / 1000));
+		}
+		if (s.keyframe)
+		{
+			at = *m;
+			*sample = s;
+			found = true;
+		}
+	}
+	if (!found || m->error)
+	{
+		pgpu_mp4_rewind (m);
+		return pgpu_mp4_next (m, sample);
+	}
+	*m = at;
+	return true;
+}
+
+/* the sound from its first sample at or after target */
+static bool sound_seek (sound_t *s, int64_t target, pgpu_mp4_sample_t *sample)
+{
+	sound_rewind (s);
+	while (sound_next (s, sample))
+	{
+		if (sample->pts_us >= target)
+		{
+			return true;
+		}
+	}
+	sound_rewind (s);
+	return sound_next (s, sample);
 }
 
 /* text for the HUD's font (capitals, digits, . % : -): in capitals, other
@@ -396,6 +447,8 @@ int main (void)
 	bool have = video && pgpu_mp4_next (&mp4, &sample);
 	bool ahave = audio && sound_next (&snd, &asample);
 	int64_t apts_base = 0;
+	int64_t origin = 0;			/* where the streams (re)started, as sent: the time
+						   until they show something */
 	unsigned asent = 0;
 	int volume = -1;			/* percent (-1: not known yet, the RPi's status says) */
 	bool muted = false;
@@ -456,7 +509,7 @@ int main (void)
 		/* samples: as many as the RPi takes, up to AHEAD_US ahead */
 		pgpu_media_status_t st;
 		pgpu_media_get_status (video ? STREAM : PGPU_AUDIO_STREAM, &st);	/* (sound only: the time heard) */
-		int64_t shown = st.shown_pts == PGPU_MEDIA_TIME_NONE ? 0 : st.shown_pts;
+		int64_t shown = st.shown_pts == PGPU_MEDIA_TIME_NONE ? origin : st.shown_pts;
 		while (   have && pts_base + sample.pts_us - shown < AHEAD_US
 		       && pgpu_media_room (STREAM) >= sample.size)
 		{
@@ -495,19 +548,13 @@ int main (void)
 			}
 		}
 
-		/* the volume: the console's keys, the page's slider */
-		if (audio)
+		/* the console's keys: jumps; the volume (and the page's slider) */
+		int c, jump = 0;
+		bool changed = false;
+		while ((c = getchar_timeout_us (0)) != PICO_ERROR_TIMEOUT)
 		{
-			pgpu_media_status_t as;
-			if (   volume < 0 && pgpu_media_get_status (PGPU_AUDIO_STREAM, &as)
-			    && (as.flags & PGPU_MEDIA_OPEN_FLAG))
-			{
-				volume = (int) PGPU_AUDIO_STATUS_VOLUME (as.flags);	/* the RPi's volume= */
-				printf ("media: volume %d%% ('+', '-', 'm' on the console)\n", volume);
-			}
-			bool changed = false;
-			int c;
-			while ((c = getchar_timeout_us (0)) != PICO_ERROR_TIMEOUT)
+			jump += c == 'f' ? 30 : c == 'b' ? -30 : c == 'F' ? 300 : c == 'B' ? -300 : 0;
+			if (audio)
 			{
 				if (volume >= 0 && (c == '+' || c == '=' || c == '-'))
 				{
@@ -520,6 +567,50 @@ int main (void)
 					muted = !muted;
 					changed = true;
 				}
+			}
+		}
+		if (jump && streaming)
+		{
+			/* from where it is now, in this round, to the place asked */
+			int64_t now = shown - (video ? pts_base : apts_base);
+			int64_t end = video ? period : sound_duration (&snd);
+			if (now < 0)			/* (the next round is being sent, the last one shown) */
+			{
+				now += end;
+			}
+			int64_t target = now + (int64_t) jump * 1000000;
+			target = target < 0 ? 0 : target > end - 5000000 ? (end > 5000000 ? end - 5000000 : 0) : target;
+			if (video)
+			{
+				have = seek_video (&mp4, target, &sample);
+				target = sample.pts_us;		/* (the sound from the keyframe's time) */
+				pgpu_media_control (STREAM, PGPU_MEDIA_CLOSE, 0);
+				pglVideoTexture (texture, STREAM, tex_w, tex_h, mp4.width, mp4.height, mp4.avcc,
+						 mp4.avcc_size);
+			}
+			if (audio)
+			{
+				ahave = sound_seek (&snd, target, &asample);
+				sound_open (&snd, video ? STREAM : 0);
+			}
+			origin = (video ? pts_base : apts_base) + target;
+			char t[16];
+			format_time (t, sizeof t, target);
+			printf ("media: jumped to %s (%+d s asked, from %.1f s)\n", t, jump, now / 1e6);
+#ifdef PGPU_MEDIA_READER
+			char line[200];
+			media_reader_stats (ctx, line, sizeof line);
+			printf ("media: file while jumping: %s\n", line);
+#endif
+		}
+		if (audio)
+		{
+			pgpu_media_status_t as;
+			if (   volume < 0 && pgpu_media_get_status (PGPU_AUDIO_STREAM, &as)
+			    && (as.flags & PGPU_MEDIA_OPEN_FLAG))
+			{
+				volume = (int) PGPU_AUDIO_STATUS_VOLUME (as.flags);	/* the RPi's volume= */
+				printf ("media: volume %d%% ('+', '-', 'm' on the console)\n", volume);
 			}
 #ifdef __EMSCRIPTEN__
 			int w = web_volume_request ();
@@ -587,6 +678,13 @@ int main (void)
 					(unsigned) e);
 			}
 			sent = 0;
+			if (e != GL_NO_ERROR)
+			{
+				uint32_t r[3];
+				pglGetRPiError (r);
+				printf ("media: the RPi's last error: code %u, opcode 0x%02x, detail %u\n", (unsigned) r[0],
+					(unsigned) r[1], (unsigned) r[2]);
+			}
 			printf ("media: link: to the RPi %.2f MB/s", m.link_tx / 1e6f);
 			if (m.link_use >= 0.0f)
 			{

@@ -3,7 +3,7 @@
 include(${CMAKE_CURRENT_LIST_DIR}/../../../demos/demos.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/../../../demos/jet/jet.cmake)
 
-idf_component_register(SRCS app_main.c sdcard.c REQUIRES pgpu esp_driver_gpio esp_driver_sdmmc sdmmc fatfs esp_timer)
+idf_component_register(SRCS app_main.c sdcard.c REQUIRES pgpu esp_driver_gpio esp_driver_sdmmc esp_driver_uart sdmmc fatfs esp_timer)
 
 if(NOT CMAKE_BUILD_EARLY_EXPANSION)
 	if(PGPU_APP STREQUAL "pincheck")	# the pins, before wiring the RPi

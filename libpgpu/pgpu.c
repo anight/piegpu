@@ -350,6 +350,15 @@ void pgpu_deliver_reply (uint8_t opcode, const uint32_t *payload, uint32_t lengt
 	    && payload[0] >= 1 && payload[0] <= PGPU_MEDIA_STREAMS)
 	{
 		uint32_t stream = payload[0], seq = media_seq[stream];
+		/* one of the stream before it was opened again (a jump), which came
+		   after: what it says is in flight (sent since the open less what the
+		   decoder took, mod 2^32) doesn't fit the RPi's buffer */
+		uint32_t bytes = __atomic_load_n (&media_bytes_sent[stream], __ATOMIC_RELAXED);
+		uint32_t samples = __atomic_load_n (&media_samples_sent[stream], __ATOMIC_RELAXED);
+		if (bytes - payload[2] > payload[3] || samples - payload[10] > payload[11])
+		{
+			return;
+		}
 		STORE (media_seq[stream], seq + 1);
 		__atomic_thread_fence (__ATOMIC_RELEASE);
 		for (int i = 0; i < PGPU_MEDIA_STATUS_WORDS; i++)
