@@ -531,7 +531,8 @@ def compile_program(args):
 
     def shader_key(o):
         return (o['stage'], tuple(o['code']), tuple((k, d) for k, d, _ in o['stream']),
-                o['threaded'], o['num_inputs'], o['vattrs_live'], tuple(o['vattr_offsets']))
+                o['threaded'], o['disable_early_z'], o['num_inputs'], o['vattrs_live'],
+                tuple(o['vattr_offsets']))
 
     variant_words = []
     n_variants = 0
@@ -660,7 +661,8 @@ def compile_program(args):
         code = [int(w, 16) for w in o['code']]
         stage = STAGES[o['stage']]
         if stage == 0:
-            info = (1 if o['threaded'] else 0) | o['num_inputs'] << 8
+            # Mesa's disable_early_z: the FS writes its own depth (gl_FragDepthEXT)
+            info = (1 if o['threaded'] else 0) | (2 if o['disable_early_z'] else 0) | o['num_inputs'] << 8
             offsets = [0, 0]
         else:
             # Mesa numbers the attributes the VS reads (vertex elements) in

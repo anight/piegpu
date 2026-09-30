@@ -127,6 +127,10 @@ public:
 	/// \return CLOCKWISE configuration bit for the front face and target orientation
 	static u32 ClockwiseBit (const TGLState &rState);
 
+	/// \return Configuration bits of the depth test, depth writes and early Z
+	/// \param bShaderWritesZ the fragment shader writes its own Z (no early Z)
+	static u32 DepthBits (const TGLState &rState, boolean bShaderWritesZ);
+
 private:
 	// a transformed vertex
 	struct TVertex

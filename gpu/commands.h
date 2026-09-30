@@ -159,7 +159,7 @@ private:
 	u32 *BuildUniforms (const TProgram *pProgram, const TProgramShader *pShader, u32 *pStorageBus,
 			    const TViewport &rViewport, u32 *pBus);
 	u32 BlendMode (void) const;
-	u32 ConfigBits (boolean bFaces) const;
+	u32 ConfigBits (boolean bFaces, boolean bShaderWritesZ) const;
 	void RetireBuffer (TBuffer *pBuffer);
 	void EndFrame (u32 nFlags);
 

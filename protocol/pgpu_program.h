@@ -66,8 +66,10 @@ enum pgpu_blend_mode
 /* PGPU_SH_INFO: stage in bits 31-28 */
 #define PGPU_SHADER_STAGE(w)		((w) >> 28)
 enum pgpu_shader_stage { PGPU_STAGE_FS, PGPU_STAGE_VS, PGPU_STAGE_CS };
-/* FS: threaded (bit 0) | varyings << 8 */
+/* FS: threaded (bit 0) | writes Z (bit 1) | varyings << 8 */
 #define PGPU_SH_FS_THREADED		(1u << 0)
+#define PGPU_SH_FS_WRITES_Z		(1u << 1)	/* gl_FragDepthEXT: no early Z (Mesa's
+							   disable_early_z) */
 #define PGPU_SH_FS_VARYINGS(w)		(((w) >> 8) & 0xFFu)
 /* VS, CS: attribute select bits | total attributes size (bytes) << 8 */
 #define PGPU_SH_ATTR_SELECT(w)		((w) & 0xFFu)

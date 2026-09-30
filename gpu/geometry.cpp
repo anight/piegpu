@@ -15,6 +15,8 @@
 #define CFG_DEPTH_FUNC__SHIFT	12
 #define CFG_DEPTH_OFFSET	(1 << 3)
 #define CFG_Z_UPDATE		(1 << 15)
+#define CFG_EARLY_Z		(1 << 16)
+#define CFG_EARLY_Z_UPDATE	(1 << 17)
 
 // Guard band: clipped vertices stay this far outside the viewport at most.
 // Measured on the hardware (320x240, a floor clipped against the guard band):
@@ -441,20 +443,8 @@ void CGeometry::SetupDraw (const TGLState &rState, boolean bFaces)
 	m_Setup.pUniforms = m_Uniforms;
 	m_Setup.nUniforms = Shader.nUniforms;
 
-	// configuration bits
-	u32 nDepth;
-	if (rState.nEnables & PGPU_CAP_DEPTH_TEST)
-	{
-		nDepth = rState.nDepthFunc << CFG_DEPTH_FUNC__SHIFT;
-		if (rState.bDepthMask)
-		{
-			nDepth |= CFG_Z_UPDATE;
-		}
-	}
-	else
-	{
-		nDepth = PGPU_ALWAYS << CFG_DEPTH_FUNC__SHIFT;	// no test, no depth writes
-	}
+	// configuration bits (the fixed-function shaders write the interpolated Z)
+	u32 nDepth = DepthBits (rState, FALSE);
 
 	m_LineState.nConfigBits = CFG_FORWARD | CFG_REVERSE | nDepth;	// lines and points: no culling
 
@@ -854,6 +844,50 @@ u32 CGeometry::ClockwiseBit (const TGLState &S)
 {
 	// with the panel's rows going top down, GL's CCW appears clockwise
 	return (S.nFrontFace == PGPU_CCW) == !!S.bFlipY ? CFG_CLOCKWISE : 0;
+}
+
+// Early Z as in Mesa's vc4 (vc4_state.c, vc4_emit.c): the V3D tests fragments
+// against a reduced-resolution copy of the tile's Z buffer before shading, and
+// the fragment shader's TLB Z writes keep that copy up to date (VideoCore IV 3D
+// Architecture Reference Guide, "Z and Stencil"). The tile rendering mode's
+// early-Z direction is lt/le (renderer.cpp leaves its bit 10 at 0), so the test
+// only with LESS and LEQUAL; not when rejecting a fragment early would skip a
+// stencil op (the stencil test's fail or depth fail op; Mesa checks depth fail
+// only), nor when the fragment shader writes its own Z. A shader that discards
+// writes Z conditionally, like the alpha test, and keeps early Z (as Mesa).
+// Mesa enables early-Z updates always; they matter only to draws that write Z.
+u32 CGeometry::DepthBits (const TGLState &S, boolean bShaderWritesZ)
+{
+	if (!(S.nEnables & PGPU_CAP_DEPTH_TEST))
+	{
+		return PGPU_ALWAYS << CFG_DEPTH_FUNC__SHIFT;	// no test, no depth writes
+	}
+
+	u32 nBits = S.nDepthFunc << CFG_DEPTH_FUNC__SHIFT;
+	if (S.bDepthMask)
+	{
+		nBits |= CFG_Z_UPDATE | CFG_EARLY_Z_UPDATE;
+	}
+
+	boolean bStencilKeeps = TRUE;
+	if (S.nEnables & PGPU_CAP_STENCIL_TEST)
+	{
+		for (unsigned f = 0; f < 2; f++)
+		{
+			if (S.StencilFail[f] != PGPU_KEEP || S.StencilZFail[f] != PGPU_KEEP)
+			{
+				bStencilKeeps = FALSE;
+			}
+		}
+	}
+
+	if (   (S.nDepthFunc == PGPU_LESS || S.nDepthFunc == PGPU_LEQUAL)
+	    && bStencilKeeps && !bShaderWritesZ)
+	{
+		nBits |= CFG_EARLY_Z;
+	}
+
+	return nBits;
 }
 
 void CGeometry::GetDrawState (const TGLState &S, boolean bFaces, TDrawState *pState)

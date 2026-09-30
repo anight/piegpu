@@ -48,6 +48,27 @@ model is named below, the fact was measured on that one.
   RGBA8888, the tile buffer's format), not y-flipped: rows in GL order.
 - **Stencil:** every fragment shader writes the three TLB stencil setup words
   from uniforms (Mesa's encoding); with the test off they say "always pass, keep".
+- **Early Z** (`CGeometry::DepthBits`), as in Mesa's `vc4` (`vc4_state.c`,
+  `vc4_emit.c`): the V3D tests fragments against a reduced-resolution copy of
+  the tile's Z buffer before shading them (configuration bits 16, early Z,
+  and 17, its updates; the reference guide's "Z and Stencil": the shader's
+  TLB Z writes update the copy). The tile rendering mode's early-Z direction
+  (bit 10) is lt/le, so the test is on for `LESS` and `LEQUAL` only, and not
+  when rejecting a fragment early would skip a stencil op (the fail or depth
+  fail op isn't `KEEP`; Mesa checks the depth fail op alone) or when a
+  program's fragment shader writes its own depth (`gl_FragDepthEXT`: Mesa's
+  `disable_early_z`, `PGPU_SH_FS_WRITES_Z` in the blob). Shaders that discard
+  keep it: they write Z conditionally (Mesa's `discard_cond`, the alpha test
+  here), so a discarded fragment updates nothing. Updates are on with depth
+  writes (Mesa sets them always; only draws that write Z change the buffer).
+  Mesa's HW-2905 case (a full-resolution tile load with multisampling) can't
+  happen: depth is loaded with general loads, one sample a pixel. It helps
+  depth-tested draws hidden behind nearer ones drawn before them. Measured on
+  the Zero 2 W at 1920x1080 (60 s each, the same host binaries): antigrav's
+  night race 30.8 → 32.6 fps (render 29.7–34.1 → 28.3–32.2 ms); flight
+  unchanged (about 22.5 fps: its sky and clouds are drawn without the depth
+  test, and the aircraft on top of them). dEQP-GLES2's subset, the first
+  1557 cases: the same results as without it.
 - **Scissor** and the viewport become the V3D's clip window; polygon offset is
   its depth offset (factor and units as in Mesa's `vc4`). An empty clip window
   doesn't clip everything on the V3D: such draws are skipped.

@@ -16,8 +16,6 @@ LOGMODULE ("commands");
 #define CFG_FORWARD		(1 << 0)
 #define CFG_REVERSE		(1 << 1)
 #define CFG_CLOCKWISE		(1 << 2)	// clockwise primitives are forward facing
-#define CFG_DEPTH_FUNC__SHIFT	12
-#define CFG_Z_UPDATE		(1 << 15)
 
 // TILE_RENDERING_MODE_CONFIG colour format (bits 3:2): 0 BGR565 dithered, 1 RGBA8888,
 // 2 BGR565 without dither
@@ -1907,7 +1905,7 @@ TCommandStats CCommands::GetStats (void)
 
 // ---- programs (docs/protocol.md 7.10) ---------------------------------------
 
-u32 CCommands::ConfigBits (boolean bFaces) const
+u32 CCommands::ConfigBits (boolean bFaces, boolean bShaderWritesZ) const
 {
 	const TGLState &S = m_State;
 	u32 nBits = CFG_FORWARD | CFG_REVERSE;
@@ -1924,20 +1922,7 @@ u32 CCommands::ConfigBits (boolean bFaces) const
 		}
 	}
 
-	if (S.nEnables & PGPU_CAP_DEPTH_TEST)
-	{
-		nBits |= S.nDepthFunc << CFG_DEPTH_FUNC__SHIFT;
-		if (S.bDepthMask)
-		{
-			nBits |= CFG_Z_UPDATE;
-		}
-	}
-	else
-	{
-		nBits |= PGPU_ALWAYS << CFG_DEPTH_FUNC__SHIFT;	// no test, no depth writes
-	}
-
-	return nBits;
+	return nBits | CGeometry::DepthBits (S, bShaderWritesZ);
 }
 
 // the fragment shader ending needed: plain, or blending and colour mask from uniforms
@@ -2449,7 +2434,7 @@ u32 CCommands::ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
 	Rec.Add32 (nCSUniforms);
 
 	TGLDraw G;
-	G.State.nConfigBits = ConfigBits (nPrim == PGPU_PRIM_TRIANGLES);
+	G.State.nConfigBits = ConfigBits (nPrim == PGPU_PRIM_TRIANGLES, !!(nFSInfo & PGPU_SH_FS_WRITES_Z));
 	CGeometry::GetDrawState (m_State, nPrim == PGPU_PRIM_TRIANGLES, &G.State);
 	// the hardware clips against a guard band: clip the rendering to the viewport too
 	unsigned x0 = VP.nClipX > G.State.nClipX ? VP.nClipX : G.State.nClipX;
