@@ -166,6 +166,18 @@ uint64_t pgpu_time_us (void);			/* the transport's clock, microseconds */
 void pgpu_flush (void);
 uint32_t pgpu_packets_sent (void);		/* packets built since pgpu_init () */
 pgpu_stats_t pgpu_get_stats (void);		/* and reset the counters */
+/* the link's traffic since pgpu_init (never reset, so any number of readers
+   can take differences): bytes sent (batches) and received (reply packets),
+   the time pgpu_flush spent handing batches to the link (waiting for READY,
+   a full ring or DMA, USB flow control: time the host was held back by the
+   link), and the link's capacity one way (bytes a second; 0: not known) */
+typedef struct
+{
+	uint64_t sent_bytes, received_bytes;
+	uint64_t send_us;
+	uint32_t capacity;
+} pgpu_link_counts_t;
+void pgpu_get_link_counts (pgpu_link_counts_t *counts);
 
 /* replies */
 void pgpu_set_reply_phase (unsigned phase);	/* 0: sample at BCLK rise, 1: at BCLK fall (if the transport can) */

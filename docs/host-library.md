@@ -150,7 +150,20 @@ The host library (`libpgpu/`, board independent) has two layers:
     (2132 KB in one second), and GL frames wait behind it: its busiest
     stretch (100–126 s) went 22–43 fps with 60 frames dropped at 25 MHz,
     30–60 fps with 35 dropped at 31.25 MHz. The video frames no GL frame
-    showed count as dropped.
+    showed count as dropped. Measured with the link counts (below): most of
+    that film needs 0.1–0.6 MB/s, 2–17% of the link, and the host is held
+    back 0–6% of the time; at 111–116 s it sent 2.32 MB/s (59% of the link
+    over those 5 s), was held back 41% of the time, and drew 15 fps: the
+    link is full in bursts there, and GL frames wait behind the video.
+  - **The link's numbers** (`pgpu_get_link_counts`, never reset): bytes sent
+    and received, the time `pgpu_flush` spent handing batches to the link
+    (the RPi's READY, a full ring or DMA, USB's flow control: the host held
+    back by the link) and the link's capacity one way (the transport's
+    `pgpu_link_capacity`: I2S its bit clock / 8, 3.9 MB/s at 31.25 MHz; USB
+    0, not known). The HUD's perf panel shows them every second: TX and RX
+    (MB/s, or KB/s below 1 MB/s), LINK (the share of the capacity used to the
+    RPi; "-" over USB) and WAIT (the share of time held back), each of the
+    last two with a bar. The media demo prints them every 5 s.
 
 ## How pgl maps GL to the wire
 

@@ -587,6 +587,13 @@ int main (void)
 					(unsigned) e);
 			}
 			sent = 0;
+			printf ("media: link: to the RPi %.2f MB/s", m.link_tx / 1e6f);
+			if (m.link_use >= 0.0f)
+			{
+				printf (" (%.0f%% of its capacity)", m.link_use * 100.0f);
+			}
+			printf (", back %.3f MB/s; the host held back by it %.0f%% of the time\n", m.link_rx / 1e6f,
+				m.link_wait * 100.0f);
 			if (audio)
 			{
 				pgpu_media_status_t as;

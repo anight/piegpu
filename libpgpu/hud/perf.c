@@ -14,12 +14,14 @@ static bool started;
 static unsigned frames;
 static uint64_t wait_us;
 static pgpu_status_t status;
+static pgpu_link_counts_t link_start;	/* the link's counts at the window's start */
 
 bool perf_frame (uint32_t wait, perf_t *m)
 {
 	if (!started)
 	{
 		window_start = pgpu_time_us ();
+		pgpu_get_link_counts (&link_start);
 		started = true;
 	}
 	frames++;
@@ -48,6 +50,12 @@ bool perf_frame (uint32_t wait, perf_t *m)
 		m->render_ms = status.v3d_busy_us / 1000.0f / n;
 		m->panel_ms = status.panel_wait_us / 1000.0f / n;
 	}
+	pgpu_link_counts_t link;
+	pgpu_get_link_counts (&link);
+	m->link_tx = (float) (link.sent_bytes - link_start.sent_bytes) * 1e6f / window;
+	m->link_rx = (float) (link.received_bytes - link_start.received_bytes) * 1e6f / window;
+	m->link_use = link.capacity ? m->link_tx / link.capacity : -1.0f;
+	m->link_wait = (float) (link.send_us - link_start.send_us) / window;
 
 	/* the RPi's numbers for the next second */
 	pgpu_request_status ();
@@ -55,6 +63,7 @@ bool perf_frame (uint32_t wait, perf_t *m)
 	frames = 0;
 	wait_us = 0;
 	window_start = pgpu_time_us ();
+	pgpu_get_link_counts (&link_start);
 	return true;
 }
 
@@ -75,6 +84,19 @@ static uint32_t load_color (float load)
 	     : load < 0.8f ? HUD_RGBA (240, 200, 40, 255) : HUD_RGBA (240, 60, 50, 255);
 }
 
+/* a rate in bytes a second: MB/s from 1 MB/s, else KB/s */
+static void rate (char *s, size_t size, const char *label, float bytes)
+{
+	if (bytes >= 1e6f)
+	{
+		snprintf (s, size, "%s %5.2f MB/s", label, bytes / 1e6f);
+	}
+	else
+	{
+		snprintf (s, size, bytes >= 1e5f ? "%s %5.0f KB/s" : "%s %5.1f KB/s", label, bytes / 1e3f);
+	}
+}
+
 void hud_perf (float x, float y, float scale, const perf_t *m)
 {
 	const uint32_t text = HUD_RGBA (235, 235, 235, 255);
@@ -83,17 +105,27 @@ void hud_perf (float x, float y, float scale, const perf_t *m)
 	char s[24];
 #define Y(line)	(y + roundf ((4 + (line) * LINE) * scale))
 
-	hud_rect (x, y, hud_perf_width (scale), roundf ((7 * LINE + 6) * scale), HUD_RGBA (0, 0, 0, 150));
+	hud_rect (x, y, hud_perf_width (scale), roundf ((11 * LINE + 6) * scale), HUD_RGBA (0, 0, 0, 150));
 	snprintf (s, sizeof s, "FPS  %4.1f", m->fps);
 	hud_text_scaled (left, Y (0), s, HUD_RGBA (255, 230, 120, 255), scale);
 
-	const struct { const char *label; float load; } loads[3] =
+	/* loads, each with a bar: the GPU, the CPUs; the link, used of its
+	   capacity (not known over USB: no bar) and the host's time held back by
+	   it */
+	const struct { int line; const char *label; float load; } loads[5] =
 	{
-		{"GPU  ", m->gpu}, {"CPU-G", m->cpu_g}, {"CPU-H", m->cpu_h},
+		{1, "GPU  ", m->gpu}, {2, "CPU-G", m->cpu_g}, {3, "CPU-H", m->cpu_h},
+		{8, "LINK ", m->link_use}, {9, "WAIT ", m->link_wait},
 	};
-	for (int i = 0; i < 3; i++)
+	for (int i = 0; i < 5; i++)
 	{
-		float ly = Y (i + 1), load = loads[i].load < 1.0f ? loads[i].load : 1.0f;
+		float ly = Y (loads[i].line), load = loads[i].load < 1.0f ? loads[i].load : 1.0f;
+		if (loads[i].load < 0.0f)
+		{
+			snprintf (s, sizeof s, "%s    -", loads[i].label);
+			hud_text_scaled (left, ly, s, text, scale);
+			continue;
+		}
 		snprintf (s, sizeof s, "%s %3d%%", loads[i].label, (int) (loads[i].load * 100.0f + 0.5f));
 		hud_text_scaled (left, ly, s, text, scale);
 		hud_rect (bar_x, ly + roundf (2 * scale), bar_w, bar_h, HUD_RGBA (70, 70, 80, 200));
@@ -103,7 +135,11 @@ void hud_perf (float x, float y, float scale, const perf_t *m)
 	hud_text_scaled (left, Y (4), s, text, scale);
 	snprintf (s, sizeof s, "PANEL  %4.1fms", m->panel_ms);
 	hud_text_scaled (left, Y (5), s, text, scale);
-	snprintf (s, sizeof s, "HOST   %s", pgpu_link_name ());
+	rate (s, sizeof s, "TX  ", m->link_tx);
 	hud_text_scaled (left, Y (6), s, text, scale);
+	rate (s, sizeof s, "RX  ", m->link_rx);
+	hud_text_scaled (left, Y (7), s, text, scale);
+	snprintf (s, sizeof s, "HOST   %s", pgpu_link_name ());
+	hud_text_scaled (left, Y (10), s, text, scale);
 #undef Y
 }

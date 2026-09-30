@@ -28,6 +28,9 @@ void pgpu_link_send (const uint32_t *words, uint32_t n);
 /* parse replies received so far (the Pico does this in a timer as well) */
 void pgpu_link_poll (void);
 uint64_t pgpu_link_time_us (void);
+/* bytes a second the link carries one way at most (I2S: its bit clock / 8),
+   0 if not known (USB) */
+uint32_t pgpu_link_capacity (void);
 /* return when every reply the RPi has sent so far has been delivered */
 void pgpu_link_settle (void);
 /* keep the reply parser out (an interrupt, or another core) while pgpu.c

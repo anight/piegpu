@@ -95,6 +95,11 @@ uint64_t pgpu_link_time_us (void)
 	return (uint64_t) ts.tv_sec * 1000000u + ts.tv_nsec / 1000;
 }
 
+uint32_t pgpu_link_capacity (void)
+{
+	return 0;					/* (USB's depends on the PC and the path) */
+}
+
 #ifdef __EMSCRIPTEN__
 /* the page's serial port: write (awaits the port), read what has come,
    wait (for data, or us microseconds); < 0 once the page stops the program */

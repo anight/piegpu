@@ -21,6 +21,7 @@ static uint32_t packets_sent;		/* since pgpu_init () */
 
 static uint32_t crc_table[256];
 pgpu_stats_t pgpu_link_stats;
+static uint64_t link_sent_bytes, link_received_bytes, link_send_us;	/* pgpu_get_link_counts */
 
 uint32_t pgpu_packets_sent (void)
 {
@@ -199,6 +200,16 @@ uint64_t pgpu_time_us (void)
 	return pgpu_link_time_us ();
 }
 
+void pgpu_get_link_counts (pgpu_link_counts_t *c)
+{
+	pgpu_link_lock ();			/* (the reply parser counts received bytes) */
+	c->sent_bytes = link_sent_bytes;
+	c->received_bytes = link_received_bytes;
+	c->send_us = link_send_us;
+	pgpu_link_unlock ();
+	c->capacity = pgpu_link_capacity ();
+}
+
 pgpu_stats_t pgpu_get_stats (void)
 {
 	pgpu_link_lock ();
@@ -303,6 +314,7 @@ void pgpu_init (void)
 void pgpu_deliver_reply (uint8_t opcode, const uint32_t *payload, uint32_t length)
 {
 	pgpu_link_stats.replies++;
+	link_received_bytes += (length + 2) * 4;	/* (the header, the payload, the CRC) */
 
 	if (opcode == PGPU_REPLY_PIXELS && length >= 1)
 	{
@@ -483,7 +495,10 @@ void pgpu_flush (void)
 
 	/* the transport may read the buffer after returning (DMA): the next
 	   batch goes into the other one */
+	uint64_t t = pgpu_link_time_us ();
 	pgpu_link_send (staging[current], fill);
+	link_send_us += pgpu_link_time_us () - t;	/* (held back by the link) */
+	link_sent_bytes += fill * 4;
 
 	pgpu_link_stats.words += fill;
 	pgpu_link_stats.batches++;

@@ -17,7 +17,7 @@
 bool hud_init (void);
 void hud_begin (void);
 void hud_rect (float x, float y, float w, float h, uint32_t rgba);
-/* the font has digits, . % : - A-Z and m s (other characters leave a space) */
+/* the font has digits, . % : - / A-Z and m s (other characters leave a space) */
 void hud_text (float x, float y, const char *text, uint32_t rgba);
 /* scale 1: as hud_text (the font 2x), 0.5: the font 1x; keep x and y whole
    pixels for sharp glyphs */

@@ -13,6 +13,7 @@
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
 #include "hardware/sync.h"
+#include "hardware/clocks.h"
 #include "pcm_out.pio.h"
 
 #define PIN_DATA	16
@@ -154,6 +155,11 @@ void pgpu_link_poll (void)
 uint64_t pgpu_link_time_us (void)
 {
 	return time_us_64 ();
+}
+
+uint32_t pgpu_link_capacity (void)
+{
+	return clock_get_hz (clk_sys) / 2 / 8;		/* the bit clock: sysclk / 2 */
 }
 
 void pgpu_link_settle (void)

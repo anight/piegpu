@@ -91,6 +91,7 @@ static uint32_t rx_ring[RX_RING_WORDS];
 static pgpu_rx_t rx = {rx_ring, RX_RING_WORDS, 0, 0};
 static SemaphoreHandle_t parser_lock;
 static volatile uint32_t frame_count;
+static uint32_t bclk_hz = PGPU_P4_BCLK_HZ;	/* the one the driver set (pgpu_link_init) */
 
 /* written by pgpu_link_send (head), read by the "sent" interrupt (tail) */
 static DRAM_ATTR uint32_t tx_ring[TX_RING_WORDS];
@@ -217,6 +218,7 @@ void pgpu_link_init (void)
 	i2s_chan_info_t info;
 	if (i2s_channel_get_info (tx_chan, &info) == ESP_OK)
 	{
+		bclk_hz = info.bclk_hz;
 		ESP_LOGI (TAG, "I2S master: BCLK %lu Hz (MCLK %lu Hz from %lu Hz)",
 			  (unsigned long) info.bclk_hz, (unsigned long) info.mclk_hz,
 			  (unsigned long) info.sclk_hz);
@@ -256,6 +258,11 @@ void pgpu_link_poll (void)
 uint64_t pgpu_link_time_us (void)
 {
 	return (uint64_t) esp_timer_get_time ();
+}
+
+uint32_t pgpu_link_capacity (void)
+{
+	return bclk_hz / 8;				/* a bit a clock on DATA */
 }
 
 void pgpu_link_settle (void)
