@@ -20,15 +20,22 @@ transport, the few functions of `libpgpu/pgpu_link.h`. Tested on:
 - an ESP32-P4 (Waveshare ESP32-P4-Module-DEV-KIT), over I2S.
 
 A Linux PC, or a page in Chrome, can be the host too, over the RPi's USB port.
-Over the same port the RPi also installs itself on its SD card (from a web
-page) and serves as a monitor for a Linux desktop.
+A web page puts piegpu on the RPi's SD card (in the PC's card reader, or over
+that port), and the RPi can serve as a monitor for a Linux desktop.
 
 **Supported for now: the Raspberry Pi Zero / Zero W and the Zero 2 W.** More
 RPi boards are to come; "RPi" below means the board piegpu runs on, and a
 model is named where only that one was verified.
 
+**Install:** open the installer page, **[anight.github.io/piegpu](https://anight.github.io/piegpu/)**,
+in Chrome or Edge, and follow the **[installation guide](docs/installation.md)**:
+step by step on Linux, Windows and macOS, with what to do when something
+doesn't work.
+
 Documentation ([docs/](docs/README.md)):
 
+- [docs/installation.md](docs/installation.md): installing piegpu on the RPi's
+  SD card, and connecting to it;
 - [docs/protocol.md](docs/protocol.md): the wire protocol;
 - [docs/host-library.md](docs/host-library.md): the host library, libpgpu
   (pgl, the GL ES API);
@@ -141,6 +148,11 @@ four); the Zero not yet. How it works:
                                              ▼
                                             PC
 ```
+
+One host is enough, a microcontroller over I2S or a PC over USB; the RPi
+also needs power on one of its micro-USB ports. Both can be connected at
+once with `host=auto` (the default): USB has priority, the PC's GL commands
+taking over from I2S once it opens its stream, until the RPi restarts.
 
 Pin numbers below are **physical header pins** with the GPIO number in
 brackets. All signals are 3.3 V. Connect the grounds of both boards. The
