@@ -6,6 +6,7 @@
 #   selftest            the link, the protocol and pgl (libpgpu/test)
 #   linktest            the link at full speed both ways, checked word by word
 #   gears breakout flight
+#   antigrav            anti-gravity racing, after WipEout: six craft, a circuit
 #   toy-NAME            Shadertoy-style: shaders/toy_NAME.frag; a game has
 #                       NAME.c (pong, snake, asteroids)
 #   media               an MP4 or an MP3 played by the RPi: the video decoded
@@ -19,7 +20,7 @@ include(${CMAKE_CURRENT_LIST_DIR}/../libpgpu/pgpu_sources.cmake)
 
 set(PGPU_DEMOS ${CMAKE_CURRENT_LIST_DIR})
 set(PGPU_DEMO_SHADERS ${PGPU_DEMOS}/shaders)
-set(PGPU_DEMO_APPS selftest linktest gears breakout flight
+set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav
 	toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids media)
 
 if(NOT COMMAND pgpu_demo)
@@ -61,6 +62,13 @@ function(pgpu_demo target app)
 		program(cirrus -a a_grid:float:2 -v triangles)
 		program(biplane -a a_pos:short:3 -a a_uv:short:2 -a a_normal:short:3 -v triangles)
 		program(plume -a a_geom:float:4 -v triangles)
+
+	elseif(app STREQUAL "antigrav")	# anti-gravity racing, after WipEout
+		target_sources(${target} PRIVATE ${PGPU_DEMOS}/antigrav.c)
+		program(sky -a a_pos:float:2 -v triangles)
+		program(scenery -a a_pos:float:3 -a a_uv:float:2 -a a_shade:float:1 -v triangles)
+		program(craft -a a_pos:float:3 -a a_normal:float:3 -a a_uv:float:2 -v triangles)
+		program(nightsky -a a_pos:float:2 -a a_dir:float:3 -v triangles)
 
 	elseif(app MATCHES "^toy-(.+)$")	# toy.c: one full-screen quad, the picture is the shader
 		set(name ${CMAKE_MATCH_1})

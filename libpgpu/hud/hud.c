@@ -66,7 +66,7 @@ static const struct { char c; const char *rows[7]; } glyphs[] =
 
 typedef struct { float x, y, u, v; uint8_t rgba[4]; } hud_vertex_t;
 
-#define MAX_QUADS	160
+#define MAX_QUADS	256		/* glyphs and rectangles (antigrav's results table and the numbers: about 230) */
 
 static hud_vertex_t verts[MAX_QUADS * 6];
 static unsigned n_verts, drawn_verts;

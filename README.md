@@ -262,7 +262,7 @@ its own transport (`libpgpu/pgpu_link.h`; `transports/pico-i2s` and
 build makes one `.uf2` per program in `hosts/pico/build`:
 
 - `gpulink.uf2`: the self tests;
-- `gears.uf2`, `toy-pong.uf2`, `jet-viewer.uf2` and so on: the demos.
+- `gears.uf2`, `antigrav.uf2`, `toy-pong.uf2`, `jet-viewer.uf2` and so on: the demos.
 
 The console is on UART0 (GP0/GP1, pins 1 and 2: a Debugprobe's UART bridge).
 
@@ -278,7 +278,7 @@ ninja -C hosts/pico/build
 per build, chosen with `PGPU_APP`:
 
 - `selftest`, the default;
-- a demo: `gears`, `toy-NAME`, `jet-NAME` and so on;
+- a demo: `gears`, `antigrav`, `toy-NAME`, `jet-NAME` and so on;
 - `pincheck`: the pins alone, before wiring the RPi.
 
 ```bash
