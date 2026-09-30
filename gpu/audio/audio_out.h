@@ -6,6 +6,9 @@
 // when it takes audio. The frames come through a ring: one writer (the audio
 // decoder, on another core where there is one), one reader (GetChunk, which
 // VCHIQ's task calls for the next chunk); silence while the ring is empty.
+// The volume is applied as the chunks go to the VideoCore, not as the frames
+// come into the ring: a change is heard after the two chunks the VideoCore
+// holds (under 0.1 s), not after all that waits in the ring (seconds).
 //
 #ifndef _gpu_audio_audio_out_h
 #define _gpu_audio_audio_out_h
@@ -46,6 +49,9 @@ public:
 
 	/// \brief Paused: silence, the ring waits
 	void SetPaused (boolean bPaused)	{ m_bPaused = bPaused; }
+	/// \brief The volume, 0 (silent) to 65536 (the frames as they are): from
+	///	    the next chunk, which goes to it smoothly from the last one's
+	void SetVolume (unsigned nVolume)	{ m_nVolume = nVolume > 65536 ? 65536 : nVolume; }
 
 	/// \return Frames handed to the VideoCore so far (silence included)
 	u64 GetFramesOut (void) const		{ return m_nFramesOut; }
@@ -83,6 +89,8 @@ private:
 	volatile u64 m_nFramesOut;
 	volatile u64 m_nUnderrun;
 	volatile boolean m_bPaused;
+	volatile unsigned m_nVolume;		// asked for (SetVolume)
+	unsigned m_nGain;			// the last chunk's (GetChunk's)
 	volatile unsigned m_nChunkTime;
 
 	unsigned m_nCaptureFrames;

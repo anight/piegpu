@@ -138,7 +138,7 @@ u32 CAudio::Open (u32 nCodec, unsigned nVideoStream, const u8 *pConfig, unsigned
 	m_bPaused = FALSE;
 	m_nVideoStream = nVideoStream;
 	m_nVolume = m_nDefaultVolume;
-	SetDecoderVolume ();
+	SetOutputVolume ();
 	m_nSilenceAtOpen = pOut->GetUnderrunFrames ();
 	m_nBytesIn = 0;
 	m_nSamplesIn = 0;
@@ -324,7 +324,7 @@ u32 CAudio::Control (u32 nOp, s64 nArg)
 			return PGPU_ERR_LIMIT;
 		}
 		m_nVolume = (unsigned) nArg;
-		SetDecoderVolume ();			// (from the next unit)
+		SetOutputVolume ();			// (from the next chunk the VideoCore takes)
 		return 0;
 
 	default:
@@ -449,20 +449,12 @@ int CAudio::Decode (const u8 *pUnit, unsigned nBytes, s16 *pFrames)
 	       : mp3_decode (m_pMP3, pUnit, nBytes, pFrames);
 }
 
-void CAudio::SetDecoderVolume (void)
+// the volume where the frames go to the VideoCore (CAudioOut), not in the
+// decoders: what's decoded waits in the output's ring (a second or more),
+// so a change would be heard that much later
+void CAudio::SetOutputVolume (void)
 {
-	if (m_nCodec == PGPU_AUDIO_AAC)
-	{
-		aac_set_volume (m_pAAC, m_nVolume * 65536 / 100);
-	}
-	else if (m_nCodec == PGPU_AUDIO_MP3)
-	{
-		mp3_set_volume (m_pMP3, m_nVolume * 65536 / 100);
-	}
-	else
-	{
-		vorbis_set_volume (m_pVorbis, m_nVolume * 65536 / 100);
-	}
+	m_pOut->SetVolume (m_nVolume * 65536 / 100);
 }
 
 const char *CAudio::DecoderError (void)

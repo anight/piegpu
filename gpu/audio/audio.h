@@ -3,9 +3,9 @@
 //
 // The audio stream (docs/protocol.md 7.13): AAC access units, MP3 frames or
 // Ogg Vorbis pages from the host (MEDIA_DATA on stream 3) into a ring, decoded
-// (aac.c, FAAD2; mp3.c, minimp3; vorbis.c, Tremor) to 16-bit stereo at the
-// stream's volume, played on HDMI
-// through the VideoCore's audio service (CAudioOut). The sound is the clock
+// (aac.c, FAAD2; mp3.c, minimp3; vorbis.c, Tremor) to 16-bit stereo, played
+// on HDMI through the VideoCore's audio service (CAudioOut), which applies the
+// stream's volume. The sound is the clock
 // of the video stream it plays with (CVideo::SetClock): GetTime says which
 // time is being heard now.
 //
@@ -87,7 +87,7 @@ private:
 	boolean DecodePage (const TSample &S);	// Vorbis': FALSE while the page has more
 	// the stream's codec's
 	int Decode (const u8 *pUnit, unsigned nBytes, s16 *pFrames);
-	void SetDecoderVolume (void);
+	void SetOutputVolume (void);
 	const char *DecoderError (void);
 	void CloseDecoder (void);
 	static const char *CodecName (u32 nCodec);

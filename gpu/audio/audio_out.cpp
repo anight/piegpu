@@ -22,6 +22,8 @@ CAudioOut::CAudioOut (CVCHIQDevice *pVCHIQ, unsigned nSampleRate)
 	m_nFramesOut (0),
 	m_nUnderrun (0),
 	m_bPaused (FALSE),
+	m_nVolume (65536),
+	m_nGain (65536),
 	m_nChunkTime (0),
 	m_nCaptureFrames (CaptureSeconds * nSampleRate),
 	m_pCapture (new s16[m_nCaptureFrames * 2]),
@@ -126,6 +128,21 @@ unsigned CAudioOut::GetChunk (s16 *pBuffer, unsigned nChunkSize)
 	{
 		memset (pBuffer + 2 * nCopy, 0, (nFrames - nCopy) * 2 * sizeof (s16));
 		m_nUnderrun += nFrames - nCopy;
+	}
+
+	// the volume: from the last chunk's to the one asked for across this
+	// chunk (a step would click)
+	unsigned nVolume = m_nVolume;
+	if (nVolume != 65536 || m_nGain != 65536)
+	{
+		s32 nFrom = (s32) m_nGain, nStep = (s32) nVolume - nFrom;
+		for (unsigned i = 0; i < nCopy; i++)
+		{
+			s32 nGain = nFrom + (s32) ((s64) nStep * (s32) (i + 1) / (s32) nFrames);
+			pBuffer[2 * i] = (s16) (((s64) pBuffer[2 * i] * nGain) >> 16);
+			pBuffer[2 * i + 1] = (s16) (((s64) pBuffer[2 * i + 1] * nGain) >> 16);
+		}
+		m_nGain = nVolume;
 	}
 	m_nFramesOut += nFrames;
 

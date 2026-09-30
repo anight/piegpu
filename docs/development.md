@@ -220,7 +220,8 @@ decoded on the ARM, played on HDMI through the VideoCore's audio service.
 - **Decoding AAC** (`aac.c`): FAAD2 2.11.3's libfaad (`gpu/audio/faad2`,
   vendored unchanged; GPL 2 or later, so it can be linked with Circle's GPL
   3), float out, more than two channels mixed down to stereo (FAAD2's
-  downmatrix), mono doubled, the volume applied in the conversion to 16 bit.
+  downmatrix), mono doubled, converted to 16 bit (full scale: the volume is
+  the output's, below).
   The decoders are a library of their own (`audio_codecs` in
   `gpu/CMakeLists.txt`): the gpu app's C flags force-include MMAL's header,
   and FAAD2 needs two shims
@@ -232,7 +233,7 @@ decoded on the ARM, played on HDMI through the VideoCore's audio service.
   priming frames, so the frames of unit k start at unit k's pts.
 - **Decoding MP3** (`mp3.c`): minimp3 (`gpu/audio/minimp3`, one header,
   vendored unchanged; CC0), MPEG-1, 2 and 2.5 audio layers 1 to 3, float
-  out, mono doubled, the volume applied as for AAC; its NEON code on the
+  out, mono doubled, to 16 bit as for AAC; its NEON code on the
   Zero 2 W (AArch64), plain C on the Zero. A sample is one whole frame:
   minimp3 takes a frame alone when it's exactly as long as its header says
   (`mp3d_find_frame`), and keeps the bit reservoir between calls; a frame at
@@ -250,7 +251,7 @@ decoded on the ARM, played on HDMI through the VideoCore's audio service.
   vorbisfile), 32-bit fixed point out (16-bit samples shifted left 9, as
   its `ov_read` has it); mono doubled, 3 to 6 channels mixed down in
   Vorbis' order (FL C FR RL RR LFE: centre and rears at −3 dB, the LFE
-  left out, normalized), the volume applied. A sample is one Ogg page:
+  left out, normalized). A sample is one Ogg page:
   up to 64 KB, of any number of packets (seconds of sound), so a page is
   fed once and decoded 1024 frames a step as the output has room, each
   step's time the page's plus the frames before it (`CAudio::DecodePage`),
@@ -289,7 +290,11 @@ decoded on the ARM, played on HDMI through the VideoCore's audio service.
   Not measured: the delay after the VideoCore (the camera sees only the
   panel, so the picture against the sound can't be timed).
 - **Volume:** `volume=` on the command line (percent, default 10), and
-  `VOLUME` for a stream.
+  `VOLUME` for a stream. It's applied where the chunks go to the VideoCore
+  (`CAudioOut::GetChunk`), ramped across a chunk (a step would click), so a
+  change is heard after the two chunks the VideoCore holds (under 0.1 s).
+  The decoders applied it at first: then a change came after all the
+  decoded sound waiting in the ring, about 1.3 s.
 - **Closing a stream** cancels the output (Circle's `Cancel`, which waits
   for the chunks queued in the VideoCore to complete). The VideoCore can
   report more completed than was written (seen after it ran dry, by 17232

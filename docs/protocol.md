@@ -525,8 +525,8 @@ The stream's other commands and its reply are a video stream's, with stream
 - `MEDIA_CONTROL`: `PLAY` (after a pause: the sound goes on; `arg` is
   ignored), `PAUSE` (silence; the sound, and so the video that follows it,
   stops), `CLOSE`, and op 5 `VOLUME`: `arg` the volume in percent, 0 … 100
-  (from the next access unit; an Ogg page's sound is decoded a piece at a
-  time, 1024 frames, and takes it from the next piece).
+  (heard within about 0.1 s: it's applied as the sound goes to the
+  VideoCore, after the sound decoded and waiting).
 - `MEDIA_STATUS` (every 100 ms while it's open, and on `MEDIA_GET_STATUS`):
   flags as a video stream's, and bits 15–8 the volume (percent); `bytes_done`, `ring_bytes`, `samples_done`,
   `max_samples` for flow control as there (an Ogg page is done once all its
