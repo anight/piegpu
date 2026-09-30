@@ -383,8 +383,10 @@ needed. Test OpenGL runs `demos/gears.c` (60 fps, render 1.2 ms, as
 `gears_host`); Test video runs `demos/video.c` on the Big Buck Bunny trailer
 (853x480 H.264, Blender Foundation, CC BY 3.0), decoded by the RPi's
 VideoCore: 25 fps, 0 dropped; with its sound on an HDMI monitor that has
-speakers (5.1 AAC, mixed down to stereo, at the `volume=` setting). Stop restarts the RPi,
-which takes commands from the serial port until then. `make-firmware.sh`
+speakers (5.1 AAC, mixed down to stereo, at the `volume=` setting). Stop
+ends the demo's session (`STREAM_END`, docs/protocol.md §13): the RPi resets
+and its serial port carries the log and the installer again (firmware
+without it restarts instead). `make-firmware.sh`
 builds the demos when Emscripten is installed (`EMSDK`, default `~/emsdk`)
 and downloads the trailer (Blender's server doesn't let a page fetch it).
 

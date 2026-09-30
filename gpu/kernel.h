@@ -84,6 +84,7 @@ private:
 	void HDMISize (unsigned *pWidth, unsigned *pHeight);
 	void ApplyOutput (void);
 	boolean HostIdle (void) const;
+	void EndSession (CLink *pLink);
 	void SendDisplay (boolean bSend = TRUE);
 	void ShowText (COutput *pOutput, const char *pTitle, const char *pLine1, const char *pLine2);
 	void ShowLines (COutput *pOutput, const char *const *ppLines, unsigned nLines);

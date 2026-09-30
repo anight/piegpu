@@ -69,6 +69,7 @@ export class Installer
 		this.replies = [];
 		this.rawSink = null;			// (chunk): all bytes go there instead
 		this.lastError = '';			// the port's last read error
+		this.lineWaiters = new Set ();		// waitLine's
 	}
 
 	async open ()
@@ -131,6 +132,15 @@ export class Installer
 						else if (line)
 						{
 							this.onLog?.(line);
+						}
+						for (const w of this.lineWaiters)
+						{
+							if (w.match (line))
+							{
+								this.lineWaiters.delete (w);
+								clearTimeout (w.timer);
+								w.resolve (true);
+							}
 						}
 					}
 				}
@@ -269,6 +279,38 @@ export class Installer
 	async writeRaw (bytes)
 	{
 		await this.writer.write (bytes);
+	}
+
+	// true when a line of the RPi's matches (match: line => boolean), false if
+	// none does within the time
+	waitLine (match, timeoutMs)
+	{
+		return new Promise (resolve =>
+		{
+			const w = {match, resolve};
+			w.timer = setTimeout (() =>
+			{
+				this.lineWaiters.delete (w);
+				resolve (false);
+			}, timeoutMs);
+			this.lineWaiters.add (w);
+		});
+	}
+
+	// the end of a GL session (docs/protocol.md 13: STREAM_END, a packet
+	// without payload): the RPi resets and its serial port carries text
+	// again, which it says with "#STREAM END"; false if it doesn't (older
+	// firmware, a stream it isn't reading)
+	async endStream (timeoutMs = 3000)
+	{
+		const header = new Uint8Array ([0x00, 0x00, 0x05, 0xa5]);	// 0xA5050000, little-endian
+		const crc = crc32 (header);
+		const packet = new Uint8Array (8);
+		packet.set (header);
+		new DataView (packet.buffer).setUint32 (4, crc, true);
+		const answered = this.waitLine (line => line === '#STREAM END', timeoutMs);
+		await this.writeRaw (packet);
+		return answered;
 	}
 
 	// a restart that works in any mode (devtools/devlink.h: the reboot magic;

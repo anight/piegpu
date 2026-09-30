@@ -76,6 +76,20 @@ void CUSBBulkLink::Flush (void)
 	}
 }
 
+// STREAM_END: what came after it is dropped, and the link is idle until the
+// host sends on it again
+void CUSBBulkLink::EndSession (void)
+{
+	u8 Scratch[512];
+	while (ReadStream (Scratch, sizeof Scratch))
+	{
+	}
+	DiscardBuffered ();
+	m_SpinLock.Acquire ();
+	m_bActive = FALSE;
+	m_SpinLock.Release ();
+}
+
 unsigned CUSBBulkLink::ReadStream (void *pBuffer, unsigned nMax)
 {
 	u8 *p = (u8 *) pBuffer;

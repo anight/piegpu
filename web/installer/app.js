@@ -576,12 +576,23 @@ async function runOnRPi (name, title, files)
 			$('stop-demo').hidden = true;
 		}
 
-		status ('action-status', code ? `${title} ended with an error (see the log). Restarting the RPi…`
-				       : 'Stopped. Restarting the RPi…', code ? 'bad' : '');
-		await restartRPi (() => connection.restart ());
-		status ('action-status', code ? `${title} ended with an error (see the log); the RPi restarted.`
-				       : 'Stopped; the RPi restarted.', code ? 'bad' : 'ok');
-		status ('connect-status', 'Connected to piegpu.', 'ok');
+		// the session ends (STREAM_END): the RPi resets and answers this page
+		// again; if it doesn't (older firmware), it restarts
+		status ('action-status', code ? `${title} ended with an error (see the log). Ending the session…`
+				       : 'Stopped. Ending the session…', code ? 'bad' : '');
+		if (await connection.endStream ())
+		{
+			status ('action-status', code ? `${title} ended with an error (see the log).` : 'Stopped.',
+				code ? 'bad' : 'ok');
+		}
+		else
+		{
+			status ('action-status', 'The RPi didn\'t end the session: restarting it…', 'warn');
+			await restartRPi (() => connection.restart ());
+			status ('action-status', code ? `${title} ended with an error (see the log); the RPi restarted.`
+					       : 'Stopped; the RPi restarted.', code ? 'bad' : 'ok');
+			status ('connect-status', 'Connected to piegpu.', 'ok');
+		}
 	}, 'action-status');
 }
 

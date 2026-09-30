@@ -30,6 +30,7 @@ enum pgpu_opcode
 	PGPU_OP_GET_INFO	= 0x02,
 	PGPU_OP_PING		= 0x03,
 	PGPU_OP_GET_STATUS	= 0x04,
+	PGPU_OP_STREAM_END	= 0x05,		/* USB: the session ends (section 13) */
 
 	/* frame */
 	PGPU_OP_CLEAR		= 0x10,

@@ -31,6 +31,7 @@ public:
 
 	/// \brief Give the gadget a free buffer (after it connected)
 	void Update (void);
+	void EndSession (void);
 
 	/// \brief Wait (up to 10 ms) for room for replies
 	void Flush (void);

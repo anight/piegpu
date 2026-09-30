@@ -256,6 +256,7 @@ Payload fields are listed word by word. `[n]` means n words.
 | `0x02` | GET_INFO | — | Replies `INFO` (§9). |
 | `0x03` | PING | `u32 cookie` | Replies `PONG` with the same cookie, once all earlier commands have been **parsed**. |
 | `0x04` | GET_STATUS | — | Replies `STATUS` (§9). |
+| `0x05` | STREAM_END | — | The host's session is over (§13): the RPi resets (as `RESET`: the video and audio streams closed, every object gone), and the link is idle again: over the USB serial port the RPi answers `#STREAM END` and takes text again (its log, the installer); the GL interface is inactive until the host sends on it again. What the host sent after it is dropped. On I2S: the reset alone (no `INFO`). |
 
 ### 7.2 Frame
 
@@ -753,6 +754,12 @@ On the serial port:
   (§4, byte aligned) and ignores the I2S input from then on. Replies come back
   on the same link; the log goes on as text, which the PC skips (packets are
   found by their header and CRC).
+- **The end:** `STREAM_END` (§7.1) ends the session: the RPi answers
+  `#STREAM END` (text) and the port carries text again; a new session
+  starts with the magic. A program on a PC sends it when it's interrupted or
+  killed (Ctrl-C, SIGTERM: `transports/pc-usb`); one that dies otherwise
+  leaves the stream open until the next session's magic, or the reboot
+  magic (`piegpu-reboot`, which works in any mode).
 - **Flow control:** the RPi's USB gadget buffers 64 KB and drops what doesn't
   fit, so the RPi sends `CREDIT` replies (§9) with the number of stream bytes
   taken; the PC keeps at most 6 KB unacknowledged (`PGPU_WINDOW` sets it).

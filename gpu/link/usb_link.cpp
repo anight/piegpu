@@ -36,6 +36,14 @@ void CUSBLink::Update (void)
 	}
 }
 
+// STREAM_END: the serial port carries text again (the log, the installer)
+void CUSBLink::EndSession (void)
+{
+	DiscardBuffered ();
+	m_pDevLink->EndStream ();
+	m_nCredited = 0;
+}
+
 unsigned CUSBLink::ReadStream (void *pBuffer, unsigned nMax)
 {
 	return m_pDevLink->StreamRead (pBuffer, nMax);

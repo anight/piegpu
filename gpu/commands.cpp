@@ -1878,7 +1878,8 @@ void CCommands::FramebufferFree (TFramebuffer *F)
 
 boolean CCommands::Reply (u8 uchOpcode, const u32 *pPayload, unsigned nLength)
 {
-	return m_pLink->SendReply (uchOpcode, pPayload, nLength);
+	// (no link: no host listens, as with host=usb before a PC's session)
+	return m_pLink ? m_pLink->SendReply (uchOpcode, pPayload, nLength) : TRUE;
 }
 
 void CCommands::Error (u32 nCode, u32 nOpcode, u32 nDetail)

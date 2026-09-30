@@ -23,6 +23,9 @@ public:
 	///	    active link of its list and discards what the others receive)
 	virtual boolean IsActive (void)				{ return TRUE; }
 
+	/// \brief STREAM_END: the host's session is over; what it sent after is
+	///	   dropped, and the link is idle again (not active)
+	virtual void EndSession (void)				{ }
 	/// \brief Housekeeping, once per main loop (flow control, ...)
 	virtual void Update (void)				{ }
 

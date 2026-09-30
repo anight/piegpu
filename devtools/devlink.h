@@ -9,7 +9,9 @@
 //  - the host sends DEVLINK_STREAM_MAGIC to switch to a binary stream (until
 //    the next reboot; the magic again starts a new session): the device
 //    answers DEVLINK_STREAM_ACK, and all later data goes to StreamRead (); the
-//    log goes on (the host tells it from its packets by their CRC)
+//    log goes on (the host tells it from its packets by their CRC); EndStream
+//    (the app's: the host's session is over) goes back to text, answering
+//    DEVLINK_STREAM_END_ACK
 //
 #ifndef _devtools_devlink_h
 #define _devtools_devlink_h
@@ -24,6 +26,7 @@
 #define DEVLINK_REBOOT_MAGIC		"piegpu-reboot"
 #define DEVLINK_STREAM_MAGIC		"piegpu-stream"
 #define DEVLINK_STREAM_ACK		"\n#STREAM\n"
+#define DEVLINK_STREAM_END_ACK		"\n#STREAM END\n"
 #define DEVLINK_WATCHDOG_SECONDS	10	// max. time between Update() calls
 
 // pid.codes test VID/PID (for development only)
@@ -51,6 +54,10 @@ public:
 
 	/// \return TRUE after the host has switched to the binary stream
 	boolean IsStreaming (void) const	{ return m_bStream; }
+
+	/// \brief Back to text: the rest of the stream is dropped, the magics
+	///	   are looked for again (a new session: the stream magic)
+	void EndStream (void);
 
 	/// \brief Read from the binary stream
 	/// \return Number of bytes read (0 if none)

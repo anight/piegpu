@@ -172,6 +172,13 @@ WebAssembly): the transport (`transports/pc-usb/pgpu_host.c`) sends the
 packets to the RPi over its USB port ([protocol](protocol.md) §13), so
 programs on the PC drive the GPU without a microcontroller.
 
+- **The session's end:** `pgpu_stream_end ()` sends `STREAM_END`
+  ([protocol](protocol.md) §13): the RPi resets and its serial port carries
+  text again. The serial transport sends it at `exit` and, as a ready-made
+  packet written by a signal handler, on SIGINT, SIGTERM and SIGHUP; the
+  page's Stop sends it too (`web/installer/pgi.js`, `endStream`) and waits
+  for the RPi's `#STREAM END`, restarting the RPi only without it.
+
 - **Shader compiler:** on the PC, `GL_SHADER_COMPILER` is true:
   `glCompileShader` runs `glslc --check` (Mesa's info log),
   `glLinkProgram` runs glslc for the pair with the attribute locations bound

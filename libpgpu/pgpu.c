@@ -544,6 +544,13 @@ void pgpu_reset (void)
 	pgpu_end ();
 }
 
+void pgpu_stream_end (void)
+{
+	pgpu_begin (PGPU_OP_STREAM_END, 0);
+	pgpu_end ();
+	pgpu_flush ();
+}
+
 void pgpu_ping (uint32_t cookie)		{ cmd1 (PGPU_OP_PING, cookie); }
 void pgpu_enable (uint32_t caps)		{ cmd1 (PGPU_OP_ENABLE, caps); }
 void pgpu_disable (uint32_t caps)		{ cmd1 (PGPU_OP_DISABLE, caps); }

@@ -29,6 +29,9 @@ public:
 	unsigned GetBufferBytes (void) const	{ return BufferBytes; }
 
 protected:
+	/// \brief Drop the bytes buffered and not parsed yet (a session's end)
+	void DiscardBuffered (void)		{ m_nBytes = m_nStart = m_nConsumed = 0; }
+
 	/// \return Bytes of the stream copied to pBuffer (at most nMax, 0 if none)
 	virtual unsigned ReadStream (void *pBuffer, unsigned nMax) = 0;
 

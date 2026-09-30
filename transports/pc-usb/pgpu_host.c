@@ -38,6 +38,7 @@
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+#include <signal.h>
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #else
@@ -433,6 +434,36 @@ static void tty_open (void)
 	exit (1);
 }
 
+#ifndef __EMSCRIPTEN__
+/* a program interrupted or killed (Ctrl-C, SIGTERM, the terminal gone) ends
+   its session over the serial port: STREAM_END (docs/protocol.md 13), so the
+   RPi resets and takes text again. The packet is written as it is (write is
+   safe in a handler); a packet cut short before it is garbage the RPi skips.
+   (The GL interface's libusb can't be used here: there the next program's
+   session, or a restart, ends it.) */
+static const uint8_t stream_end_packet[8] = {0x00, 0x00, 0x05, 0xa5, 0x3e, 0x7c, 0x8f, 0xfa};
+
+static void end_on_signal (int sig)
+{
+	if (fd >= 0)
+	{
+		ssize_t r = write (fd, stream_end_packet, sizeof stream_end_packet);
+		(void) r;
+		tcdrain (fd);
+	}
+	_exit (128 + sig);
+}
+
+static void end_at_exit (void)
+{
+	if (fd >= 0)
+	{
+		pgpu_stream_end ();
+		tcdrain (fd);
+	}
+}
+#endif
+
 void pgpu_link_init (void)
 {
 #ifdef __EMSCRIPTEN__
@@ -441,6 +472,13 @@ void pgpu_link_init (void)
 	if (getenv ("PGPU_TTY") || !usb_open ())
 	{
 		tty_open ();
+		struct sigaction sa;
+		memset (&sa, 0, sizeof sa);
+		sa.sa_handler = end_on_signal;
+		sigaction (SIGINT, &sa, NULL);
+		sigaction (SIGTERM, &sa, NULL);
+		sigaction (SIGHUP, &sa, NULL);
+		atexit (end_at_exit);
 	}
 #endif
 	start_session ();

@@ -208,6 +208,21 @@ unsigned CDevLink::ScanMagic (const char *pData, unsigned nLength)
 	return nLength;
 }
 
+void CDevLink::EndStream (void)
+{
+	if (!m_bStream)
+	{
+		return;
+	}
+	m_bStream = FALSE;
+	m_nStreamIn = m_nStreamOut = 0;
+	m_nRxIn = m_nRxOut = 0;
+	m_pMagicPtr = s_RebootMagic;
+	m_pStreamMagicPtr = s_StreamMagic;
+	Write (DEVLINK_STREAM_END_ACK, sizeof DEVLINK_STREAM_END_ACK - 1);
+	LOGNOTE ("Binary stream ended: text again");
+}
+
 void CDevLink::StartStream (void)
 {
 	LOGNOTE ("Binary stream from the host");

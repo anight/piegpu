@@ -278,6 +278,22 @@ void CKernel::ApplyOutput (void)
 	SendDisplay ();
 }
 
+// STREAM_END (docs/protocol.md 13): the host's session is over. Everything is
+// reset (as RESET: the streams closed, the objects gone), the link is idle
+// again (the serial port: text, the log and the installer), and the splash
+// shows until the next host draws.
+void CKernel::EndSession (CLink *pLink)
+{
+	LOGNOTE ("The host ended its session");
+	m_Commands.Reset ();
+	pLink->EndSession ();
+	m_bFrameSeen = FALSE;
+	if (!m_GUD.IsActive ())
+	{
+		ShowSplash (m_pScreen);
+	}
+}
+
 // no host draws: none has ended a frame, or not for a second
 boolean CKernel::HostIdle (void) const
 {
@@ -459,13 +475,14 @@ TShutdownMode CKernel::Run (void)
 				}
 			}
 		}
-		m_Commands.SetLink (pLink);
+		m_Commands.SetLink (pLink);		// (none: host=usb before a PC's session)
 
 		u32 nHeader;
 		const u32 *pPayload;
 		unsigned nLoopStart = CTimer::GetClockTicks (), i;
 		for (i = 0;
-		        i < MAX_PACKETS_PER_LOOP
+		        pLink
+		     && i < MAX_PACKETS_PER_LOOP
 		     && CTimer::GetClockTicks () - nLoopStart < MAX_US_PER_LOOP
 		     && (pPayload = pLink->GetPacket (&nHeader)) != nullptr;
 		     i++)
@@ -473,6 +490,11 @@ TShutdownMode CKernel::Run (void)
 			if (PGPU_HEADER_OP (nHeader) == PGPU_OP_DEBUG_SCREENSHOT)
 			{
 				DumpScreenshot ();
+			}
+			else if (PGPU_HEADER_OP (nHeader) == PGPU_OP_STREAM_END)
+			{
+				EndSession (pLink);
+				break;
 			}
 			else
 			{

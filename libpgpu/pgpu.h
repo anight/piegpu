@@ -186,6 +186,11 @@ void pgpu_end (void);
 
 /* system and frame */
 void pgpu_reset (void);
+/* the session over USB is over (docs/protocol.md 13): the RPi resets and
+   its serial port carries text again (the log, the installer page); sent and
+   flushed. A PC's program sends it when it's interrupted or killed too
+   (transports/pc-usb) */
+void pgpu_stream_end (void);
 void pgpu_ping (uint32_t cookie);
 void pgpu_request_info (void);
 void pgpu_request_status (void);

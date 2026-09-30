@@ -25,6 +25,7 @@ public:
 
 	/// \brief Tell the host how much of its stream has been taken (CREDIT)
 	void Update (void);
+	void EndSession (void);
 
 private:
 	unsigned ReadStream (void *pBuffer, unsigned nMax);
