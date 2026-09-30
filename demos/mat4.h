@@ -68,6 +68,19 @@ static inline void mat4_perspective (float *m, float fovy_degrees, float aspect,
 	m[14] = 2*f*n / (n - f);
 }
 
+/* glFrustum's: the view volume from (l, b, -n) to (r, t, -n), out to -f */
+static inline void mat4_frustum (float *m, float l, float r, float b, float t, float n, float f)
+{
+	memset (m, 0, 16 * sizeof (float));
+	m[0] = 2*n / (r - l);
+	m[5] = 2*n / (t - b);
+	m[8] = (r + l) / (r - l);
+	m[9] = (t + b) / (t - b);
+	m[10] = -(f + n) / (f - n);
+	m[11] = -1.0f;
+	m[14] = -2*f*n / (f - n);
+}
+
 /* a view from eye towards center (gluLookAt) */
 static inline void mat4_look_at (float *m, const float eye[3], const float center[3], const float up[3])
 {

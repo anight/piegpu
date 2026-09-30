@@ -19,62 +19,10 @@
 #include "hud.h"
 #include "pgpu_perf.h"
 #include "screen.h"
+#include "mat4.h"
 #include "gears_program.h"
 
 #define PI	3.14159265f
-
-/* ---- matrices (column-major, as GL) ---------------------------------------- */
-
-static void mat_identity (float *m)
-{
-	memset (m, 0, 16 * sizeof (float));
-	m[0] = m[5] = m[10] = m[15] = 1.0f;
-}
-
-static void mat_multiply (float *r, const float *a, const float *b)
-{
-	float t[16];
-	for (int c = 0; c < 4; c++)
-		for (int i = 0; i < 4; i++)
-			t[c*4 + i] =   a[0*4 + i] * b[c*4 + 0] + a[1*4 + i] * b[c*4 + 1]
-				     + a[2*4 + i] * b[c*4 + 2] + a[3*4 + i] * b[c*4 + 3];
-	memcpy (r, t, sizeof t);
-}
-
-static void mat_translate (float *m, float x, float y, float z)
-{
-	float t[16];
-	mat_identity (t);
-	t[12] = x;
-	t[13] = y;
-	t[14] = z;
-	mat_multiply (m, m, t);
-}
-
-/* rotate about axis 0 (x), 1 (y) or 2 (z) */
-static void mat_rotate (float *m, int axis, float degrees)
-{
-	float r[16], s = sinf (degrees * PI / 180.0f), c = cosf (degrees * PI / 180.0f);
-	int i = (axis + 1) % 3, j = (axis + 2) % 3;
-	mat_identity (r);
-	r[i*4 + i] = c;
-	r[i*4 + j] = s;
-	r[j*4 + i] = -s;
-	r[j*4 + j] = c;
-	mat_multiply (m, m, r);
-}
-
-static void mat_frustum (float *m, float l, float r, float b, float t, float n, float f)
-{
-	memset (m, 0, 16 * sizeof (float));
-	m[0] = 2*n / (r - l);
-	m[5] = 2*n / (t - b);
-	m[8] = (r + l) / (r - l);
-	m[9] = (t + b) / (t - b);
-	m[10] = -(f + n) / (f - n);
-	m[11] = -1.0f;
-	m[14] = -2*f*n / (f - n);
-}
 
 /* ---- gear geometry ------------------------------------------------------------ */
 
@@ -260,7 +208,7 @@ int main (void)
 		{
 			float projection[16];
 			float aspect = (float) vp[2] / vp[3];	/* the screen is wide: keep the height */
-			mat_frustum (projection, -aspect, aspect, -1.0f, 1.0f, 5.0f, 60.0f);
+			mat4_frustum (projection, -aspect, aspect, -1.0f, 1.0f, 5.0f, 60.0f);
 			glUseProgram (prog);
 			glUniformMatrix4fv (u_projection, 1, GL_FALSE, projection);
 		}
@@ -269,10 +217,10 @@ int main (void)
 
 		/* the camera sways gently around the classic view */
 		float view[16];
-		mat_identity (view);
-		mat_translate (view, 0.0f, 0.0f, -40.0f);
-		mat_rotate (view, 0, 20.0f + 10.0f * sinf (t * 0.31f));
-		mat_rotate (view, 1, 30.0f + 25.0f * sinf (t * 0.19f));
+		mat4_identity (view);
+		mat4_translate (view, 0.0f, 0.0f, -40.0f);
+		mat4_rotate (view, 0, 20.0f + 10.0f * sinf (t * 0.31f));
+		mat4_rotate (view, 1, 30.0f + 25.0f * sinf (t * 0.19f));
 
 		glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 		glUseProgram (prog);
@@ -284,8 +232,8 @@ int main (void)
 		{
 			float modelview[16];
 			memcpy (modelview, view, sizeof view);
-			mat_translate (modelview, gears[g].x, gears[g].y, 0.0f);
-			mat_rotate (modelview, 2, gears[g].speed * angle + gears[g].phase);
+			mat4_translate (modelview, gears[g].x, gears[g].y, 0.0f);
+			mat4_rotate (modelview, 2, gears[g].speed * angle + gears[g].phase);
 			glUniformMatrix4fv (u_modelview, 1, GL_FALSE, modelview);
 			glUniform3fv (u_color, 1, gears[g].color);
 			glBindBuffer (GL_ARRAY_BUFFER, gears[g].buffer);
