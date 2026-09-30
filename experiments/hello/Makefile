@@ -1,4 +1,4 @@
-CIRCLEHOME = ../../circle
+CIRCLEHOME = ../../third_party/circle
 
 OBJS = main.o kernel.o
 

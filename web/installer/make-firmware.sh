@@ -17,7 +17,7 @@ set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 OUT=$HERE/firmware
-BOOT=$ROOT/circle/boot
+BOOT=$ROOT/third_party/circle/boot
 JOBS=$(( $(nproc) > 1 ? $(nproc) - 1 : 1 ))	# a core left free
 
 rm -rf "$OUT"

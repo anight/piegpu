@@ -1,4 +1,19 @@
 [submodule "circle"]
-	path = circle
+	path = third_party/circle
 	url = https://github.com/anight/circle.git
 	branch = piegpu
+[submodule "third_party/mesa"]
+	path = third_party/mesa
+	url = https://gitlab.freedesktop.org/mesa/mesa.git
+	shallow = true
+	ignore = dirty
+[submodule "third_party/VK-GL-CTS"]
+	path = third_party/VK-GL-CTS
+	url = https://github.com/KhronosGroup/VK-GL-CTS.git
+	shallow = true
+	ignore = untracked
+[submodule "third_party/userland"]
+	path = third_party/userland
+	url = https://github.com/raspberrypi/userland.git
+	shallow = true
+	ignore = dirty

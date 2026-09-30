@@ -1,18 +1,18 @@
 #
 # The gpu app, the RPi's firmware, built with CMake on Circle's CMake build
-# (circle/CMakeLists.txt, the submodule): a build directory a board, e.g.
+# (third_party/circle/CMakeLists.txt, the submodule): a build directory a board, e.g.
 # build/zero (the Zero: kernel.img) and build/zero2 (the Zero 2 W:
 # kernel8.img). devtools/build-gpu.sh configures and builds them:
 #
-#   cmake -S gpu -B build/zero2 -G Ninja -DCMAKE_TOOLCHAIN_FILE=circle/cmake/toolchain.cmake \
+#   cmake -S gpu -B build/zero2 -G Ninja -DCMAKE_TOOLCHAIN_FILE=third_party/circle/cmake/toolchain.cmake \
 #         -DCIRCLE_PREFIX=<aarch64-none-elf- toolchain> -DCIRCLE_RASPPI=3 "-DCIRCLE_DEFINES=..."
 #
 cmake_minimum_required(VERSION 3.20)
 project(piegpu_gpu C CXX ASM)
 
 get_filename_component(ROOT ${CMAKE_CURRENT_SOURCE_DIR}/.. ABSOLUTE)	# (normalized: the prefix maps)
-add_subdirectory(${ROOT}/circle circle)
-include(${ROOT}/circle/cmake/circle-kernel.cmake)
+add_subdirectory(${ROOT}/third_party/circle circle)
+include(${ROOT}/third_party/circle/cmake/circle-kernel.cmake)
 
 # MMAL (video/userland, BSD-3): the client of the VideoCore's video components
 set(ul video/userland/interface/mmal)
@@ -35,7 +35,7 @@ add_executable(gpu
 	video/compat/circle_vcos.c video/compat/circle_micros.cpp ${mmal}
 	${CMAKE_CURRENT_BINARY_DIR}/shaders.h ${CMAKE_CURRENT_BINARY_DIR}/build_info_values.h)
 target_include_directories(gpu PRIVATE ${CIRCLE_INCLUDE_DIRS}	# (Circle's first, as Rules.mk)
-	${ROOT}/drivers ${ROOT}/devtools ${ROOT}/protocol ${ROOT}/circle/addon audio
+	${ROOT}/drivers ${ROOT}/devtools ${ROOT}/protocol ${ROOT}/third_party/circle/addon audio
 	video/compat video/userland video/userland/interface/mmal
 	${CMAKE_CURRENT_BINARY_DIR})			# (shaders.h, build_info_values.h)
 # the MMAL sources (C; their messages 32-bit on any client: video/userland/
@@ -60,7 +60,7 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/shaders.h
 
 # this build's version, time and configuration (build_info.h), at every build
 add_custom_target(build_info_values
-	COMMAND ${ROOT}/devtools/build-info.sh ${CMAKE_CURRENT_BINARY_DIR}/build_info_values.h ${ROOT}/circle
+	COMMAND ${ROOT}/devtools/build-info.sh ${CMAKE_CURRENT_BINARY_DIR}/build_info_values.h ${ROOT}/third_party/circle
 	BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/build_info_values.h)
 add_dependencies(gpu build_info_values)
 

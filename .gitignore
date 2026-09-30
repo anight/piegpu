@@ -23,8 +23,11 @@ __pycache__/
 sdcard/*
 !sdcard/config.txt
 
-# host Mesa for tools/glslc (tools/glslc/build-mesa.sh)
-/third_party/
+# third_party/: submodules (circle, mesa, VK-GL-CTS, userland); what the
+# tools build from them
+/third_party/mesa-install/
+/third_party/deqp-build/
+/third_party/deqp-results/
 tools/glslc/build/
 
 # ESP-IDF builds (hosts/esp32p4: idf.py -B build-APP)

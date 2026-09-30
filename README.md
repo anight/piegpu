@@ -45,6 +45,7 @@ Documentation ([docs/](docs/README.md)):
 | `devtools/` | Circle setup and builds per board, the RPi's USB device (serial port, GL interface, monitor), the run log, `run.sh` (boot an RPi over USB, logs, screenshots) |
 | `tools/` | `glslc` (GLSL compiler: Mesa's vc4, offline), `deqp` (the conformance tests) |
 | `patches/` | a local change to Mesa, for `tools/glslc` (Circle's are in its fork, below) |
+| `third_party/` | submodules: Circle (piegpu's fork), Mesa, VK-GL-CTS, the Raspberry Pi userland |
 | `web/installer/` | a page that installs piegpu on the RPi's SD card over USB and runs demos on it |
 | `experiments/` | the early probes and demos that led here (links, displays, V3D, video) |
 
@@ -56,7 +57,7 @@ piegpu supports two boards for now:
   gears frame;
 - a Zero 2 W: 64 bit, `kernel8.img`, 0.9 ms.
 
-piegpu builds with its fork of Circle, the submodule `circle`: the branch
+piegpu builds with its fork of Circle, the submodule `third_party/circle`: the branch
 `piegpu` of [github.com/anight/circle](https://github.com/anight/circle/tree/piegpu),
 Circle Step51.1 with piegpu's changes as commits (the USB gadget's CDC and
 EP0, FatFs' `f_mkfs`, `MEM_PERSISTENT_SIZE`, vcos in 64 bit, the VideoCore's
@@ -70,8 +71,10 @@ the first time (delete it to configure again), and builds.
 Toolchains: Arm GNU 15.2 in `~/toolchains` (`arm-none-eabi` and
 `aarch64-none-elf`).
 
+The firmware needs only the Circle submodule (`build-gpu.sh` fetches it too):
+
 ```bash
-git submodule update --init
+git submodule update --init third_party/circle
 ```
 
 ```bash
@@ -314,6 +317,9 @@ word by word; 30 s):
 | back from it | 6.1 MB/s | 2.37 MB/s |
 | errors | 0 of 6.0M words | 0 |
 
+Compiling GLSL takes the host Mesa, built once with
+`tools/glslc/build-mesa.sh` (below).
+
 Tests from the PC:
 
 - `hosts/pc/build/gltest_host`: self test 8 (83 checks through `gl*` calls).
@@ -331,6 +337,38 @@ functions, FBOs, vertex arrays, random draws; 9.5 minutes): 1999 pass, 16
 fail, the same as the full run of 2026-09-27 (17485 cases: 17163 pass, 24
 fail, 290 not supported). Of the 16, 11 fail with Mesa's vc4 too (the V3D),
 5 are ETC1 wrap cases outside mustpass; on mustpass, 1946 of 1957 pass.
+
+### Third-party code (`third_party/`)
+
+Submodules, each pinned at a commit (shallow clones: git fetches the
+pinned commit alone). A build script fetches the one it needs if it isn't
+there, or all at once:
+
+```bash
+git submodule update --init
+```
+
+| Submodule | Pinned at | Used by |
+|---|---|---|
+| `third_party/circle` | piegpu's fork, branch `piegpu` | the firmware (`devtools/build-gpu.sh`) |
+| `third_party/mesa` | `mesa-26.2.3` | `tools/glslc`, built by `tools/glslc/build-mesa.sh` (into `third_party/mesa-install`) |
+| `third_party/VK-GL-CTS` | `1d3e817` | dEQP-GLES2, built by `tools/deqp/build-deqp.sh` (into `third_party/deqp-build`) |
+| `third_party/userland` | `a54a0db` | `experiments/videodec` (`gpu/video/userland` is a copy of its MMAL client) |
+
+`build-mesa.sh` applies `patches/mesa-vc4-dump.patch` to the Mesa submodule
+(the dump hook glslc reads the QPU code from, pgl's limits, and glslc's
+modes); git status doesn't show those changes (`ignore = dirty` in
+`.gitmodules`). `build-deqp.sh` fetches VK-GL-CTS' own external sources
+(glslang, SPIRV-Tools, ...: `external/fetch_sources.py`, 1.2 GB) and links
+its `pgl` target in (`ignore = untracked`).
+
+```bash
+tools/glslc/build-mesa.sh
+```
+
+```bash
+tools/deqp/build-deqp.sh
+```
 
 ## Installing on an SD card (`web/installer`)
 

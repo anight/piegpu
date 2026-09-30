@@ -1,12 +1,13 @@
 #
 # videodec: H.264 on the VideoCore's decoder from bare metal (kernel.cpp).
 #
-# MMAL is raspberrypi/userland's (BSD-3), cloned into third_party/ (not in git):
-#   git clone --depth 1 https://github.com/raspberrypi/userland.git third_party/userland
+# MMAL is raspberrypi/userland's (BSD-3), the submodule third_party/userland
+# (pinned at a54a0db, the commit gpu/video/userland is from):
+#   git submodule update --init --depth 1 third_party/userland
 # (a54a0db); built here with Circle's vcos and VCHIQ plus compat/. One fix is
 # applied to it: mmal_vc_opaque_alloc.c's definitions use its header's type.
 #
-CIRCLEHOME = ../../circle
+CIRCLEHOME = ../../third_party/circle
 UL = ../../third_party/userland/interface/mmal
 
 MMAL = $(UL)/core/mmal_format.o $(UL)/core/mmal_port.o $(UL)/core/mmal_port_clock.o \

@@ -1,4 +1,4 @@
-CIRCLEHOME = ../../circle
+CIRCLEHOME = ../../third_party/circle
 
 OBJS = main.o kernel.o scene.o ../../drivers/v3d.o ../../drivers/st7789dma.o ../../devtools/devlink.o ../../devtools/v3dperf.o
 

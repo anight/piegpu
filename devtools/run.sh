@@ -26,7 +26,7 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(dirname "$HERE")
-CIRCLEBOOT=$ROOT/circle/boot
+CIRCLEBOOT=$ROOT/third_party/circle/boot
 BOOTDIR=$HERE/usbboot
 LOGDIR=$HERE/logs
 

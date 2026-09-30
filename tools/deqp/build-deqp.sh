@@ -12,12 +12,13 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 CTS=$ROOT/third_party/VK-GL-CTS
 BUILD=$ROOT/third_party/deqp-build
 JOBS=$(( $(nproc) > 1 ? $(nproc) - 1 : 1 ))	# a core left free
-COMMIT=1d3e8178af79e52d5467b379fad58f221fbe3d40
 HOST=$ROOT/hosts/pc
 
-if [ ! -d "$CTS" ]; then
-	git clone https://github.com/KhronosGroup/VK-GL-CTS.git "$CTS"
-	git -C "$CTS" checkout "$COMMIT"
+# the submodule (pinned at 1d3e817), and the sources it fetches itself
+if [ ! -f "$CTS/CMakeLists.txt" ]; then
+	git -C "$ROOT" submodule update --init --depth 1 third_party/VK-GL-CTS
+fi
+if [ ! -d "$CTS/external/glslang/src" ]; then
 	python3 "$CTS/external/fetch_sources.py"		# glslang, spirv-tools, ... (1.2 GB)
 fi
 ln -sfn "$ROOT/tools/deqp/target" "$CTS/targets/pgl"

@@ -1,4 +1,4 @@
-CIRCLEHOME = ../../circle
+CIRCLEHOME = ../../third_party/circle
 
 OBJS = main.o kernel.o ../../drivers/ili9486display.o ../../devtools/devlink.o
 

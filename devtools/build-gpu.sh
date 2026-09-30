@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# Build the gpu app for a board, with CMake on Circle's CMake build (circle,
-# the submodule: piegpu's fork, github.com/anight/circle, branch piegpu):
+# Build the gpu app for a board, with CMake on Circle's CMake build
+# (third_party/circle, the submodule: piegpu's fork, github.com/anight/circle, branch piegpu):
 #
 #   devtools/build-gpu.sh [zero|zero2|all]
 #
@@ -11,7 +11,7 @@
 # (The boards piegpu supports for now; more RPi boards are to come.) One
 # Circle tree serves both: each board has its build directory, configured
 # here the first time (delete it to configure again). The submodule and
-# Circle's boot files (circle/boot: bootcode.bin, start.elf, fixup.dat) are
+# Circle's boot files (third_party/circle/boot: bootcode.bin, start.elf, fixup.dat) are
 # fetched if they aren't there.
 #
 # Toolchains: Arm GNU 15.2 in ~/toolchains (TOOLCHAINS): arm-none-eabi for
@@ -21,7 +21,7 @@
 #
 # Heap buckets up to 64 MB: Circle's heap puts a freed block back on the free
 # list of its size class (bucket) only if there is one - a block bigger than
-# the largest bucket (512 KB by default) is lost for good when freed (circle/
+# the largest bucket (512 KB by default) is lost for good when freed (Circle's
 # include/circle/sysconfig.h, HEAP_BLOCK_BUCKET_SIZES). The gpu app allocates
 # textures (up to ~22 MB with mipmaps at 2048x2048), buffers and depth/stencil
 # storage from the heap, and GL programs create and delete them all the time:
@@ -49,11 +49,11 @@ DEFINES="HEAP_BLOCK_BUCKET_SIZES=0x40,0x400,0x1000,0x4000,0x10000,0x40000,0x8000
 # VERSION's major.minor.patch and it; devtools/build-info.sh)
 export PGPU_BUILD=${PGPU_BUILD:-$("$HERE/next-build.sh")}
 
-if [ ! -f "$ROOT/circle/CMakeLists.txt" ]; then
-	git -C "$ROOT" submodule update --init circle
+if [ ! -f "$ROOT/third_party/circle/CMakeLists.txt" ]; then
+	git -C "$ROOT" submodule update --init third_party/circle
 fi
-if [ ! -f "$ROOT/circle/boot/start.elf" ]; then
-	make -C "$ROOT/circle/boot" firmware >/dev/null
+if [ ! -f "$ROOT/third_party/circle/boot/start.elf" ]; then
+	make -C "$ROOT/third_party/circle/boot" firmware >/dev/null
 fi
 
 # build BOARD RASPPI PREFIX DEFINES IMAGE
@@ -62,7 +62,7 @@ build ()
 	local out=$ROOT/build/$1
 	if [ ! -f "$out/CMakeCache.txt" ]; then
 		cmake -S "$ROOT/gpu" -B "$out" -G "$GENERATOR" \
-			-DCMAKE_TOOLCHAIN_FILE="$ROOT/circle/cmake/toolchain.cmake" \
+			-DCMAKE_TOOLCHAIN_FILE="$ROOT/third_party/circle/cmake/toolchain.cmake" \
 			-DCIRCLE_PREFIX="$3" -DCIRCLE_RASPPI="$2" "-DCIRCLE_DEFINES=$4" >/dev/null
 	fi
 	cmake --build "$out" -j "$JOBS"
