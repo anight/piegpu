@@ -55,6 +55,7 @@ CKernel::CKernel (void)
 	m_bPanelPresent (TRUE),
 	m_nHDMIPixels (CRenderer::MaxPixels),
 	m_Panel (&m_Interrupt),
+	m_Touch (&m_Panel),
 	m_pScreen (nullptr),
 	m_GUD (&m_Gadget),
 	m_bOutputPending (FALSE),
@@ -105,6 +106,9 @@ boolean CKernel::Initialize (void)
 	       && DetectPanel ()
 	       && m_VCHIQ.Initialize ()
 	       && (!(m_bPanelPresent || m_OutputMode == OutputPanel) || m_Panel.Initialize ())
+	       && (!m_bPanelPresent		// (touch=off, or none there: without)
+		   || (m_Touch.Initialize (m_Options.GetAppOptionString ("touch", "auto"),
+					   m_Options.GetAppOptionString ("touchcal")), TRUE))
 	       && (m_OutputMode == OutputPanel || m_HDMI.Initialize ())
 #ifdef ARM_ALLOW_MULTI_CORE
 	       && m_Cores.Initialize ()
@@ -443,6 +447,12 @@ TShutdownMode CKernel::Run (void)
 	LOGNOTE ("I2S slave: CLK pin 12, FS pin 35, DIN pin 38, DOUT pin 40; READY pin 36, FRAME pin 37");
 
 	SendDisplay (FALSE);
+	if (m_Touch.IsPresent ())		// (a TOUCH reply after each INFO only with a touch screen)
+	{
+		u32 Touch[CTouch::Words];
+		m_Touch.GetState (Touch);
+		m_Commands.SetTouch (Touch);
+	}
 	m_Commands.SendInfo ();			// once after boot, with DISPLAY (docs/protocol.md 9)
 
 	CV3D::SetWaitHandler (V3DWait);
@@ -526,6 +536,14 @@ TShutdownMode CKernel::Run (void)
 		}
 
 		m_Commands.UpdateVideo ();
+
+		// the touch screen: read after each panel frame (or here, without
+		// them); a change goes to the host
+		u32 Touch[CTouch::Words];
+		if (m_Touch.Update (Touch))
+		{
+			m_Commands.SetTouch (Touch);
+		}
 
 		// the monitor plugged in or out: a new screen from the next frame
 		if (m_Monitor.Update ())

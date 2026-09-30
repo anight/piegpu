@@ -39,6 +39,9 @@ public:
 
 	void WaitIdle (void)			{ m_Display.WaitIdle (); }
 
+	/// \brief The panel's driver: the touch controller on the same bus (touch.h)
+	CST7789DMADisplay *GetDriver (void)	{ return &m_Display; }
+
 private:
 	CST7789DMADisplay m_Display;
 };

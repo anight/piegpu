@@ -138,6 +138,8 @@ uint32_t pgpu_last_status (pgpu_status_t *status)
    parser writes it) */
 static uint32_t display_words[PGPU_DISPLAY_WORDS];
 static uint32_t display_seq;
+static uint32_t touch_words[PGPU_TOUCH_WORDS];
+static uint32_t touch_seq;
 
 uint32_t pgpu_get_display (pgpu_display_t *display)
 {
@@ -168,6 +170,33 @@ uint32_t pgpu_get_display (pgpu_display_t *display)
 	display->signal_width = w[4] & 0xFFFF;
 	display->signal_height = w[4] >> 16;
 	memcpy (display->monitor_name, &w[5], 13);
+	return seq / 2;
+}
+
+uint32_t pgpu_get_touch (pgpu_touch_t *touch)
+{
+	uint32_t w[PGPU_TOUCH_WORDS], seq;
+	do
+	{
+		while ((seq = LOAD (touch_seq)) & 1)
+		{
+		}
+		for (int i = 0; i < PGPU_TOUCH_WORDS; i++)
+		{
+			w[i] = __atomic_load_n (&touch_words[i], __ATOMIC_RELAXED);
+		}
+		__atomic_thread_fence (__ATOMIC_ACQUIRE);
+	}
+	while (__atomic_load_n (&touch_seq, __ATOMIC_RELAXED) != seq);
+
+	memset (touch, 0, sizeof *touch);
+	touch->down = (w[0] & PGPU_TOUCH_DOWN) != 0;
+	touch->presses = PGPU_TOUCH_PRESSES (w[0]);
+	touch->x = w[1] & 0xFFFF;
+	touch->y = w[1] >> 16;
+	touch->raw_x = w[2] & 0xFFFF;
+	touch->raw_y = w[2] >> 16;
+	touch->pressure = w[3] & 0xFFFF;
 	return seq / 2;
 }
 
@@ -378,6 +407,18 @@ void pgpu_deliver_reply (uint8_t opcode, const uint32_t *payload, uint32_t lengt
 			__atomic_store_n (&status_words[i], i < length ? payload[i] : 0, __ATOMIC_RELAXED);
 		}
 		STORE (status_seq, seq + 2);
+	}
+	if (opcode == PGPU_REPLY_TOUCH && length >= PGPU_TOUCH_WORDS)
+	{
+		uint32_t seq = touch_seq;
+		STORE (touch_seq, seq + 1);
+		__atomic_thread_fence (__ATOMIC_RELEASE);
+		for (int i = 0; i < PGPU_TOUCH_WORDS; i++)
+		{
+			__atomic_store_n (&touch_words[i], payload[i], __ATOMIC_RELAXED);
+		}
+		STORE (touch_seq, seq + 2);
+		return;
 	}
 	if (opcode == PGPU_REPLY_DISPLAY && length >= PGPU_DISPLAY_WORDS)
 	{

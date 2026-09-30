@@ -91,6 +91,25 @@ typedef struct
    never get lost to other waits: compare the count to see a change */
 uint32_t pgpu_get_display (pgpu_display_t *display);
 
+/* the panel's touch screen (the TOUCH reply, docs/protocol.md 9): the RPi
+   sends one whenever it changes (pressed, moved, let go), and after each
+   INFO; none come without a touch screen */
+typedef struct
+{
+	bool down;			/* touched now */
+	uint16_t presses;		/* presses since the RPi started (mod 65536): a
+					   short tap between two looks shows here */
+	uint16_t x, y;			/* where (the panel's pixels, 320x240 as shown;
+					   the last place while not touched) */
+	uint16_t raw_x, raw_y;		/* the controller's readings there (0 .. 4095),
+					   to calibrate by (the RPi's touchcal=) */
+	uint16_t pressure;		/* 0 .. 4095: touched from about 300 */
+} pgpu_touch_t;
+
+/* the last TOUCH reply; returns how many have arrived (0: none, so no touch
+   screen: the RPi sends one after each INFO when it has one) */
+uint32_t pgpu_get_touch (pgpu_touch_t *touch);
+
 /* media streams (docs/protocol.md 7.12): video decoded by the RPi into
    textures, sound played on HDMI (7.13). A stream's MEDIA_STATUS (for the
    audio stream: frames are access units, shown_pts the time heard) */

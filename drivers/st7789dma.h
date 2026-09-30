@@ -7,6 +7,11 @@
 // next. SetArea() can run asynchronously (with a completion routine), so the
 // caller can prepare the next frame while the current one is transferred.
 //
+// Another device on the bus (another chip select, a slower clock: a touch
+// controller) gets a short transfer after each frame's pixels, chained to the
+// last chunk's completion, so it never waits for the panel nor the panel for
+// it; AuxNow runs it between frames when none go to the panel.
+//
 // Init sequence from Circle's CST7789Display (GPLv3).
 //
 #ifndef _drivers_st7789dma_h
@@ -66,6 +71,25 @@ public:
 	/// \brief Wait until a running DMA transfer has finished
 	void WaitIdle (void);
 
+	/// \brief Called with the bytes read by the aux transfer (from interrupt
+	///	   context after a frame, from AuxNow's caller otherwise)
+	typedef void TAuxRoutine (const u8 *pRx, void *pParam);
+
+	/// \brief The transfer to make on nChipSelect at nClockSpeed after each
+	///	   frame (nBytes of pTx out, as many in; up to MaxAux)
+	void SetAux (unsigned nChipSelect, unsigned nClockSpeed, const void *pTx, unsigned nBytes,
+		     TAuxRoutine *pRoutine, void *pParam);
+	static const unsigned MaxAux = 64;
+
+	/// \brief Make the aux transfer now, polled, if the bus is idle (not
+	///	   from an interrupt; the caller starts no frame meanwhile)
+	/// \return FALSE: a frame is being sent (the aux transfer follows it)
+	boolean AuxNow (void);
+
+	/// \brief A polled transfer on another chip select at another clock
+	///	   (the bus idle), the panel's clock back after it
+	void Transfer (unsigned nChipSelect, unsigned nClockSpeed, const void *pTx, void *pRx, unsigned nBytes);
+
 private:
 	void SetWindow (unsigned x0, unsigned y0, unsigned x1, unsigned y1);
 	void Command (u8 uchCmd);
@@ -74,6 +98,8 @@ private:
 
 	void StartChunk (void);
 	static void SPICompletion (boolean bStatus, void *pParam);
+	static void AuxCompletion (boolean bStatus, void *pParam);
+	void FrameDone (void);
 
 private:
 	CSPIMasterDMA m_SPI;
@@ -84,7 +110,15 @@ private:
 	unsigned m_nWidth;
 	unsigned m_nHeight;
 	unsigned m_nChipSelect;
+	unsigned m_nClockSpeed;
 	boolean m_bLittleEndian;
+
+	unsigned m_nAuxChipSelect;
+	unsigned m_nAuxClockSpeed;
+	unsigned m_nAuxBytes;			// 0: none
+	u8 *m_pAuxTx, *m_pAuxRx;		// DMA buffers, cache line aligned
+	TAuxRoutine *m_pAuxRoutine;
+	void *m_pAuxParam;
 
 	u8 *m_pDummyRx;				// RX DMA target (SPI is full duplex)
 

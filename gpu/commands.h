@@ -64,6 +64,10 @@ public:
 	///	   bSend); it's sent again after each INFO
 	void SetDisplay (const u32 *pPayload, unsigned nWords, boolean bSend = TRUE);
 
+	/// \brief Set the TOUCH reply (docs/protocol.md 9) and send it; it's sent
+	///	   again after each INFO (only if a touch screen is there: set)
+	void SetTouch (const u32 *pPayload);
+
 	/// \return TRUE if nothing has been drawn into the screen's frame yet
 	///	    (the screen may change size now)
 	boolean IsBetweenFrames (void) const;
@@ -92,6 +96,7 @@ public:
 	TCommandStats GetStats (void);
 
 	static const unsigned DisplayWords = 9;
+	static const unsigned TouchWords = 4;	// (PGPU_TOUCH_WORDS)
 	unsigned GetTextureBytes (void) const	{ return m_Textures.GetTotalBytes (); }
 
 	void SetLoadStats (const TLoadStats &rLoad)	{ m_Load = rLoad; }
@@ -230,6 +235,8 @@ private:
 	boolean m_bPanelDrawn;		// a job rendered into the back buffer this frame
 	u32 m_Display[DisplayWords];	// the DISPLAY reply
 	unsigned m_nDisplayWords;	// 0: not set
+	u32 m_Touch[TouchWords];	// the TOUCH reply
+	boolean m_bTouch;		// set
 	boolean m_bPanelZSValid;
 	TRenderStats m_FrameStats;
 

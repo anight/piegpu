@@ -24,6 +24,7 @@
 #include "link/usb_link.h"
 #include "link/usb_bulk_link.h"
 #include "display/panel_output.h"
+#include "display/touch.h"
 #include "display/hdmi_output.h"
 #include "display/hdmi_monitor.h"
 #include "display/gud_display.h"
@@ -133,6 +134,7 @@ private:
 	boolean			m_bPanelPresent;
 	unsigned		m_nHDMIPixels;		// the largest screen on HDMI (default: native)
 	CPanelOutput		m_Panel;
+	CTouch			m_Touch;		// the panel's touch screen (on its SPI)
 	CHDMIOutput		m_HDMI;
 	CHDMIMonitor		m_Monitor;
 	COutput			*m_pScreen;		// the panel or HDMI: where the picture is

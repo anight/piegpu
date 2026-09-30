@@ -42,7 +42,15 @@ CST7789DMADisplay::CST7789DMADisplay (CInterruptSystem *pInterrupt,
 	m_nWidth (nWidth),
 	m_nHeight (nHeight),
 	m_nChipSelect (nChipSelect),
+	m_nClockSpeed (nClockSpeed),
 	m_bLittleEndian (bLittleEndian),
+	m_nAuxChipSelect (0),
+	m_nAuxClockSpeed (0),
+	m_nAuxBytes (0),
+	m_pAuxTx (nullptr),
+	m_pAuxRx (nullptr),
+	m_pAuxRoutine (nullptr),
+	m_pAuxParam (nullptr),
 	m_pDummyRx (nullptr),
 	m_pNext (nullptr),
 	m_nRemaining (0),
@@ -65,6 +73,9 @@ boolean CST7789DMADisplay::Initialize (void)
 {
 	u8 *p = new u8[MAX_CHUNK + 64];
 	m_pDummyRx = (u8 *) (((uintptr) p + 63) & ~(uintptr) 63);
+	p = new u8[2 * MaxAux + 64];			// (whole cache lines each)
+	m_pAuxTx = (u8 *) (((uintptr) p + 63) & ~(uintptr) 63);
+	m_pAuxRx = m_pAuxTx + MaxAux;
 
 	if (!m_SPI.Initialize ())
 	{
@@ -200,16 +211,86 @@ void CST7789DMADisplay::SPICompletion (boolean bStatus, void *pParam)
 		return;
 	}
 
-	TAreaCompletionRoutine *pRoutine = pThis->m_pRoutine;
-	void *pRoutineParam = pThis->m_pParam;
-	pThis->m_pRoutine = nullptr;
+	if (pThis->m_nAuxBytes)			// the other device's turn, then the frame is done
+	{
+		pThis->m_SPI.SetClock (pThis->m_nAuxClockSpeed);
+		pThis->m_SPI.SetCompletionRoutine (AuxCompletion, pThis);
+		pThis->m_SPI.StartWriteRead (pThis->m_nAuxChipSelect, pThis->m_pAuxTx, pThis->m_pAuxRx,
+					     pThis->m_nAuxBytes);
 
-	pThis->m_bBusy = FALSE;
+		return;
+	}
+
+	pThis->FrameDone ();
+}
+
+void CST7789DMADisplay::AuxCompletion (boolean bStatus, void *pParam)
+{
+	CST7789DMADisplay *pThis = static_cast<CST7789DMADisplay *> (pParam);
+	assert (pThis != 0);
+
+	pThis->m_SPI.SetClock (pThis->m_nClockSpeed);
+	if (bStatus && pThis->m_pAuxRoutine)
+	{
+		(*pThis->m_pAuxRoutine) (pThis->m_pAuxRx, pThis->m_pAuxParam);
+	}
+
+	pThis->FrameDone ();
+}
+
+void CST7789DMADisplay::FrameDone (void)
+{
+	TAreaCompletionRoutine *pRoutine = m_pRoutine;
+	void *pRoutineParam = m_pParam;
+	m_pRoutine = nullptr;
+
+	m_bBusy = FALSE;
 
 	if (pRoutine)
 	{
 		(*pRoutine) (pRoutineParam);
 	}
+}
+
+void CST7789DMADisplay::SetAux (unsigned nChipSelect, unsigned nClockSpeed, const void *pTx, unsigned nBytes,
+				TAuxRoutine *pRoutine, void *pParam)
+{
+	assert (nBytes <= MaxAux);
+	assert (m_pAuxTx != nullptr);			// (after Initialize)
+	WaitIdle ();
+
+	m_nAuxBytes = 0;
+	m_nAuxChipSelect = nChipSelect;
+	m_nAuxClockSpeed = nClockSpeed;
+	memcpy (m_pAuxTx, pTx, nBytes);
+	m_pAuxRoutine = pRoutine;
+	m_pAuxParam = pParam;
+	m_nAuxBytes = nBytes;
+}
+
+boolean CST7789DMADisplay::AuxNow (void)
+{
+	if (m_bBusy || !m_nAuxBytes)
+	{
+		return FALSE;
+	}
+
+	Transfer (m_nAuxChipSelect, m_nAuxClockSpeed, m_pAuxTx, m_pAuxRx, m_nAuxBytes);
+	if (m_pAuxRoutine)
+	{
+		(*m_pAuxRoutine) (m_pAuxRx, m_pAuxParam);
+	}
+
+	return TRUE;
+}
+
+void CST7789DMADisplay::Transfer (unsigned nChipSelect, unsigned nClockSpeed, const void *pTx, void *pRx, unsigned nBytes)
+{
+	WaitIdle ();
+
+	m_SPI.SetClock (nClockSpeed);
+	m_SPI.WriteReadSync (nChipSelect, pTx, pRx, nBytes);
+	m_SPI.SetClock (m_nClockSpeed);
 }
 
 void CST7789DMADisplay::SetWindow (unsigned x0, unsigned y0, unsigned x1, unsigned y1)

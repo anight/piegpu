@@ -194,6 +194,7 @@ CCommands::CCommands (CRenderer *pRenderer, CLink *pLink)
 	m_bJobPending = m_bJobClearColor = m_bJobClearZS = FALSE;
 	m_bPanelDrawn = m_bPanelZSValid = FALSE;
 	m_nDisplayWords = 0;
+	m_bTouch = FALSE;
 	m_Geometry.SetJobFullHandler (JobFullHandler, this);
 	m_Textures.SetJobFlush (JobFullHandler, this);
 	m_Programs.SetJobFlush (JobFullHandler, this);
@@ -334,6 +335,17 @@ void CCommands::SendInfo (void)
 	{
 		Reply (PGPU_REPLY_DISPLAY, m_Display, m_nDisplayWords);
 	}
+	if (m_bTouch)
+	{
+		Reply (PGPU_REPLY_TOUCH, m_Touch, TouchWords);
+	}
+}
+
+void CCommands::SetTouch (const u32 *pPayload)
+{
+	memcpy (m_Touch, pPayload, sizeof m_Touch);
+	m_bTouch = TRUE;
+	Reply (PGPU_REPLY_TOUCH, m_Touch, TouchWords);
 }
 
 void CCommands::SetDisplay (const u32 *pPayload, unsigned nWords, boolean bSend)

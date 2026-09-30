@@ -129,6 +129,7 @@ enum pgpu_reply
 	PGPU_REPLY_STATUS	= 0x04,
 	PGPU_REPLY_DISPLAY	= 0x05,		/* the screen and the HDMI monitor */
 	PGPU_REPLY_MEDIA_STATUS	= 0x06,		/* a media stream (section 7.12) */
+	PGPU_REPLY_TOUCH	= 0x07,		/* the panel's touch screen (section 9) */
 	PGPU_REPLY_FRAME_DONE	= 0x11,
 	PGPU_REPLY_PIXELS	= 0x16,
 	PGPU_REPLY_CREDIT	= 0x7E,		/* USB stream only: bytes received so far */
@@ -143,6 +144,12 @@ enum pgpu_reply
 #define PGPU_DISPLAY_PANEL_PRESENT	(1u << 9)	/* a panel is configured */
 #define PGPU_DISPLAY_EDID		(1u << 10)	/* the monitor's EDID was read */
 #define PGPU_DISPLAY_WORDS		9
+
+/* TOUCH: word 0 flags and the presses so far, 1 the position (the panel's
+   pixels), 2 the controller's readings, 3 the pressure */
+#define PGPU_TOUCH_DOWN			(1u << 0)	/* touched now */
+#define PGPU_TOUCH_PRESSES(w)		((w) >> 16)	/* presses since the RPi started, mod 65536 */
+#define PGPU_TOUCH_WORDS		4
 
 /* media streams (section 7.12): 1 and 2 video, 3 audio; MEDIA_DATA,
    MEDIA_CONTROL, MEDIA_GET_STATUS and MEDIA_STATUS serve all three */
