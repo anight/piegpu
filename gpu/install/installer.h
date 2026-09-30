@@ -8,7 +8,7 @@
 //   PGI INFO                     #PGI INFO board=<name, _ for spaces> rev=<hex>
 //                                  ram=<MB> card=1 size=<MB> fs=FAT32 free=<KB>
 //                                  files=<name>:<bytes>,...   (card=0 error=...)
-//                                  [fw=... fwbuilt=... fwconfig=...: the build
+//                                  [fw=... fwgit=... fwbuilt=... fwconfig=...: the build
 //                                  in the card's kernel: kernel.img, or kernel8.img
 //                                  on a Zero 2 W; build_info.h]
 //   PGI PUT <name> <bytes> <crc> #PGI OK       a file is coming (CRC-32, hex)

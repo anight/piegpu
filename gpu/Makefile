@@ -59,9 +59,15 @@ include $(CIRCLEHOME)/Rules.mk
 audio/faad2/libaac.a: FORCE
 	$(MAKE) -C audio/faad2 CIRCLEHOME=$(abspath $(CIRCLEHOME))
 
-# this build's version, time and configuration (build_info.h), at every build
-build_info.o: CPPFLAGS += -DPGPU_VERSION='"$(shell git describe --always --dirty 2>/dev/null || echo unknown)"' \
-	-DPGPU_BUILT='"$(shell date -u +%Y-%m-%dT%H:%MZ)"' \
+# this build's version, time and configuration (build_info.h), at every build.
+# The version: the checkout's VERSION (major.minor.patch) and a build number,
+# the next of this checkout's (devtools/next-build.sh), unless PGPU_BUILD is
+# given (devtools/build-gpu.sh: one number for all its boards)
+TOPDIR := $(shell git rev-parse --show-toplevel 2>/dev/null)
+PGPU_BUILD ?= $(shell $(TOPDIR)/devtools/next-build.sh)
+build_info.o: CPPFLAGS += -DPGPU_FW_VERSION='"$(shell cat $(TOPDIR)/VERSION).$(PGPU_BUILD)"' \
+	-DPGPU_FW_GIT='"$(shell git describe --always --dirty 2>/dev/null || echo unknown)"' \
+	-DPGPU_BUILT='"$(shell date -u +%Y-%m-%dT%H:%M:%SZ)"' \
 	-DPGPU_CIRCLE='"$(shell git -C $(CIRCLEHOME) describe --tags --always 2>/dev/null || echo unknown)"'
 build_info.o: FORCE
 .PHONY: FORCE

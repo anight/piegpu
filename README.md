@@ -83,6 +83,14 @@ This gives `gpu/kernel.img` (the Zero) and `build/zero2/gpu/kernel8.img` (the
 Zero 2 W). `web/installer/make-firmware.sh` puts both builds on the installer
 page, which picks the one for the board.
 
+**Versions:** `major.minor.patch.build`. `VERSION` holds `major.minor.patch`
+(set by hand); every firmware build takes the next build number of the
+checkout (`devtools/next-build.sh`, counted in `build/build-number`, not in
+git), one for all the boards of a `build-gpu.sh` or `make-firmware.sh` run.
+The kernel carries it with the git commit and the build time (UTC; the boot
+log, the splash, the installer page, which offers "Upgrade" when its kernel's
+version is higher than the card's).
+
 Video decoding works the same on both boards (in 64 bit too:
 [docs/development.md](docs/development.md#video)). Verified on both boards:
 640x360 to 1280x720, 0 dropped.
@@ -365,7 +373,10 @@ Then open http://localhost:8765 and follow the steps:
   partition (type 0x0c), the files of `web/installer/firmware/<board>`, a
   `config.txt` (`arm_64bit=1` for a Zero 2 W) and a `cmdline.txt`.
 - **A card with piegpu:** "Connect" (Web Serial). Install again,
-  or change the settings only. If piegpu doesn't answer (a program left it
+  or change the settings only. When the page's kernel has a higher version
+  than the card's, "Upgrade" next to the card's firmware writes the kernel
+  alone and restarts the RPi. After every restart the
+  page reads the board, the card and its settings again. If piegpu doesn't answer (a program left it
   taking GL commands), the page restarts it; "Reset" restarts it any time.
 - **A card with another system:** take it out, start the RPi from the page,
   and put the card in when the page asks.

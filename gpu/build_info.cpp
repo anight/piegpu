@@ -2,7 +2,7 @@
 // build_info.cpp
 //
 // Compiled at every build of the gpu app (gpu/Makefile): the Makefile
-// defines PGPU_VERSION, PGPU_BUILT and PGPU_CIRCLE.
+// defines PGPU_FW_VERSION, PGPU_FW_GIT, PGPU_BUILT and PGPU_CIRCLE.
 //
 #include "build_info.h"
 
@@ -11,7 +11,7 @@
 
 const char g_BuildInfo[] __attribute__ ((used)) =
 	BUILD_INFO_START
-	"fw=" PGPU_VERSION " fwbuilt=" PGPU_BUILT
+	"fw=" PGPU_FW_VERSION " fwgit=" PGPU_FW_GIT " fwbuilt=" PGPU_BUILT
 	" fwconfig=RASPPI=" STR (RASPPI) ",AArch" STR (AARCH) ",Circle_" PGPU_CIRCLE
 	",GCC_" STR (__GNUC__) "." STR (__GNUC_MINOR__) "." STR (__GNUC_PATCHLEVEL__)
 	"\x03";
@@ -36,5 +36,15 @@ const char *GetBuildInfo (void)
 
 const char *GetBuildVersion (void)
 {
-	return PGPU_VERSION " " PGPU_BUILT;
+	return PGPU_FW_VERSION;
+}
+
+const char *GetBuildGit (void)
+{
+	return PGPU_FW_GIT;
+}
+
+const char *GetBuildTime (void)
+{
+	return PGPU_BUILT;
 }

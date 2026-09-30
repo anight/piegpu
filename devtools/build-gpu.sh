@@ -19,6 +19,10 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/.." && pwd)
 JOBS=$(( $(nproc) > 1 ? $(nproc) - 1 : 1 ))	# a core left free
 
+# one build number for all the boards of this build (gpu/Makefile: the
+# version, VERSION's major.minor.patch and it)
+export PGPU_BUILD=${PGPU_BUILD:-$("$HERE/next-build.sh")}
+
 build_zero ()
 {
 	make -C "$ROOT/gpu" -j"$JOBS"

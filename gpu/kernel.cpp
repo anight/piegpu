@@ -766,7 +766,7 @@ void CKernel::ShowSplash (COutput *pOutput)
 	const THDMIState &M = m_Monitor.GetState ();
 	unsigned nWidth = pOutput->GetWidth (), nHeight = pOutput->GetHeight ();
 
-	CString Status, Monitor, Render, Board, Clocks, Build;
+	CString Status, Monitor, Render, Board, Clocks, Build, Built;
 	if (pOutput == &m_HDMI)
 	{
 		if (M.bConnected)
@@ -807,10 +807,24 @@ void CKernel::ShowSplash (COutput *pOutput)
 		       CMachineInfo::Get ()->GetClockRate (5) / 1000000);	// (5: the V3D's clock id)
 	const char *pHost = m_HostMode == HostUSB ? "USB (host=usb)"
 			  : m_HostMode == HostI2S ? "I2S (host=i2s)" : "I2S or USB (host=auto)";
-	Build = GetBuildVersion ();
+	Build.Format ("%s (%s)", GetBuildVersion (), GetBuildGit ());
+	const char *pBuilt = GetBuildTime ();	// "2026-09-30T00:27:32Z" -> "2026-09-30 00:27:32 UTC"
+	unsigned nBuilt = strlen (pBuilt);
+	char Time[32];
+	if (nBuilt > 11 && nBuilt < sizeof Time && pBuilt[10] == 'T' && pBuilt[nBuilt - 1] == 'Z')
+	{
+		memcpy (Time, pBuilt, nBuilt - 1);
+		Time[10] = ' ';
+		Time[nBuilt - 1] = '\0';
+		Built.Format ("%s UTC", Time);
+	}
+	else
+	{
+		Built = pBuilt;
+	}
 
-	const char *Label[] = {"Monitor:", "Render:", "Board:", "Clocks:", "Host:", "Build:"};
-	const char *Value[] = {Monitor, Render, Board, Clocks, pHost, Build};
+	const char *Label[] = {"Monitor:", "Render:", "Board:", "Clocks:", "Host:", "Version:", "Built:"};
+	const char *Value[] = {Monitor, Render, Board, Clocks, pHost, Build, Built};
 	const unsigned Lines = sizeof Label / sizeof Label[0];
 
 	// on HDMI the splash goes into the framebuffer's first page: that page on

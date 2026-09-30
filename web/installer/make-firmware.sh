@@ -21,6 +21,8 @@ BOOT=$ROOT/circle/boot
 JOBS=$(( $(nproc) > 1 ? $(nproc) - 1 : 1 ))	# a core left free
 
 rm -rf "$OUT"
+# one build number for both boards' kernels: one version (gpu/Makefile)
+export PGPU_BUILD=${PGPU_BUILD:-$("$ROOT/devtools/next-build.sh")}
 BOARDS=zero
 "$ROOT/devtools/build-gpu.sh" zero >/dev/null
 mkdir -p "$OUT/zero"
@@ -37,15 +39,34 @@ python3 - "$OUT" "$(git -C "$ROOT" describe --always --dirty)" $BOARDS <<'PY'
 import json, os, sys, time, zlib
 out, version, boards = sys.argv[1], sys.argv[2], sys.argv[3:]
 kernels = {'zero': 'kernel.img', 'zero2': 'kernel8.img'}
-manifest = {'version': version, 'built': time.strftime('%Y-%m-%d %H:%M'), 'boards': {}}
+manifest = {'version': version, 'built': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'boards': {}}
+
+# a kernel's build line (gpu/build_info.h: between \x01PGPU-BUILD\x02 and
+# \x03), as the RPi's installer reads it from a card (PGI INFO)
+def build_info(data):
+	start = data.find(b'\x01PGPU-BUILD\x02')
+	if start < 0:
+		return None
+	start += len(b'\x01PGPU-BUILD\x02')
+	kv = dict(p.split('=', 1) for p in data[start:data.index(b'\x03', start)].decode().split() if '=' in p)
+	return {'version': kv.get('fw', ''), 'git': kv.get('fwgit', ''), 'built': kv.get('fwbuilt', ''),
+		'config': kv.get('fwconfig', '')}
+
 for board in boards:
 	files = []
 	for name in ['bootcode.bin', 'start.elf', 'fixup.dat', kernels[board]]:
 		data = open(os.path.join(out, board, name), 'rb').read()
 		files.append({'name': name, 'size': len(data), 'crc32': '%08x' % (zlib.crc32(data) & 0xffffffff)})
-	manifest['boards'][board] = {'kernel': kernels[board], 'files': files}
+	kernel = open(os.path.join(out, board, kernels[board]), 'rb').read()
+	manifest['boards'][board] = {'kernel': kernels[board], 'build': build_info(kernel), 'files': files}
+# the version: the kernels' (their build lines: major.minor.patch.build), the
+# commit beside it
+builds = [manifest['boards'][b]['build'] for b in boards if manifest['boards'][b]['build']]
+if builds:
+	manifest['version'] = builds[0]['version']
+	manifest['git'] = builds[0]['git']
 json.dump(manifest, open(os.path.join(out, 'manifest.json'), 'w'), indent=1)
-print('firmware/: piegpu %s for %s' % (version, ', '.join(boards)))
+print('firmware/: piegpu %s (%s) for %s' % (manifest['version'], manifest.get('git', version), ', '.join(boards)))
 PY
 
 # the test video (the Test video button): the Big Buck Bunny trailer, 853x480

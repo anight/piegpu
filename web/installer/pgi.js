@@ -229,7 +229,7 @@ export class Installer
 			files.set (name, Number (size));
 		}
 		return {board: (f.board || '').replace (/_/g, ' '), revision: f.rev || '', ramMB: Number (f.ram || 0),
-			build: f.fw ? {version: f.fw, built: f.fwbuilt || '', config: f.fwconfig || ''} : null,
+			build: f.fw ? {version: f.fw, git: f.fwgit || '', built: f.fwbuilt || '', config: f.fwconfig || ''} : null,
 			card: f.card === '1', sizeMB: Number (f.size || 0), fs: f.fs || 'none',
 			freeKB: Number (f.free || 0), files, error: f.error || null};
 	}

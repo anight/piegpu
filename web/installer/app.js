@@ -119,8 +119,14 @@ async function loadManifest ()
 	try
 	{
 		manifest = await (await fetch ('firmware/manifest.json', {cache: 'no-cache'})).json ();
-		const boards = Object.keys (manifest.boards || {}).map (b => BOARDS[b]).join (' and ');
-		$('version').textContent = `Firmware ${manifest.version} for the ${boards}, built ${manifest.built}.`;
+		// the kernels' own build times (their build lines, as the card's is
+		// shown): one if they're the same, else each board's
+		const boards = Object.keys (manifest.boards || {});
+		const built = boards.map (b => manifest.boards[b].build?.built || manifest.built);
+		const version = manifest.version + (manifest.git ? ` (${manifest.git})` : '');
+		$('version').textContent = built.every (t => t === built[0])
+			? `Firmware ${version} for the ${boards.map (b => BOARDS[b]).join (' and ')}, built ${utc (built[0])}.`
+			: `Firmware ${version} for the ${boards.map ((b, i) => `${BOARDS[b]} (built ${utc (built[i])})`).join (' and ')}.`;
 	}
 	catch (e)
 	{
@@ -238,7 +244,6 @@ async function openInstaller (port)
 		status ('connect-status', 'piegpu doesn\'t answer (busy with GL commands?): restarting it…', 'warn');
 		const connection = installer;
 		await restartRPi (() => connection.restart ());
-		await refreshCard (true);
 		status ('connect-status', 'Connected to piegpu (restarted).', 'ok');
 	}
 }
@@ -362,6 +367,7 @@ async function refreshCard (loadSettings)
 		dt.textContent = k;
 		dd.textContent = v;
 		facts.append (dt, dd);
+		return dd;
 	};
 	$('card-retry').hidden = true;
 	$('format').hidden = true;
@@ -381,7 +387,18 @@ async function refreshCard (loadSettings)
 		{
 			facts.push (`${mb (Math.floor (card.freeKB / 1024))} free`);
 			add ('SD card', facts.join (' · '));
-			add ('Firmware', describeInstalled ());
+			const fw = add ('Firmware', describeInstalled ());
+			const offered = kernelUpgrade ();
+			if (offered)
+			{
+				const b = document.createElement ('button');
+				b.textContent = 'Upgrade';
+				b.className = 'upgrade';
+				b.title = `Write this page's kernel (${offered.version}, built ${utc (offered.built)}) `
+					  + 'to the card, then restart the RPi: the other files and the settings stay';
+				b.onclick = upgradeKernel;
+				fw.append (' ', b);
+			}
 			status ('card-status', '');
 			if (loadSettings && (card.files.has ('config.txt') || card.files.has ('cmdline.txt')))
 			{
@@ -404,6 +421,71 @@ async function refreshCard (loadSettings)
 	updateButtons ();
 }
 
+// a build time as the builds give it ("2026-09-30T00:05:42Z"; before, to the
+// minute: "2026-09-30T00:05Z") for reading
+function utc (t)
+{
+	return (t || '').replace ('T', ' ').replace (/Z$/, ' UTC');
+}
+
+// a version's numbers (major.minor.patch.build), or null (an older build's
+// version was its git commit)
+function versionNumbers (v)
+{
+	return /^\d+\.\d+\.\d+\.\d+$/.test (v || '') ? v.split ('.').map (Number) : null;
+}
+
+// the page's kernel for the board, if its version is higher than the card's
+// (or the card's has none: an older build): its build line, else null
+function kernelUpgrade ()
+{
+	const board = currentBoard ();
+	const offered = manifest?.boards?.[board]?.build;
+	const ours = versionNumbers (offered?.version);
+	if (!ours || !firmwareNames (board).every (n => card.files.has (n)))
+	{
+		return null;
+	}
+	const theirs = versionNumbers (card.build?.version);
+	if (!theirs)
+	{
+		return offered;
+	}
+	for (let i = 0; i < 4; i++)
+	{
+		if (ours[i] !== theirs[i])
+		{
+			return ours[i] > theirs[i] ? offered : null;
+		}
+	}
+	return null;
+}
+
+// the page's kernel onto the card (the kernel alone: the other firmware
+// files and the settings stay), then the RPi restarts from it
+async function upgradeKernel ()
+{
+	await run (async () =>
+	{
+		const board = currentBoard ();
+		const name = manifest.boards[board].kernel;
+		const bytes = (await loadFirmware (board)).get (name);
+		const bar = $('progress');
+		bar.hidden = false;
+		bar.max = bytes.length;
+		status ('action-status', `Writing ${name}…`);
+		await installer.put (name, bytes, n => bar.value = n);
+		log (`(page) wrote ${name}, ${bytes.length} bytes, checked by its CRC`);
+
+		status ('action-status', 'Written. Restarting the RPi from the card…');
+		const screen = await restartRPi (() => installer.reboot ());
+		status ('action-status', `Upgraded: piegpu ${card.build?.version ?? ''} started from the card.`
+				       + (screen ? ' ' + screen + '.' : ''), 'ok');
+		status ('connect-status', 'Connected to piegpu.', 'ok');
+	}, 'action-status');
+	$('progress').hidden = true;
+}
+
 // piegpu on the card: its build (version, time, configuration), or how much
 // of it is there
 function describeInstalled ()
@@ -419,9 +501,9 @@ function describeInstalled ()
 	{
 		return 'on the card (an older build that doesn\'t say which)';
 	}
-	const built = b.built.replace ('T', ' ').replace (/Z$/, ' UTC');
+	const built = utc (b.built);
 	const config = b.config.split (',').map (s => s.replace (/_/g, ' ')).join (', ');
-	return `${b.version}, built ${built} (${config})`;
+	return `${b.version}${b.git ? ` (${b.git})` : ''}, built ${built} (${config})`;
 }
 
 async function format ()
@@ -503,7 +585,9 @@ async function restartRPi (how)
 			seen.push (line.replace (/^\S+ \S+ /, ''));
 		}
 	});
-	await refreshCard (false);			// (its answer comes after the replayed log)
+	// everything from the board again: its type, the card, the firmware, the
+	// settings (its answer comes after the replayed log)
+	await refreshCard (true);
 	return seen.pop ();
 }
 
