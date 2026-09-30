@@ -48,6 +48,13 @@ public:
 	/// \brief The decoder's core: never returns
 	void DecodeLoop (void);
 
+	/// \return The output the last stream played on (its capture), or nullptr
+	CAudioOut *GetLastOut (void) const	{ return m_pLastOut; }
+
+	/// \return The output for this rate (set up the first time), or nullptr;
+	///	    it becomes the last output
+	CAudioOut *GetOutput (unsigned nRate);
+
 	/// \brief The VIDEO_STATUS reply of the audio stream
 	boolean GetStatus (u32 *pPayload, boolean bDue);
 
@@ -87,6 +94,7 @@ private:
 	struct aac_s *m_pAAC;
 	CAudioOut *m_pOut;			// the stream's (one of m_pOuts)
 	CAudioOut *m_pOuts[MaxRates];		// set up once each (the VideoCore's service)
+	CAudioOut *m_pLastOut;
 	unsigned m_nRate;
 	boolean m_bPaused;
 	unsigned m_nVolume;			// percent

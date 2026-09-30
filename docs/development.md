@@ -205,8 +205,13 @@ The audio stream (protocol §7.13, `gpu/audio/`): AAC decoded on the ARM,
 played on HDMI through the VideoCore's audio service.
 
 - **Output** (`CAudioOut`): Circle's VCHIQ sound device
-  (`addon/vc4/sound`), destination HDMI, 16-bit stereo in 10 ms chunks
-  (480 frames at 48 kHz) from a 2 s ring; silence while the ring is empty.
+  (`addon/vc4/sound`), destination HDMI, 16-bit stereo in chunks of 2048
+  frames (43 ms at 48 kHz) from a 2 s ring; silence while the ring is empty.
+  The chunks are handed over in VCHIQ's task, on core 0, when the main loop
+  yields, and Circle's driver keeps only two queued in the VideoCore: with
+  480-frame chunks (20 ms) the VideoCore ran dry for a moment when a stream
+  opened (the main loop busy 20–40 ms: MMAL's set-up, the first frames), a
+  click; with 2048 frames it has 85 ms, and ran dry 0 times in three runs.
   The firmware sets HDMI up with audio from the monitor's EDID at boot:
   nothing in `config.txt` was needed for the Dell S2421H (a monitor without
   speakers gets no sound). One output a sample rate, kept for the whole run
@@ -236,15 +241,30 @@ played on HDMI through the VideoCore's audio service.
   decoder first: each side stores its flag, then a full barrier, then reads
   the other's, so at least one sees the other.
 - **The clock:** the time being heard is the newest mark at or before the
-  frame being played (frames read from the ring less what the VideoCore
-  still holds: Circle's driver keeps two chunks queued, 960 frames), plus the
-  frames since it. A video stream opened with the audio (`CVideo::SetClock`)
+  frame being played (frames read from the ring less the two chunks the
+  VideoCore holds, plus the time since the last chunk was asked for, at most
+  a chunk: so it runs smoothly, not in 43 ms steps), plus the frames since
+  it. (With the steps, a video frame was dropped now and then: 38 in 70 s
+  once; smoothed, 0 in three 25 s runs.) A video stream opened with the audio (`CVideo::SetClock`)
   shows the frame due at that time, and its first frame until the sound
   starts. If the sound runs dry the clock stops, and the picture waits.
   Not measured: the delay after the VideoCore (the camera sees only the
   panel, so the picture against the sound can't be timed).
 - **Volume:** `volume=` on the command line (percent, default 10), and
   `VOLUME` for a stream.
+- **The VideoCore running dry** is flagged in its completion messages: bit
+  30 of their byte count (undocumented; Circle's driver masked bits 31–30
+  off, Linux's takes such a count as an underrun). piegpu's fork counts
+  them (`GetCompleteFlagCount`, the last's bits and time). Shown on
+  purpose by the `SOUNDTEST` host line (text mode): a tone, the main loop
+  stalled for 150 ms without yielding: one completion with `0x40000000`,
+  at the stall's end, and a chunk asked for 151.5 ms after the one before.
+- **Debugging clicks:** the output keeps the last 20 s of what it handed to
+  the VideoCore and each chunk's time, frames from the ring and the ring's
+  level. The `PCM` host line dumps them, with the completion flags;
+  `devtools/pcmdump.py` fetches that (text mode: after the session), writes
+  a WAV (`devtools/logs/pcm.wav`) and lists late chunks, chunks padded with
+  silence and jumps in the samples.
 - **Verified** on the Zero 2 W with the Dell S2421H, the trailer through
   `video_host`: the webcam's microphone recording cross-correlated with the
   trailer's audio decoded on the PC: 2 s windows over 40 s all within ±4 ms

@@ -6,6 +6,7 @@
 // the panel).
 //
 #include "kernel.h"
+#include <math.h>
 #include "build_info.h"
 #include <v3dcheck.h>
 #include <circle/2dgraphics.h>
@@ -124,6 +125,14 @@ void CKernel::HostInput (void)
 			if (strncmp (m_HostLine, "PGI ", 4) == 0)
 			{
 				m_Installer.Command (m_HostLine);
+			}
+			else if (strcmp (m_HostLine, "PCM") == 0)	// debugging: the sound sent to HDMI
+			{
+				DumpAudio ();
+			}
+			else if (strcmp (m_HostLine, "SOUNDTEST") == 0)	// debugging: an underrun on purpose
+			{
+				SoundTest ();
 			}
 			m_nHostLine = 0;
 		}
@@ -616,11 +625,35 @@ u32 CKernel::GetThrottled (void)
 
 // the frame on screen (the output's copy - HDMI's page - or else the last
 // presented one) as base64 lines between markers, for devtools/screenshot.py
-void CKernel::DumpScreenshot (void)
+// bytes as base64 lines (72 bytes a line) to the host
+boolean CKernel::WriteBase64 (const u8 *p, unsigned nBytes)
 {
 	static const char Base64[] =
 		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+	char Line[100];
+	for (unsigned i = 0; i < nBytes; )
+	{
+		unsigned n = 0;
+		for (unsigned k = 0; k < 24 && i < nBytes; k++, i += 3)
+		{
+			u32 v = p[i] << 16 | (i + 1 < nBytes ? p[i + 1] : 0) << 8 | (i + 2 < nBytes ? p[i + 2] : 0);
+			Line[n++] = Base64[(v >> 18) & 63];
+			Line[n++] = Base64[(v >> 12) & 63];
+			Line[n++] = i + 1 < nBytes ? Base64[(v >> 6) & 63] : '=';
+			Line[n++] = i + 2 < nBytes ? Base64[v & 63] : '=';
+		}
+		Line[n++] = '\n';
+		if (!m_DevLink.Write (Line, n))
+		{
+			return FALSE;
+		}
+	}
+	return TRUE;
+}
+
+void CKernel::DumpScreenshot (void)
+{
 	const u8 *p = (const u8 *) m_Renderer.GetOutput ()->GetShownFrame ();
 	if (p == nullptr)
 	{
@@ -632,29 +665,97 @@ void CKernel::DumpScreenshot (void)
 	CString Header;
 	Header.Format ("\n#SCREENSHOT %u %u rgb565le\n", m_Renderer.GetWidth (), m_Renderer.GetHeight ());
 	m_DevLink.Write ((const char *) Header, Header.GetLength ());
-
-	char Line[100];
-	for (unsigned i = 0; i < nBytes; )
+	if (!WriteBase64 (p, nBytes))
 	{
-		unsigned n = 0;
-		for (unsigned k = 0; k < 24 && i < nBytes; k++, i += 3)	// 72 bytes per line
-		{
-			u32 v = p[i] << 16 | (i + 1 < nBytes ? p[i + 1] : 0) << 8 | (i + 2 < nBytes ? p[i + 2] : 0);
-			Line[n++] = Base64[(v >> 18) & 63];
-			Line[n++] = Base64[(v >> 12) & 63];
-			Line[n++] = i + 1 < nBytes ? Base64[(v >> 6) & 63] : '=';
-			Line[n++] = i + 2 < nBytes ? Base64[v & 63] : '=';
-		}
-		Line[n++] = '\n';
-		if (!m_DevLink.Write (Line, n))
-		{
-			LOGWARN ("Screenshot aborted");
-			return;
-		}
+		LOGWARN ("Screenshot aborted");
+		return;
+	}
+	m_DevLink.Write ("#END\n", 5);
+	m_DevLink.Update ();
+}
+
+// the SOUNDTEST host line (debugging, no GL session): a 440 Hz tone at 10%
+// with the main loop stalled for 150 ms in its middle, without yielding: the
+// VCHIQ tasks can't hand the VideoCore its chunks meanwhile, so it runs dry
+// (an underrun there, while the ring stays full). Then PCM shows the chunks'
+// timing and the VideoCore's completion flags.
+void CKernel::SoundTest (void)
+{
+	CAudioOut *pOut = m_Audio.GetOutput (48000);
+	if (!pOut || (!pOut->IsActive () && !pOut->Start ()))
+	{
+		LOGWARN ("SOUNDTEST: no sound output");
+		return;
+	}
+	pOut->Flush ();
+	pOut->SetPaused (FALSE);
+
+	static s16 Tone[2 * 48000];			// 1 s, a whole number of periods
+	for (unsigned i = 0; i < 48000; i++)
+	{
+		Tone[2 * i] = Tone[2 * i + 1] = (s16) (3277.0 * sin (2.0 * 3.14159265358979 * 440.0 * i / 48000.0));
+	}
+	pOut->Write (Tone, 48000);
+	pOut->Write (Tone, 48000);			// (the ring's 2 s)
+
+	unsigned nFlags = pOut->GetCompleteFlagCount ();
+	CScheduler::Get ()->MsSleep (500);
+	unsigned nStall = CTimer::GetClockTicks ();
+	LOGNOTE ("SOUNDTEST: the main loop stalls for 150 ms now (%u)", nStall);
+	CTimer::SimpleMsDelay (150);
+	CScheduler::Get ()->MsSleep (1200);
+	LOGNOTE ("SOUNDTEST: completions with flags %u before, %u after (the last %08X, %d ms after the stall's start); "
+		 "%llu frames of silence in all", nFlags, pOut->GetCompleteFlagCount (),
+		 pOut->GetLastCompleteFlags (), (int) (pOut->GetLastCompleteFlagTime () - nStall) / 1000,
+		 pOut->GetUnderrunFrames ());
+}
+
+// the PCM host line (debugging): what the audio output handed to the
+// VideoCore lately (16-bit stereo, little-endian), then its chunks: the time
+// each was asked for (us), its frames, those from the ring (the rest was
+// silence), the frames the ring held before it. devtools/pcmdump.py reads it.
+void CKernel::DumpAudio (void)
+{
+	CAudioOut *pOut = m_Audio.GetLastOut ();
+	if (!pOut)
+	{
+		static const char None[] = "\n#PCM none\n#END\n";
+		m_DevLink.Write (None, sizeof None - 1);
+		return;
+	}
+	pOut->FreezeCapture (TRUE);
+
+	const s16 *pFirst, *pSecond;
+	unsigned nFirst, nSecond;
+	pOut->GetCapture (&pFirst, &nFirst, &pSecond, &nSecond);
+	CString Header;
+	Header.Format ("\n#PCM %u %u s16le-stereo\n", pOut->GetSampleRate (), nFirst + nSecond);
+	m_DevLink.Write ((const char *) Header, Header.GetLength ());
+	boolean bOK =    WriteBase64 ((const u8 *) pFirst, nFirst * 4)
+		      && WriteBase64 ((const u8 *) pSecond, nSecond * 4);
+
+	const CAudioOut::TChunk *pC1, *pC2;
+	unsigned nC1, nC2;
+	pOut->GetChunks (&pC1, &nC1, &pC2, &nC2);
+	Header.Format ("#VCFLAGS %u %08X %u\n", pOut->GetCompleteFlagCount (), pOut->GetLastCompleteFlags (),
+		       pOut->GetLastCompleteFlagTime ());
+	m_DevLink.Write ((const char *) Header, Header.GetLength ());
+	Header.Format ("#CHUNKS %u\n", nC1 + nC2);
+	m_DevLink.Write ((const char *) Header, Header.GetLength ());
+	for (unsigned i = 0; bOK && i < nC1 + nC2; i++)
+	{
+		const CAudioOut::TChunk &C = i < nC1 ? pC1[i] : pC2[i - nC1];
+		CString Line;
+		Line.Format ("%u %u %u %u\n", C.nTime, C.nFrames, C.nFromRing, C.nQueued);
+		bOK = m_DevLink.Write ((const char *) Line, Line.GetLength ());
 	}
 
 	m_DevLink.Write ("#END\n", 5);
-	m_DevLink.Update ();
+	pOut->FreezeCapture (FALSE);
+	if (!bOK)
+	{
+		LOGWARN ("PCM dump aborted");
+	}
 }
 
 // the idle screen: what piegpu is, where its screen is and what it waits

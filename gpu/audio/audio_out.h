@@ -38,6 +38,11 @@ public:
 	u32 GetWritten (void) const		{ return m_nIn; }
 	/// \return Frames read from it so far (mod 2^32): the VideoCore has them
 	u32 GetRead (void) const		{ return m_nOut; }
+	/// \return When the last chunk was asked for (CTimer::GetClockTicks ())
+	unsigned GetChunkTime (void) const	{ return m_nChunkTime; }
+	/// \return Frames a chunk
+	unsigned GetChunkFrames (void) const	{ return ChunkFrames; }
+	static const unsigned ChunkFrames = 2048;
 
 	/// \brief Paused: silence, the ring waits
 	void SetPaused (boolean bPaused)	{ m_bPaused = bPaused; }
@@ -46,6 +51,26 @@ public:
 	u64 GetFramesOut (void) const		{ return m_nFramesOut; }
 	/// \return Frames of silence handed out because the ring was empty
 	u64 GetUnderrunFrames (void) const	{ return m_nUnderrun; }
+
+	// the capture (debugging: the PCM host line, gpu/kernel.cpp): the last
+	// CaptureSeconds of what GetChunk handed to the VideoCore, and each
+	// chunk's time and how much of it came from the ring
+	static const unsigned CaptureSeconds = 20;
+	static const unsigned CaptureChunks = 4096;
+	struct TChunk
+	{
+		u32 nTime;			// CTimer::GetClockTicks () when it was asked for
+		u16 nFrames;			// handed out
+		u16 nFromRing;			// of them from the ring (the rest: silence)
+		u32 nQueued;			// frames in the ring before it
+	};
+	/// \brief Stop (or go on with) capturing, while it's being read
+	void FreezeCapture (boolean bFrozen)	{ m_bCaptureFrozen = bFrozen; }
+	/// \return The capture's frames in time order: the part at pFirst
+	///	    (nFirst frames), then the part at pSecond (nSecond)
+	void GetCapture (const s16 **pFirst, unsigned *nFirst, const s16 **pSecond, unsigned *nSecond) const;
+	/// \return The chunks in time order, the same way
+	void GetChunks (const TChunk **pFirst, unsigned *nFirst, const TChunk **pSecond, unsigned *nSecond) const;
 
 private:
 	unsigned GetChunk (s16 *pBuffer, unsigned nChunkSize) override;
@@ -58,6 +83,14 @@ private:
 	volatile u64 m_nFramesOut;
 	volatile u64 m_nUnderrun;
 	volatile boolean m_bPaused;
+	volatile unsigned m_nChunkTime;
+
+	unsigned m_nCaptureFrames;
+	s16 *m_pCapture;			// m_nCaptureFrames frames
+	u32 m_nCaptured;			// frames captured so far
+	TChunk *m_pChunks;			// CaptureChunks
+	u32 m_nChunks;
+	volatile boolean m_bCaptureFrozen;
 };
 
 #endif

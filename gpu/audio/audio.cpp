@@ -16,9 +16,10 @@ LOGMODULE ("audio");
 #define DECODE_US	2000		// the main loop's turn when no core of its own decodes
 #define PARK_US		500000		// the most Close waits for the decoder to let go
 
-// frames the VideoCore holds after GetChunk has handed them over: Circle's
-// VCHIQ sound queues a chunk more when one is left (two chunks of 480 frames)
-#define OUT_LATENCY	960
+// the frames the VideoCore holds after GetChunk has handed them over: Circle's
+// VCHIQ sound queues a chunk more when one is left, so two chunks; the one
+// playing is then moving, so the time since that GetChunk (up to a chunk) is
+// added: the clock runs smoothly between chunks, not in 43 ms steps
 
 CAudio::CAudio (CVCHIQDevice *pVCHIQ, CVideo *pVideo)
 :	m_pVCHIQ (pVCHIQ),
@@ -29,6 +30,7 @@ CAudio::CAudio (CVCHIQDevice *pVCHIQ, CVideo *pVideo)
 	m_nVideoStream (0),
 	m_pAAC (nullptr),
 	m_pOut (nullptr),
+	m_pLastOut (nullptr),
 	m_nRate (0),
 	m_bPaused (FALSE),
 	m_nVolume (10),
@@ -89,20 +91,7 @@ u32 CAudio::Open (u32 nCodec, unsigned nVideoStream, const u8 *pConfig, unsigned
 		return PGPU_ERR_ENUM;
 	}
 
-	// the output for this rate (the VideoCore's audio service is set up once
-	// a device; a stopped one starts again)
-	CAudioOut *pOut = nullptr;
-	for (unsigned i = 0; i < MaxRates && !pOut; i++)
-	{
-		if (!m_pOuts[i])
-		{
-			m_pOuts[i] = new CAudioOut (m_pVCHIQ, nRate);
-		}
-		if (m_pOuts[i] && m_pOuts[i]->GetSampleRate () == nRate)
-		{
-			pOut = m_pOuts[i];
-		}
-	}
+	CAudioOut *pOut = GetOutput (nRate);
 	if (!pOut)
 	{
 		aac_close (pAAC);
@@ -150,6 +139,25 @@ u32 CAudio::Open (u32 nCodec, unsigned nVideoStream, const u8 *pConfig, unsigned
 		 m_nVideoStream ? ", the video's clock" : "");
 
 	return 0;
+}
+
+// the output for this rate (the VideoCore's audio service is set up once a
+// device; a stopped one starts again)
+CAudioOut *CAudio::GetOutput (unsigned nRate)
+{
+	for (unsigned i = 0; i < MaxRates; i++)
+	{
+		if (!m_pOuts[i])
+		{
+			m_pOuts[i] = new CAudioOut (m_pVCHIQ, nRate);
+		}
+		if (m_pOuts[i] && m_pOuts[i]->GetSampleRate () == nRate)
+		{
+			m_pLastOut = m_pOuts[i];
+			return m_pOuts[i];
+		}
+	}
+	return nullptr;
 }
 
 void CAudio::Close (void)
@@ -426,7 +434,17 @@ boolean CAudio::GetTime (s64 *pUS)
 
 	// the frame being heard, and the newest mark at or before it (the oldest
 	// few may be rewritten meanwhile: not those)
-	u32 nHeard = m_pOut->GetRead () - OUT_LATENCY;
+	unsigned nChunk = m_pOut->GetChunkFrames ();
+	u32 nRead;
+	unsigned nTime;
+	do					// (a consistent pair: GetChunk may come between)
+	{
+		nTime = m_pOut->GetChunkTime ();
+		nRead = m_pOut->GetRead ();
+	}
+	while (nTime != m_pOut->GetChunkTime ());
+	u64 nSince = (u64) (CTimer::GetClockTicks () - nTime) * m_nRate / 1000000;
+	u32 nHeard = nRead - 2 * nChunk + (nSince < nChunk ? (u32) nSince : nChunk);
 	u32 nOldest = nMarks > MaxMarks - 8 ? nMarks - (MaxMarks - 8) : 0;
 	for (u32 k = nMarks; k-- > nOldest; )
 	{

@@ -95,6 +95,9 @@ private:
 	void ShowPanelNotice (void);
 	static u32 GetThrottled (void);
 	void DumpScreenshot (void);
+	void DumpAudio (void);
+	void SoundTest (void);
+	boolean WriteBase64 (const u8 *p, unsigned nBytes);
 
 private:
 	// do not change this order
