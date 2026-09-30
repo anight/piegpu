@@ -3,16 +3,22 @@
 include(${CMAKE_CURRENT_LIST_DIR}/../../../demos/demos.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/../../../demos/jet/jet.cmake)
 
-idf_component_register(SRCS app_main.c sdcard.c REQUIRES pgpu esp_driver_gpio esp_driver_sdmmc sdmmc fatfs)
+idf_component_register(SRCS app_main.c sdcard.c REQUIRES pgpu esp_driver_gpio esp_driver_sdmmc sdmmc fatfs esp_timer)
 
 if(NOT CMAKE_BUILD_EARLY_EXPANSION)
 	if(PGPU_APP STREQUAL "pincheck")	# the pins, before wiring the RPi
 		target_sources(${COMPONENT_LIB} PRIVATE pincheck.c)
+	elseif(PGPU_APP STREQUAL "sdbench")	# the microSD card's reads, timed
+		target_sources(${COMPONENT_LIB} PRIVATE sdbench.c)
+		target_compile_definitions(${COMPONENT_LIB} PRIVATE PGPU_SDCARD="/sdcard")
 	elseif(PGPU_APP STREQUAL "media")	# from the microSD card (else the file linked in)
 		pgpu_demo(${COMPONENT_LIB} media)
 		set(PGPU_MEDIA_FILE "/sdcard/video1.mp4" CACHE STRING "the MP4 or MP3 the media demo plays")
+		# read ahead in big blocks (media_reader.c): the card's slow stretches
+		target_sources(${COMPONENT_LIB} PRIVATE media_reader.c)
+		target_include_directories(${COMPONENT_LIB} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 		target_compile_definitions(${COMPONENT_LIB} PRIVATE PGPU_SDCARD="/sdcard"
-			PGPU_MEDIA_PATH="${PGPU_MEDIA_FILE}")
+			PGPU_MEDIA_PATH="${PGPU_MEDIA_FILE}" PGPU_MEDIA_READER=1)
 	elseif(PGPU_APP MATCHES "^jet-(.+)$")
 		jet_demo(${COMPONENT_LIB} ${CMAKE_MATCH_1})
 	else()

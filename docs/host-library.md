@@ -81,7 +81,9 @@ The host library (`libpgpu/`, board independent) has two layers:
     staging buffers are aligned so too). So the filesystem reads whole sectors
     by DMA straight into the packet. Unaligned, ESP-IDF's SD driver allocated
     a DMA buffer the size of the read, read into it and copied it over, on
-    every read.
+    every read. (The P4's media demo now reads through its read-ahead
+    instead, below: a copy from PSRAM, as the card's stalls starve reads
+    straight from it.)
   - `demos/media.c` plays the file `PGPU_MEDIA_PATH` if the host has a
     filesystem (POSIX `open`/`lseek`/`read`; on a PC, `media_host`, the file
     the `PGPU_MEDIA` environment variable names), else a file linked into
@@ -115,11 +117,29 @@ The host library (`libpgpu/`, board independent) has two layers:
     it plays at 24 fps. FatFs' fast seek (`CONFIG_FATFS_USE_FASTSEEK`) is on
     for the seeks between the sample tables and the samples; alone it didn't
     help stdio.
-  - **The card sometimes stalls:** stretches of 5–10 s in which every read
-    takes about 25 ms, whatever its size (2–15 KB), dropping frames. Seen with
-    the unaligned reads (7 in 29 minutes) and with the aligned ones (one in
-    the first 17 minutes, at 1020 s into that film, file offsets 327–330 MB).
-    Not understood yet.
+  - **The card sometimes stalls:** stretches of seconds in which every read
+    is slow. Played straight from the card (a read per sample, about 150 a
+    second), each read then took about 25 ms whatever its size (2–15 KB), and
+    the demo, which reads, sends and draws on one thread, fell to 1–2 fps
+    with seconds of silence (twice in the first 107 s once). Measured with
+    `hosts/esp32p4/main/sdbench.c` (`PGPU_APP=sdbench`: the file's first 96
+    MB read again and again, in 2 KB, 16 KB and 256 KB reads, slow ones
+    printed): the stalls come at times of their own, not at places in the
+    file (the same offsets read at full speed in the other rounds), every
+    one to three minutes; during one a 256 KB read took 72–99 ms instead of
+    16 (2.6–3.5 MB/s: still above a film's needs), where small reads fell to
+    about 25 ms each. The cause, in the card or its driver, isn't known.
+  - **So the P4 reads ahead** (`hosts/esp32p4/main/media_reader.c`,
+    `PGPU_MEDIA_READER`): the file in 256 KB blocks, 32 of them (8 MB) in
+    PSRAM, loaded by DMA (the P4's SD controller reads into PSRAM) by a task
+    on core 1; a read copies from them. Cursors follow the reads (the
+    interleaved samples, each sample table), and a cursor that moves on to
+    the next block (the samples) keeps the 4 blocks after it loaded; a table's
+    cursor keeps its own block. 15 minutes of that film: 3 stalls (24 block
+    loads of 56–93 ms), 0 reads waiting on them, 0 ms of silence, 35–46 fps
+    through them (1–6 frames dropped a 5 s window); blocks loaded match the
+    bytes read (1 of 399 loaded for nothing in 5 minutes). What still drops
+    is the film's busiest stretch (106–126 s: the link, below).
   - **The link is the limit on the P4:** its chip (revision v1.0) runs I2S
     from the APLL, at most 125 MHz, divided by 2 to MCLK and by 2 again to
     BCLK: 31.25 MHz, 3.9 MB/s (25 MHz before). `linktest` (random buffer

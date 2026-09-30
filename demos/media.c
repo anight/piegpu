@@ -17,9 +17,10 @@
  *
  * The file: PGPU_MEDIA_PATH (a host with a filesystem: the ESP32-P4's microSD
  * card, the page's file for hosts/web), the PGPU_MEDIA environment variable
- * (hosts/pc: PGPU_MEDIA_ENV), read as it's needed; or else the one linked in
- * (demos.cmake: PGPU_MEDIA_EMBED). It loops: the next round's times follow
- * on, so the RPi's clock just runs.
+ * (hosts/pc: PGPU_MEDIA_ENV), read as it's needed (on the P4 read ahead by
+ * the host's reader, PGPU_MEDIA_READER: hosts/esp32p4/main/media_reader.h);
+ * or else the one linked in (demos.cmake: PGPU_MEDIA_EMBED). It loops: the
+ * next round's times follow on, so the RPi's clock just runs.
  *
  * The volume: '+' and '-' on the console (10% a step), 'm' mutes and unmutes;
  * on the installer page, its slider. The samples go as far ahead as the RPi's
@@ -61,6 +62,9 @@ extern const uint8_t media_file[], media_file_end[];
 #define MEDIA_FILES	1
 #include <fcntl.h>
 #include <unistd.h>
+#ifdef PGPU_MEDIA_READER
+#include "media_reader.h"
+#endif
 
 /* the file to play: the environment's, else PGPU_MEDIA_PATH; NULL: none */
 static const char *media_path (void)
@@ -83,6 +87,7 @@ static unsigned read_calls, read_us;
 static unsigned read_direct;			/* whole sectors into aligned memory (DMA) */
 static uint64_t read_bytes;
 
+#ifndef PGPU_MEDIA_READER
 static bool file_read (void *ctx, uint64_t offset, void *buffer, uint32_t bytes)
 {
 	int fd = (int) (intptr_t) ctx;
@@ -109,6 +114,7 @@ static bool file_read (void *ctx, uint64_t offset, void *buffer, uint32_t bytes)
 	}
 	return ok;
 }
+#endif
 #endif
 
 /* the sound: an MP4's AAC track or an MP3's frames */
@@ -259,15 +265,28 @@ int main (void)
 	const char *source = "the file linked in";
 #ifdef MEDIA_FILES
 	const char *path = media_path ();
+	pgpu_read_t reader = NULL;
+	void *ctx = NULL;
+	uint64_t size = 0;
+#ifdef PGPU_MEDIA_READER
+	if (!path || !media_reader_open (path, &reader, &ctx, &size))
+	{
+		size = 0;
+	}
+#else
 	int fd = path ? open (path, O_RDONLY) : -1;
-	off_t size = fd >= 0 ? lseek (fd, 0, SEEK_END) : 0;
+	off_t end = fd >= 0 ? lseek (fd, 0, SEEK_END) : 0;
+	reader = file_read;
+	ctx = (void *) (intptr_t) fd;
+	size = end > 0 ? (uint64_t) end : 0;
+#endif
 	if (size > 0)
 	{
-		video = pgpu_mp4_open (&mp4, file_read, (void *) (intptr_t) fd, (uint64_t) size);
-		audio = pgpu_mp4_open_audio (&snd.amp4, file_read, (void *) (intptr_t) fd, (uint64_t) size);
+		video = pgpu_mp4_open (&mp4, reader, ctx, size);
+		audio = pgpu_mp4_open_audio (&snd.amp4, reader, ctx, size);
 		if (!video && !audio)
 		{
-			audio = snd.mp3 = pgpu_mp3_open (&snd.mp3s, file_read, (void *) (intptr_t) fd, (uint64_t) size);
+			audio = snd.mp3 = pgpu_mp3_open (&snd.mp3s, reader, ctx, size);
 		}
 		file = video || audio;
 		if (file)
@@ -582,10 +601,16 @@ int main (void)
 #ifdef MEDIA_FILES
 			if (file)
 			{
+#ifdef PGPU_MEDIA_READER
+				char line[200];
+				media_reader_stats (ctx, line, sizeof line);
+				printf ("media: file: %s; demux %u ms\n", line, demux_us / 1000);
+#else
 				printf ("media: file: %u reads (%u of whole sectors into aligned memory), %u KB in "
 					"%u ms (%u KB/s while reading); demux %u ms\n", read_calls, read_direct,
 					(unsigned) (read_bytes / 1024), read_us / 1000,
 					read_us ? (unsigned) (read_bytes * 1000 / read_us) : 0, demux_us / 1000);
+#endif
 			}
 			read_calls = read_us = read_direct = 0;
 			read_bytes = 0;
