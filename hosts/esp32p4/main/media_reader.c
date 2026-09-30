@@ -8,9 +8,11 @@
  * to CURSORS cursors: an MP4's interleaved samples make one, each of its
  * tracks' sample tables (six a track) one more. The task on core 1 keeps
  * each cursor's block loaded, and for a cursor that streams (it has moved on
- * to the next block: the samples; a table's cursor hardly moves) the AHEAD
- * blocks after it; the block a read waits for first. A block in use or in a
- * cursor's window is never replaced; else the least recently used one is. The task has the file to itself (its own descriptor); the demo's
+ * to a next block twice within STREAM_US: the samples; a table's cursor moves
+ * on every few minutes) the AHEAD blocks after it; the block a read waits
+ * for first. A block in use or in a cursor's window isn't replaced, but for
+ * the block a read waits for, which always gets one: else a read could wait
+ * for nothing (once the windows took every block, 25 minutes into a film). The task has the file to itself (its own descriptor); the demo's
  * thread only copies.
  */
 #include "media_reader.h"
@@ -32,6 +34,7 @@
 #define AHEAD		4			/* blocks kept loaded after a streaming cursor's */
 #define WAIT_US		5000000			/* the most a read waits for its block */
 #define SLOW_LOAD_US	50000			/* a block's load counted as slow (normal: 16 ms) */
+#define STREAM_US	20000000		/* two moves on within this: a cursor streams */
 
 enum {EMPTY, LOADING, READY, FAILED};
 
@@ -50,7 +53,8 @@ typedef struct
 {
 	int64_t block;				/* -1: unused */
 	uint32_t used;
-	bool streaming;				/* it has moved on to a next block */
+	uint64_t moved_us;			/* when it last moved on to a next block */
+	bool streaming;				/* it moved on twice within STREAM_US */
 } cursor_t;
 
 typedef struct
@@ -141,11 +145,12 @@ static int64_t next_load (reader_t *r)
 	return -1;
 }
 
-/* a slot to load into (-1: none free): an empty one, else the least recently
-   used one nobody copies from or needs */
-static int victim (reader_t *r)
+/* a slot to load block into (-1: none): an empty one, else the least
+   recently used one nobody copies from or needs; for the block a read waits
+   for, else any nobody copies from */
+static int victim (reader_t *r, int64_t block)
 {
-	int best = -1;
+	int best = -1, any = -1;
 	for (int i = 0; i < BLOCKS; i++)
 	{
 		slot_t *s = &r->slot[i];
@@ -153,13 +158,20 @@ static int victim (reader_t *r)
 		{
 			return i;
 		}
-		if (   s->state != LOADING && !s->pins && !needed (r, s->block)
-		    && (best < 0 || s->used < r->slot[best].used))
+		if (s->state == LOADING || s->pins)
+		{
+			continue;
+		}
+		if (!needed (r, s->block) && (best < 0 || s->used < r->slot[best].used))
 		{
 			best = i;
 		}
+		if (any < 0 || s->used < r->slot[any].used)
+		{
+			any = i;
+		}
 	}
-	return best;
+	return best >= 0 || block != r->want ? best : any;
 }
 
 static void reader_task (void *param)
@@ -169,7 +181,7 @@ static void reader_task (void *param)
 	{
 		xSemaphoreTake (r->lock, portMAX_DELAY);
 		int64_t block = next_load (r);
-		int i = block >= 0 ? victim (r) : -1;
+		int i = block >= 0 ? victim (r, block) : -1;
 		if (i >= 0)
 		{
 			r->unread += r->slot[i].state == READY && !r->slot[i].read;	/* (loaded for nothing) */
@@ -236,14 +248,17 @@ static void follow (reader_t *r, int64_t block)
 		k = &r->cursor[oldest];
 		k->block = block;
 		k->streaming = false;
+		k->moved_us = 0;
 	}
 	else
 	{
 		k = &r->cursor[c];
 		if (block > k->block)		/* moved on */
 		{
+			uint64_t now = now_us ();
 			k->block = block;
-			k->streaming = true;
+			k->streaming = k->moved_us && now - k->moved_us < STREAM_US;
+			k->moved_us = now;
 		}
 	}
 	k->used = ++r->clock;
@@ -284,12 +299,15 @@ static bool media_read (void *ctx, uint64_t offset, void *buffer, uint32_t bytes
 		}
 		if (i < 0 || r->slot[i].state != READY)
 		{
-			if (i >= 0 && r->slot[i].state == FAILED)
+			bool failed = i >= 0 && r->slot[i].state == FAILED;
+			if (failed)
 			{
 				r->slot[i].state = EMPTY;	/* (the next read tries again) */
 			}
 			r->want = -1;
 			xSemaphoreGive (r->lock);
+			printf ("media_reader: a read at %llu (block %lld) failed: %s\n", (unsigned long long) offset,
+				(long long) block, failed ? "the card's read failed" : "no block after 5 s");
 			ok = false;
 			break;
 		}
