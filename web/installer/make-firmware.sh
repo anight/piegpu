@@ -7,8 +7,9 @@
 # firmware/zero/kernel.img, firmware/zero2/kernel8.img), with a manifest the
 # page reads. config.txt and
 # cmdline.txt come from the page's settings. And the demos the page runs (Test
-# OpenGL, Test video: hosts/web, into web/installer/demos/), if Emscripten is
-# there (EMSDK, default ~/emsdk), with the test video (web/installer/videos/).
+# OpenGL, Test Video, Test Audio: hosts/web, into web/installer/demos/), if
+# Emscripten is there (EMSDK, default ~/emsdk), with the files Test Video and
+# Test Audio play (web/installer/media/).
 #
 #   web/installer/make-firmware.sh
 #
@@ -64,15 +65,24 @@ json.dump(manifest, open(os.path.join(out, 'manifest.json'), 'w'), indent=1)
 print('firmware/: piegpu %s (%s) for %s' % (manifest['version'], manifest.get('git', version), ', '.join(boards)))
 PY
 
-# the test video (the Test video button): the Big Buck Bunny trailer, 853x480
-# H.264, Blender Foundation, CC BY 3.0 (its server doesn't let a page fetch it)
-VIDEO=$HERE/videos/bbb_trailer-480p.mov
-if [ ! -f "$VIDEO" ]; then
-	mkdir -p "$HERE/videos"
-	curl -sSfL -o "$VIDEO.part" https://download.blender.org/peach/trailer/trailer_480p.mov \
-		&& mv "$VIDEO.part" "$VIDEO" && echo "videos/: the Big Buck Bunny trailer" \
-		|| echo "videos/: none (the download failed): the page can't test video"
-fi
+# the files Test Video and Test Audio play (their servers don't let a page
+# fetch them), downloaded once: what, file, URL
+fetch_media ()
+{
+	local what=$1 file=$HERE/media/$2 url=$3
+	if [ ! -f "$file" ]; then
+		mkdir -p "$HERE/media"
+		curl -sSfL -o "$file.part" "$url" && mv "$file.part" "$file" && echo "media/: $what" \
+			|| echo "media/: no $2 (the download failed): the page can't play it"
+	fi
+}
+# the Big Buck Bunny trailer, 853x480 H.264 and AAC, Blender Foundation, CC BY 3.0
+fetch_media "the Big Buck Bunny trailer" bbb_trailer-480p.mov \
+	https://download.blender.org/peach/trailer/trailer_480p.mov
+# "Monkeys Spinning Monkeys", Kevin MacLeod (incompetech.com), CC BY 4.0: an
+# MP3, 44.1 kHz stereo, 320 kbps, 2:05
+fetch_media '"Monkeys Spinning Monkeys"' monkeys_spinning_monkeys.mp3 \
+	"https://incompetech.com/music/royalty-free/mp3-royaltyfree/Monkeys%20Spinning%20Monkeys.mp3"
 
 # the page's demos (WebAssembly)
 EMSDK_ENV=${EMSDK:-$HOME/emsdk}/emsdk_env.sh
@@ -81,7 +91,7 @@ if [ -f "$EMSDK_ENV" ]; then
 	source "$EMSDK_ENV" >/dev/null 2>&1
 	emcmake cmake -S "$ROOT/hosts/web" -B "$ROOT/hosts/web/build" -DCMAKE_BUILD_TYPE=Release >/dev/null
 	make -C "$ROOT/hosts/web/build" -j"$JOBS" >/dev/null
-	echo "demos/: gears, video (WebAssembly)"
+	echo "demos/: gears, media (WebAssembly)"
 else
 	echo "demos/: none (no Emscripten at $EMSDK_ENV): the page can't run its demos"
 fi

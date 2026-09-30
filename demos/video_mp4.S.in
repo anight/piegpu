@@ -1,8 +1,0 @@
-// the MP4 the video demo plays (demos.cmake: PGPU_VIDEO_MP4), linked in
-	.section .rodata
-	.balign	16
-	.global	video_mp4
-video_mp4:
-	.incbin	"@PGPU_VIDEO_MP4@"
-	.global	video_mp4_end
-video_mp4_end:

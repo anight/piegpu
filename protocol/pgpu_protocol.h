@@ -109,11 +109,11 @@ enum pgpu_opcode
 	PGPU_OP_ATTRIBS_ENABLE	= 0x89,
 	PGPU_OP_PROGRAM_DRAW_INLINE = 0x8A,
 
-	/* video (section 7.12) */
+	/* media streams: video (section 7.12) and audio (7.13) */
 	PGPU_OP_VIDEO_OPEN	= 0xC0,
-	PGPU_OP_VIDEO_DATA	= 0xC1,
-	PGPU_OP_VIDEO_CONTROL	= 0xC2,
-	PGPU_OP_VIDEO_GET_STATUS = 0xC3,
+	PGPU_OP_MEDIA_DATA	= 0xC1,
+	PGPU_OP_MEDIA_CONTROL	= 0xC2,
+	PGPU_OP_MEDIA_GET_STATUS = 0xC3,
 	PGPU_OP_AUDIO_OPEN	= 0xC4,		/* section 7.13 */
 
 	/* debug */
@@ -128,7 +128,7 @@ enum pgpu_reply
 	PGPU_REPLY_PONG		= 0x03,
 	PGPU_REPLY_STATUS	= 0x04,
 	PGPU_REPLY_DISPLAY	= 0x05,		/* the screen and the HDMI monitor */
-	PGPU_REPLY_VIDEO_STATUS	= 0x06,		/* a video stream (section 7.12) */
+	PGPU_REPLY_MEDIA_STATUS	= 0x06,		/* a media stream (section 7.12) */
 	PGPU_REPLY_FRAME_DONE	= 0x11,
 	PGPU_REPLY_PIXELS	= 0x16,
 	PGPU_REPLY_CREDIT	= 0x7E,		/* USB stream only: bytes received so far */
@@ -144,40 +144,42 @@ enum pgpu_reply
 #define PGPU_DISPLAY_EDID		(1u << 10)	/* the monitor's EDID was read */
 #define PGPU_DISPLAY_WORDS		9
 
+/* media streams (section 7.12): 1 and 2 video, 3 audio; MEDIA_DATA,
+   MEDIA_CONTROL, MEDIA_GET_STATUS and MEDIA_STATUS serve all three */
+#define PGPU_MEDIA_STREAMS		3	/* stream ids 1 .. 3: video 1 and 2, audio 3 */
 /* video (section 7.12) */
 #define PGPU_VIDEO_STREAMS		2	/* stream ids 1 .. 2 */
 #define PGPU_VIDEO_H264			1	/* VIDEO_OPEN codec */
 #define PGPU_VIDEO_ANNEXB		0	/* VIDEO_OPEN format: start codes, SPS/PPS in the stream */
 #define PGPU_VIDEO_AVCC			1	/* NAL units with length prefixes (MP4), config: avcC */
 #define PGPU_VIDEO_OPEN_WORDS		7	/* before the config */
-/* VIDEO_DATA flags */
-#define PGPU_VIDEO_FIRST		(1u << 0)	/* the first chunk of a sample */
-#define PGPU_VIDEO_LAST			(1u << 1)	/* its last chunk */
-#define PGPU_VIDEO_KEYFRAME		(1u << 2)
-#define PGPU_VIDEO_CONFIG		(1u << 3)	/* codec configuration (SPS, PPS) */
-#define PGPU_VIDEO_EOS			(1u << 4)	/* end of the stream (no data) */
-#define PGPU_VIDEO_DATA_HEADER		6		/* words before the data */
-/* VIDEO_CONTROL operations */
-#define PGPU_VIDEO_PLAY			1	/* arg: the time to show now (-1: go on) */
-#define PGPU_VIDEO_PAUSE		2
-#define PGPU_VIDEO_CLOSE		3
-#define PGPU_VIDEO_RESIZE		4	/* arg: width | height << 16: the texture's new size */
-/* VIDEO_STATUS flags */
-#define PGPU_VIDEO_OPEN_FLAG		(1u << 0)
-#define PGPU_VIDEO_PLAYING		(1u << 1)
-#define PGPU_VIDEO_ENDED		(1u << 2)	/* the last frame has been decoded */
-#define PGPU_VIDEO_ERROR		(1u << 3)
-#define PGPU_VIDEO_STATUS_WORDS		12
-#define PGPU_VIDEO_TIME_NONE		((int64_t) 0x8000000000000000ull)	/* no time */
+/* MEDIA_DATA flags */
+#define PGPU_MEDIA_FIRST		(1u << 0)	/* the first chunk of a sample */
+#define PGPU_MEDIA_LAST			(1u << 1)	/* its last chunk */
+#define PGPU_MEDIA_KEYFRAME		(1u << 2)
+#define PGPU_MEDIA_CONFIG		(1u << 3)	/* codec configuration (SPS, PPS) */
+#define PGPU_MEDIA_EOS			(1u << 4)	/* end of the stream (no data) */
+#define PGPU_MEDIA_DATA_HEADER		6		/* words before the data */
+/* MEDIA_CONTROL operations */
+#define PGPU_MEDIA_PLAY			1	/* arg: the time to show now (-1: go on) */
+#define PGPU_MEDIA_PAUSE		2
+#define PGPU_MEDIA_CLOSE		3
+#define PGPU_VIDEO_RESIZE		4	/* a video stream's: arg width | height << 16, the texture's new size */
+/* MEDIA_STATUS flags */
+#define PGPU_MEDIA_OPEN_FLAG		(1u << 0)
+#define PGPU_MEDIA_PLAYING		(1u << 1)
+#define PGPU_MEDIA_ENDED		(1u << 2)	/* the last frame has been decoded */
+#define PGPU_MEDIA_ERROR		(1u << 3)
+#define PGPU_MEDIA_STATUS_WORDS		12
+#define PGPU_MEDIA_TIME_NONE		((int64_t) 0x8000000000000000ull)	/* no time */
 
-/* audio (section 7.13): stream 3, its data, control and status as a video
-   stream's (VIDEO_DATA, VIDEO_CONTROL, VIDEO_GET_STATUS, VIDEO_STATUS) */
+/* audio (section 7.13): stream 3 */
 #define PGPU_AUDIO_STREAM		3	/* the audio stream's id */
-#define PGPU_MEDIA_STREAMS		3	/* stream ids 1 .. 3: video 1 and 2, audio 3 */
 #define PGPU_AUDIO_AAC			2	/* AUDIO_OPEN codec: raw AAC access units, config: the AudioSpecificConfig */
+#define PGPU_AUDIO_MP3			3	/* MPEG audio frames (MP3; layers 1, 2), config: the first frame's 4-byte header */
 #define PGPU_AUDIO_OPEN_WORDS		4	/* before the config */
-#define PGPU_AUDIO_VOLUME		5	/* VIDEO_CONTROL on the audio stream: arg the volume, percent (0 .. 100) */
-#define PGPU_AUDIO_STATUS_VOLUME(flags)	(((flags) >> 8) & 0xFFu)	/* its VIDEO_STATUS flags: the volume */
+#define PGPU_AUDIO_VOLUME		5	/* MEDIA_CONTROL on the audio stream: arg the volume, percent (0 .. 100) */
+#define PGPU_AUDIO_STATUS_VOLUME(flags)	(((flags) >> 8) & 0xFFu)	/* its MEDIA_STATUS flags: the volume */
 
 enum pgpu_error
 {

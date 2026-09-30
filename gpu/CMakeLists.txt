@@ -64,19 +64,21 @@ add_custom_target(build_info_values
 	BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/build_info_values.h)
 add_dependencies(gpu build_info_values)
 
-# AAC: audio/aac.c with FAAD2 (audio/faad2, GPL 2 or later), a library of its
-# own flags: its shims first (audio/faad2/compat), its defines, no warnings;
-# libfaad's sources with the C library shim force-included
+# the audio decoders, a library of their own flags: AAC, audio/aac.c with
+# FAAD2 (audio/faad2, GPL 2 or later): its shims first (audio/faad2/compat),
+# its defines, no warnings; libfaad's sources with the C library shim
+# force-included. MP3, audio/mp3.c with minimp3 (audio/minimp3, CC0, a header)
 file(GLOB libfaad audio/faad2/libfaad/*.c)
-add_library(aac STATIC ${libfaad} audio/faad2/compat/faad_circle.c audio/aac.c)
-target_link_libraries(aac PUBLIC circle_flags)
-target_include_directories(aac PRIVATE audio/faad2/compat ${CIRCLE_INCLUDE_DIRS} audio/faad2 audio/faad2/libfaad)
-target_compile_options(aac PRIVATE -DHAVE_INTTYPES_H=1 -DHAVE_STRING_H=1 -DHAVE_MEMCPY=1 -DHAVE_LRINTF=1
+add_library(audio_codecs STATIC ${libfaad} audio/faad2/compat/faad_circle.c audio/aac.c audio/mp3.c)
+target_link_libraries(audio_codecs PUBLIC circle_flags)
+target_include_directories(audio_codecs PRIVATE audio/faad2/compat ${CIRCLE_INCLUDE_DIRS} audio/faad2 audio/faad2/libfaad)
+target_compile_options(audio_codecs PRIVATE -DHAVE_INTTYPES_H=1 -DHAVE_STRING_H=1 -DHAVE_MEMCPY=1 -DHAVE_LRINTF=1
 	"-DPACKAGE_VERSION=\"2.11.3\"" -w $<$<EQUAL:${CIRCLE_AARCH},64>:-mstrict-align>
-	-fmacro-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}/audio/faad2/=)
+	-fmacro-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}/audio/faad2/=
+	-fmacro-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}/audio/=)
 set_source_files_properties(${libfaad} PROPERTIES
 	COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/audio/faad2/compat/faad_circle.h")
 
-target_link_libraries(gpu PRIVATE aac circle_sdcard circle_fatfs circle_vcos circle_vchiqsound circle_vchiq
+target_link_libraries(gpu PRIVATE audio_codecs circle_sdcard circle_fatfs circle_vcos circle_vchiqsound circle_vchiq
 	circle_linuxemu circle_usb circle_usbgadget circle_input circle_fs circle_sched circle_sound circle)
 circle_kernel(gpu)

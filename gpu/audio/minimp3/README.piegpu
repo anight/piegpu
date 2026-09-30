@@ -1,0 +1,5 @@
+minimp3, vendored for the RPi's MP3 decoding (gpu/audio/mp3.c):
+https://github.com/lieff/minimp3, commit ea99364 (2026-07-27), unchanged:
+minimp3.h and LICENSE.
+
+License: CC0 1.0 Universal (public domain dedication).

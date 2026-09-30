@@ -3,7 +3,7 @@
 //
 // Video streams decoded by the VideoCore into textures (docs/protocol.md 7.12).
 // A stream's compressed samples (H.264, with presentation times) come from the
-// host in VIDEO_DATA packets into a ring; from there they go to the firmware's
+// host in MEDIA_DATA packets into a ring; from there they go to the firmware's
 // decoder (vc.ril.video_decode), which feeds its ISP (vc.ril.isp, scaling and
 // YUV to RGBA) inside the VideoCore. The ISP's frames, at the texture's size,
 // arrive in ARM memory (4 KB aligned: the V3D reads them as raster RGBA) in
@@ -54,7 +54,7 @@ public:
 	u32 Open (unsigned nStream, u32 nCodec, u32 nTexture, unsigned nWidth, unsigned nHeight,
 		  unsigned nCodedWidth, unsigned nCodedHeight, u32 nFormat, const u8 *pConfig,
 		  unsigned nConfigBytes);
-	/// \param nSampleBytes the whole sample's (with PGPU_VIDEO_FIRST): it's
+	/// \param nSampleBytes the whole sample's (with PGPU_MEDIA_FIRST): it's
 	///	   taken whole or not at all
 	u32 Data (unsigned nStream, u32 nFlags, s64 nPTS, unsigned nSampleBytes,
 		  const u8 *pData, unsigned nBytes);
@@ -75,7 +75,7 @@ public:
 	///	   Until the clock runs, the stream shows its first frame.
 	void SetClock (unsigned nStream, CMediaClock *pClock);
 
-	/// \brief The VIDEO_STATUS reply of a stream
+	/// \brief The MEDIA_STATUS reply of a stream
 	/// \param bDue only if its periodic one is due (else always)
 	/// \return FALSE if there's none to send
 	boolean GetStatus (unsigned nStream, u32 *pPayload, boolean bDue);
@@ -88,7 +88,7 @@ private:
 		unsigned nSize;			// as its first chunk said
 		unsigned nSent;			// to the decoder
 		s64 nPTS;
-		u32 nFlags;			// PGPU_VIDEO_* data flags
+		u32 nFlags;			// PGPU_MEDIA_* data flags
 		boolean bComplete;		// its last chunk has come
 	};
 	static const unsigned MaxSamples = 256;

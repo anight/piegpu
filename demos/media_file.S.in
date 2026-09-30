@@ -1,0 +1,9 @@
+// the file the media demo plays (demos.cmake: PGPU_MEDIA_EMBED, an MP4 or an
+// MP3), linked in
+	.section .rodata
+	.balign	16
+	.global	media_file
+media_file:
+	.incbin	"@PGPU_MEDIA_INCBIN@"
+	.global	media_file_end
+media_file_end:

@@ -294,7 +294,8 @@ progress
 			<button id="install" class="primary" disabled>Install piegpu</button>
 			<button id="save-settings" disabled>Save the settings only</button>
 			<button id="run-gears" disabled>Test OpenGL</button>
-			<button id="test-video" disabled>Test video</button>
+			<button id="test-video" disabled>Test Video</button>
+			<button id="test-audio" disabled>Test Audio</button>
 			<button id="stop-demo" hidden>Stop</button>
 			<label id="volume-control" hidden>Volume <input type="range" id="volume" min="0" max="100" step="5" value="10">
 				<span id="volume-value">10%</span></label>
@@ -306,9 +307,12 @@ progress
 			restarts the RPi from it; <b>Save the settings only</b> writes just the settings.
 			<b>Test OpenGL</b> runs gears (glxgears' three gears) on the RPi: the demo runs in this page
 			(WebAssembly) and sends its OpenGL ES commands over the serial port (it needs the Host
-			setting Auto or USB on the card). <b>Test video</b> plays the Big Buck Bunny trailer (853x480
+			setting Auto or USB on the card). <b>Test Video</b> plays the Big Buck Bunny trailer (853x480
 			H.264; Blender Foundation, <a href="https://peach.blender.org/">CC BY 3.0</a>) the same
-			way, decoded by the RPi's VideoCore, with its sound on an HDMI monitor that has speakers.
+			way, decoded by the RPi's VideoCore, with its sound (AAC) on an HDMI monitor that has
+			speakers. <b>Test Audio</b> plays an MP3 there, decoded by the RPi: "Monkeys Spinning
+			Monkeys" by Kevin MacLeod (<a href="https://incompetech.com">incompetech.com</a>,
+			<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>).
 			While a demo runs, the RPi takes commands from this page only; <b>Stop</b> ends
 			the demo's session, and the RPi answers this page again (older firmware restarts).</p>
 	</section>

@@ -866,7 +866,7 @@ void CKernel::ShowSplash (COutput *pOutput)
 	}
 	y += 10;
 	DrawScaledText (Graphics, x0, y0, k, 160, y, TRUE, COLOR2D (160, 160, 160),
-			"waiting for OpenGL ES or video", Font8x16);
+			"waiting for OpenGL ES or media", Font8x16);
 	Graphics.UpdateDisplay ();
 	pOutput->WaitIdle ();
 	LOGNOTE ("Splash on %s: %s", pOutput == &m_HDMI ? "HDMI" : "the panel", (const char *) Status);

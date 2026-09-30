@@ -1,11 +1,12 @@
 //
 // audio.h
 //
-// The audio stream (docs/protocol.md 7.13): AAC access units from the host
-// (VIDEO_DATA on stream 3) into a ring, decoded (aac.c, FAAD2) to 16-bit
-// stereo at the stream's volume, played on HDMI through the VideoCore's audio
-// service (CAudioOut). The sound is the clock of the video stream it plays
-// with (CVideo::SetClock): GetTime says which time is being heard now.
+// The audio stream (docs/protocol.md 7.13): AAC access units or MP3 frames
+// from the host (MEDIA_DATA on stream 3) into a ring, decoded (aac.c, FAAD2;
+// mp3.c, minimp3) to 16-bit stereo at the stream's volume, played on HDMI
+// through the VideoCore's audio service (CAudioOut). The sound is the clock
+// of the video stream it plays with (CVideo::SetClock): GetTime says which
+// time is being heard now.
 //
 // The decoder runs on a core of its own where there is one (DecodeLoop, from
 // the kernel's CMultiCoreSupport), else in the main loop (Update). The rings
@@ -22,12 +23,13 @@
 #include <circle/types.h>
 
 struct aac_s;
+struct mp3_s;
 
 class CAudio : public CMediaClock
 {
 public:
 	static const unsigned RingBytes = 512 * 1024;	// compressed data
-	static const unsigned MaxSamples = 1024;	// (21 s of 48 kHz AAC)
+	static const unsigned MaxSamples = 1024;	// (21 s of 48 kHz AAC, 26 s of 44.1 kHz MP3)
 	static const unsigned StatusWords = 12;
 
 	CAudio (CVCHIQDevice *pVCHIQ, CVideo *pVideo);
@@ -55,7 +57,7 @@ public:
 	///	    it becomes the last output
 	CAudioOut *GetOutput (unsigned nRate);
 
-	/// \brief The VIDEO_STATUS reply of the audio stream
+	/// \brief The MEDIA_STATUS reply of the audio stream
 	boolean GetStatus (u32 *pPayload, boolean bDue);
 
 	/// \brief The time being heard now (the video's clock)
@@ -76,10 +78,15 @@ private:
 		s64 nPTS;
 	};
 	static const unsigned MaxMarks = 256;	// (5 s of 1024-frame units)
-	static const unsigned MaxUnit = 16384;	// bytes of an access unit (AAC: 6144 bits a channel)
+	static const unsigned MaxUnit = 16384;	// bytes of an access unit (AAC: 6144 bits a channel; MP3: 2881)
 	static const unsigned MaxRates = 4;	// outputs kept, one a sample rate
 
 	boolean DecodeOne (void);		// the decoder's step: FALSE if nothing to do
+	// the stream's codec's
+	int Decode (const u8 *pUnit, unsigned nBytes, s16 *pFrames);
+	void SetDecoderVolume (void);
+	const char *DecoderError (void);
+	void CloseDecoder (void);
 	void CopyFromRing (u32 nOffset, u8 *pTo, unsigned nBytes) const;
 
 private:
@@ -91,7 +98,10 @@ private:
 	// the stream (core 0 opens and closes it while the decoder is parked)
 	volatile boolean m_bOpen;
 	unsigned m_nVideoStream;
-	struct aac_s *m_pAAC;
+	u32 m_nCodec;				// PGPU_AUDIO_AAC, PGPU_AUDIO_MP3
+	struct aac_s *m_pAAC;			// the stream's decoder, one of these
+	struct mp3_s *m_pMP3;
+	unsigned m_nMaxFrames;			// frames a unit decodes to, at most
 	CAudioOut *m_pOut;			// the stream's (one of m_pOuts)
 	CAudioOut *m_pOuts[MaxRates];		// set up once each (the VideoCore's service)
 	CAudioOut *m_pLastOut;

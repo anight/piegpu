@@ -209,9 +209,9 @@ int main (int argc, char **argv)
 	{
 		/* samples, as many as the RPi's buffer takes, from the "card"
 		   straight into the packets */
-		while (have && pgpu_video_room (STREAM) >= sample.size)
+		while (have && pgpu_media_room (STREAM) >= sample.size)
 		{
-			if (!pgpu_video_sample_read (STREAM, sample.keyframe ? PGPU_VIDEO_KEYFRAME : 0,
+			if (!pgpu_media_sample_read (STREAM, sample.keyframe ? PGPU_MEDIA_KEYFRAME : 0,
 						     pts_base + sample.pts_us, sample.size, sd_read, &sd,
 						     sample.offset))
 			{
@@ -256,21 +256,21 @@ int main (int argc, char **argv)
 		uint64_t now = pgpu_time_us ();
 		if (now - last_report >= 1000000)
 		{
-			pgpu_video_status_t st;
-			pgpu_video_get_status (STREAM, &st);
+			pgpu_media_status_t st;
+			pgpu_media_get_status (STREAM, &st);
 			GLenum e = glGetError ();
 			printf ("videoplay: %u GL frames, %u samples sent, decoded %u shown %u dropped %u, "
 				"waiting %u, at %.3f s, room %u KB, flags %x, GL error 0x%x, %lu sectors\n",
 				frames, sent, st.decoded, st.shown, st.dropped, st.waiting,
-				st.shown_pts == PGPU_VIDEO_TIME_NONE ? -1.0 : st.shown_pts / 1e6,
-				pgpu_video_room (STREAM) / 1024, st.flags, e, sd.sectors);
+				st.shown_pts == PGPU_MEDIA_TIME_NONE ? -1.0 : st.shown_pts / 1e6,
+				pgpu_media_room (STREAM) / 1024, st.flags, e, sd.sectors);
 			sd.sectors = 0;
 			frames = sent = 0;
 			last_report = now;
 		}
 	}
 
-	pgpu_video_control (STREAM, PGPU_VIDEO_CLOSE, 0);
+	pgpu_media_control (STREAM, PGPU_MEDIA_CLOSE, 0);
 	pgpu_flush ();
 	return 0;
 }

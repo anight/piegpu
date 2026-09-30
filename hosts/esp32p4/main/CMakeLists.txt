@@ -8,11 +8,11 @@ idf_component_register(SRCS app_main.c sdcard.c REQUIRES pgpu esp_driver_gpio es
 if(NOT CMAKE_BUILD_EARLY_EXPANSION)
 	if(PGPU_APP STREQUAL "pincheck")	# the pins, before wiring the RPi
 		target_sources(${COMPONENT_LIB} PRIVATE pincheck.c)
-	elseif(PGPU_APP STREQUAL "video")	# from the microSD card (else the MP4 linked in)
-		pgpu_demo(${COMPONENT_LIB} video)
-		set(PGPU_VIDEO_FILE "/sdcard/video1.mp4" CACHE STRING "the MP4 the video demo plays")
+	elseif(PGPU_APP STREQUAL "media")	# from the microSD card (else the file linked in)
+		pgpu_demo(${COMPONENT_LIB} media)
+		set(PGPU_MEDIA_FILE "/sdcard/video1.mp4" CACHE STRING "the MP4 or MP3 the media demo plays")
 		target_compile_definitions(${COMPONENT_LIB} PRIVATE PGPU_SDCARD="/sdcard"
-			PGPU_VIDEO_PATH="${PGPU_VIDEO_FILE}")
+			PGPU_MEDIA_PATH="${PGPU_MEDIA_FILE}")
 	elseif(PGPU_APP MATCHES "^jet-(.+)$")
 		jet_demo(${COMPONENT_LIB} ${CMAKE_MATCH_1})
 	else()

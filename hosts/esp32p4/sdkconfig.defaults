@@ -14,7 +14,7 @@ CONFIG_ESP32P4_REV_MIN_100=y
 # internal RAM that is left (jet-sprites-blending: bad_alloc without it)
 CONFIG_SPIRAM=y
 # the module's 16 MB flash, with a 12 MB app partition (partitions.csv): the
-# video demo links its MP4 in
+# media demo links its file in
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"

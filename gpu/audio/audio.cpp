@@ -3,6 +3,7 @@
 //
 #include "audio.h"
 #include "aac.h"
+#include "mp3.h"
 #include <pgpu_protocol.h>
 #include <circle/logger.h>
 #include <circle/timer.h>
@@ -12,7 +13,7 @@
 
 LOGMODULE ("audio");
 
-#define STATUS_US	100000		// VIDEO_STATUS while open (as a video stream's)
+#define STATUS_US	100000		// MEDIA_STATUS while open (as a video stream's)
 #define DECODE_US	2000		// the main loop's turn when no core of its own decodes
 #define PARK_US		500000		// the most Close waits for the decoder to let go
 
@@ -28,7 +29,10 @@ CAudio::CAudio (CVCHIQDevice *pVCHIQ, CVideo *pVideo)
 	m_bOwnCore (FALSE),
 	m_bOpen (FALSE),
 	m_nVideoStream (0),
+	m_nCodec (0),
 	m_pAAC (nullptr),
+	m_pMP3 (nullptr),
+	m_nMaxFrames (AAC_MAX_FRAMES),
 	m_pOut (nullptr),
 	m_pLastOut (nullptr),
 	m_nRate (0),
@@ -50,7 +54,7 @@ CAudio::CAudio (CVCHIQDevice *pVCHIQ, CVideo *pVideo)
 	m_nErrors (0),
 	m_bEOS (FALSE),
 	m_pUnit (new u8[MaxUnit]),
-	m_pPCM (new s16[2 * AAC_MAX_FRAMES]),
+	m_pPCM (new s16[2 * (AAC_MAX_FRAMES > MP3_MAX_FRAMES ? AAC_MAX_FRAMES : MP3_MAX_FRAMES)]),
 	m_nLastStatus (0),
 	m_nLastDebug (0)
 {
@@ -74,7 +78,7 @@ void CAudio::SetDefaultVolume (unsigned nPercent)
 u32 CAudio::Open (u32 nCodec, unsigned nVideoStream, const u8 *pConfig, unsigned nConfigBytes)
 {
 	Close ();
-	if (nCodec != PGPU_AUDIO_AAC)
+	if (nCodec != PGPU_AUDIO_AAC && nCodec != PGPU_AUDIO_MP3)
 	{
 		return PGPU_ERR_ENUM;
 	}
@@ -84,17 +88,28 @@ u32 CAudio::Open (u32 nCodec, unsigned nVideoStream, const u8 *pConfig, unsigned
 	}
 
 	unsigned nRate, nChannels;
-	aac_t *pAAC = aac_open (pConfig, nConfigBytes, &nRate, &nChannels);
-	if (!pAAC)
+	m_nCodec = nCodec;
+	if (nCodec == PGPU_AUDIO_AAC)
 	{
-		LOGWARN ("The AAC decoder doesn't take this configuration (%u bytes)", nConfigBytes);
+		m_pAAC = aac_open (pConfig, nConfigBytes, &nRate, &nChannels);
+		m_nMaxFrames = AAC_MAX_FRAMES;
+	}
+	else
+	{
+		m_pMP3 = mp3_open (pConfig, nConfigBytes, &nRate, &nChannels);
+		m_nMaxFrames = MP3_MAX_FRAMES;
+	}
+	if (!m_pAAC && !m_pMP3)
+	{
+		LOGWARN ("The %s decoder doesn't take this configuration (%u bytes)",
+			 nCodec == PGPU_AUDIO_AAC ? "AAC" : "MP3", nConfigBytes);
 		return PGPU_ERR_ENUM;
 	}
 
 	CAudioOut *pOut = GetOutput (nRate);
 	if (!pOut)
 	{
-		aac_close (pAAC);
+		CloseDecoder ();
 		return PGPU_ERR_LIMIT;
 	}
 	pOut->Flush ();
@@ -102,17 +117,16 @@ u32 CAudio::Open (u32 nCodec, unsigned nVideoStream, const u8 *pConfig, unsigned
 	if (!pOut->IsActive () && !pOut->Start ())
 	{
 		LOGWARN ("No sound output at %u Hz", nRate);
-		aac_close (pAAC);
+		CloseDecoder ();
 		return PGPU_ERR_OBJECT;
 	}
 
-	m_pAAC = pAAC;
 	m_pOut = pOut;
 	m_nRate = nRate;
 	m_bPaused = FALSE;
 	m_nVideoStream = nVideoStream;
 	m_nVolume = m_nDefaultVolume;
-	aac_set_volume (m_pAAC, m_nVolume * 65536 / 100);
+	SetDecoderVolume ();
 	m_nSilenceAtOpen = pOut->GetUnderrunFrames ();
 	m_nBytesIn = 0;
 	m_nSamplesIn = 0;
@@ -134,7 +148,8 @@ u32 CAudio::Open (u32 nCodec, unsigned nVideoStream, const u8 *pConfig, unsigned
 	{
 		m_pVideo->SetClock (m_nVideoStream, this);
 	}
-	LOGNOTE ("Stream: AAC, %u Hz, %u channels (as stereo), volume %u%%, %s%s", nRate, nChannels,
+	LOGNOTE ("Stream: %s, %u Hz, %u channels (as stereo), volume %u%%, %s%s",
+		 nCodec == PGPU_AUDIO_AAC ? "AAC" : "MP3", nRate, nChannels,
 		 m_nVolume, m_bOwnCore ? "decoded on a core of its own" : "decoded in the main loop",
 		 m_nVideoStream ? ", the video's clock" : "");
 
@@ -191,8 +206,7 @@ void CAudio::Close (void)
 	m_bOpen = FALSE;
 	m_pOut->Flush ();
 	m_pOut->Cancel ();			// (waits for the VideoCore: silence from here)
-	aac_close (m_pAAC);
-	m_pAAC = nullptr;
+	CloseDecoder ();
 	m_pOut = nullptr;
 	LOGNOTE ("Stream closed: %u units decoded, %u broken", m_nDecoded, m_nErrors);
 }
@@ -204,7 +218,7 @@ u32 CAudio::Data (u32 nFlags, s64 nPTS, unsigned nSampleBytes, const u8 *pData, 
 		return PGPU_ERR_OBJECT;
 	}
 
-	if (nFlags & PGPU_VIDEO_FIRST)
+	if (nFlags & PGPU_MEDIA_FIRST)
 	{
 		if (m_bPartial)				// the last one lost its end: dropped
 		{
@@ -216,7 +230,7 @@ u32 CAudio::Data (u32 nFlags, s64 nPTS, unsigned nSampleBytes, const u8 *pData, 
 		if (   m_nSamplesIn - nSamplesDone >= MaxSamples || nSampleBytes < nBytes
 		    || nSampleBytes > MaxUnit || m_nBytesIn - nBytesDone + nSampleBytes > RingBytes)
 		{
-			m_bSkipping = !(nFlags & PGPU_VIDEO_LAST);
+			m_bSkipping = !(nFlags & PGPU_MEDIA_LAST);
 			return PGPU_ERR_LIMIT;		// more than the host was told it could send
 		}
 		TSample &S = m_Samples[m_nSamplesIn % MaxSamples];
@@ -231,7 +245,7 @@ u32 CAudio::Data (u32 nFlags, s64 nPTS, unsigned nSampleBytes, const u8 *pData, 
 	{
 		if (m_bSkipping)
 		{
-			m_bSkipping = !(nFlags & PGPU_VIDEO_LAST);
+			m_bSkipping = !(nFlags & PGPU_MEDIA_LAST);
 			return 0;
 		}
 		if (!m_bPartial)
@@ -255,10 +269,10 @@ u32 CAudio::Data (u32 nFlags, s64 nPTS, unsigned nSampleBytes, const u8 *pData, 
 	}
 	m_nPartialBytes += nBytes;
 
-	if (nFlags & PGPU_VIDEO_LAST)
+	if (nFlags & PGPU_MEDIA_LAST)
 	{
 		S.nSize = m_nPartialBytes;		// (fewer bytes than it said: those)
-		S.nFlags |= nFlags & PGPU_VIDEO_EOS;
+		S.nFlags |= nFlags & PGPU_MEDIA_EOS;
 		m_bPartial = FALSE;
 		DataMemBarrier ();			// the sample before the count that shows it
 		m_nSamplesIn = m_nSamplesIn + 1;
@@ -271,22 +285,22 @@ u32 CAudio::Control (u32 nOp, s64 nArg)
 {
 	if (!m_bOpen)
 	{
-		return nOp == PGPU_VIDEO_CLOSE ? 0 : PGPU_ERR_OBJECT;
+		return nOp == PGPU_MEDIA_CLOSE ? 0 : PGPU_ERR_OBJECT;
 	}
 
 	switch (nOp)
 	{
-	case PGPU_VIDEO_PLAY:			// (the time: the samples' own)
+	case PGPU_MEDIA_PLAY:			// (the time: the samples' own)
 		m_bPaused = FALSE;
 		m_pOut->SetPaused (FALSE);
 		return 0;
 
-	case PGPU_VIDEO_PAUSE:			// the sound, and so the video's clock, stops
+	case PGPU_MEDIA_PAUSE:			// the sound, and so the video's clock, stops
 		m_bPaused = TRUE;
 		m_pOut->SetPaused (TRUE);
 		return 0;
 
-	case PGPU_VIDEO_CLOSE:
+	case PGPU_MEDIA_CLOSE:
 		Close ();
 		return 0;
 
@@ -296,7 +310,7 @@ u32 CAudio::Control (u32 nOp, s64 nArg)
 			return PGPU_ERR_LIMIT;
 		}
 		m_nVolume = (unsigned) nArg;
-		aac_set_volume (m_pAAC, m_nVolume * 65536 / 100);	// (from the next unit)
+		SetDecoderVolume ();			// (from the next unit)
 		return 0;
 
 	default:
@@ -321,7 +335,7 @@ boolean CAudio::DecodeOne (void)
 	u32 nIn = m_nSamplesIn;
 	DataMemBarrier ();			// the count before the samples it shows
 	u32 nDone = m_nSamplesDone;
-	if (nDone == nIn || m_pOut->Room () < AAC_MAX_FRAMES)
+	if (nDone == nIn || m_pOut->Room () < m_nMaxFrames)
 	{
 		return FALSE;
 	}
@@ -330,12 +344,12 @@ boolean CAudio::DecodeOne (void)
 	if (S.nSize)
 	{
 		CopyFromRing (S.nOffset, m_pUnit, S.nSize);
-		int nFrames = aac_decode (m_pAAC, m_pUnit, S.nSize, m_pPCM);
+		int nFrames = Decode (m_pUnit, S.nSize, m_pPCM);
 		if (nFrames < 0)
 		{
 			if (m_nErrors++ < 10)
 			{
-				LOGWARN ("A broken unit at %d ms: %s", (int) (S.nPTS / 1000), aac_error (m_pAAC));
+				LOGWARN ("A broken unit at %d ms: %s", (int) (S.nPTS / 1000), DecoderError ());
 			}
 		}
 		else if (nFrames > 0)
@@ -350,7 +364,7 @@ boolean CAudio::DecodeOne (void)
 		}
 		m_nDecoded = m_nDecoded + 1;
 	}
-	if (S.nFlags & PGPU_VIDEO_EOS)
+	if (S.nFlags & PGPU_MEDIA_EOS)
 	{
 		m_bEOS = TRUE;
 	}
@@ -361,6 +375,37 @@ boolean CAudio::DecodeOne (void)
 	m_nSamplesDone = nDone + 1;
 
 	return TRUE;
+}
+
+int CAudio::Decode (const u8 *pUnit, unsigned nBytes, s16 *pFrames)
+{
+	return   m_nCodec == PGPU_AUDIO_AAC ? aac_decode (m_pAAC, pUnit, nBytes, pFrames)
+	       : mp3_decode (m_pMP3, pUnit, nBytes, pFrames);
+}
+
+void CAudio::SetDecoderVolume (void)
+{
+	if (m_nCodec == PGPU_AUDIO_AAC)
+	{
+		aac_set_volume (m_pAAC, m_nVolume * 65536 / 100);
+	}
+	else
+	{
+		mp3_set_volume (m_pMP3, m_nVolume * 65536 / 100);
+	}
+}
+
+const char *CAudio::DecoderError (void)
+{
+	return m_nCodec == PGPU_AUDIO_AAC ? aac_error (m_pAAC) : mp3_error (m_pMP3);
+}
+
+void CAudio::CloseDecoder (void)
+{
+	aac_close (m_pAAC);
+	mp3_close (m_pMP3);
+	m_pAAC = nullptr;
+	m_pMP3 = nullptr;
 }
 
 void CAudio::DecodeLoop (void)
@@ -472,13 +517,13 @@ boolean CAudio::GetStatus (u32 *pPayload, boolean bDue)
 	s64 nHeard;
 	if (!GetTime (&nHeard))
 	{
-		nHeard = PGPU_VIDEO_TIME_NONE;
+		nHeard = PGPU_MEDIA_TIME_NONE;
 	}
 	u32 nSamplesDone = m_nSamplesDone;
 	pPayload[0] = PGPU_AUDIO_STREAM;
-	pPayload[1] =   (m_bOpen ? PGPU_VIDEO_OPEN_FLAG : 0)
-		      | (m_bOpen && !m_bPaused ? PGPU_VIDEO_PLAYING : 0)
-		      | (m_bOpen && m_bEOS && nSamplesDone == m_nSamplesIn ? PGPU_VIDEO_ENDED : 0)
+	pPayload[1] =   (m_bOpen ? PGPU_MEDIA_OPEN_FLAG : 0)
+		      | (m_bOpen && !m_bPaused ? PGPU_MEDIA_PLAYING : 0)
+		      | (m_bOpen && m_bEOS && nSamplesDone == m_nSamplesIn ? PGPU_MEDIA_ENDED : 0)
 		      | m_nVolume << 8;			// (the audio stream's: its volume)
 	pPayload[2] = m_nBytesDone;
 	pPayload[3] = RingBytes;

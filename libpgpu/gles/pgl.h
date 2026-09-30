@@ -75,8 +75,8 @@ void pglSwapBuffers (void);
    multiple of 16), linear, clamped, one level; the RPi's decoder puts H.264
    of coded_width x coded_height into it, scaled, and it shows the frame that's
    due at each frame (docs/protocol.md 7.12). avcc: the samples are as MP4 has
-   them (pgpu_mp4's avcC); NULL: Annex B. Feed it with pgpu_video_sample or
-   pgpu_video_sample_read (pgpu.h); defining the texture again (glTexImage2D)
+   them (pgpu_mp4's avcC); NULL: Annex B. Feed it with pgpu_media_sample or
+   pgpu_media_sample_read (pgpu.h); defining the texture again (glTexImage2D)
    ends that. False on a bad name */
 bool pglVideoTexture (GLuint texture, unsigned stream, unsigned width, unsigned height,
 		      unsigned coded_width, unsigned coded_height, const void *avcc, unsigned avcc_bytes);

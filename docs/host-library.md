@@ -25,16 +25,17 @@ The host library (`libpgpu/`, board independent) has two layers:
   coded_width, coded_height, avcc, avcc_bytes)` makes a GL texture name a
   video texture (`VIDEO_OPEN`; pgl then knows it as a complete RGBA texture,
   linear, clamped); `pglVideoResize (texture, stream, width, height)` changes
-  its size, the stream going on (`RESIZE`). `pgpu_video_room` says how big a sample may be now (from
-  the last `VIDEO_STATUS`, which the library keeps per stream like `DISPLAY`,
-  and what it has sent since); `pgpu_video_control` and
-  `pgpu_video_get_status` the rest.
-- **Audio** ([protocol](protocol.md) §7.13): `pgpu_audio_open (video_stream,
-  asc, asc_bytes)` opens the audio stream (stream `PGPU_AUDIO_STREAM`, 3) for
-  AAC with its AudioSpecificConfig and makes it the clock of that video
-  stream; its samples, room and status go through the video calls with
-  stream 3 (`pgpu_video_sample_read`, `pgpu_video_room`,
-  `pgpu_video_get_status`); `pgpu_audio_volume (percent)` sets the volume,
+  its size, the stream going on (`RESIZE`). `pgpu_media_room` says how big a sample may be now (from
+  the last `MEDIA_STATUS`, which the library keeps per stream like `DISPLAY`,
+  and what it has sent since); `pgpu_media_control` and
+  `pgpu_media_get_status` the rest.
+- **Audio** ([protocol](protocol.md) §7.13): `pgpu_audio_open (codec,
+  video_stream, config, config_bytes)` opens the audio stream (stream
+  `PGPU_AUDIO_STREAM`, 3) for AAC (`PGPU_AUDIO_AAC`, config the
+  AudioSpecificConfig) or MP3 (`PGPU_AUDIO_MP3`, config the first frame's
+  header) and makes it the clock of that video stream; its samples, room and
+  status go through the media stream calls with stream 3
+  (`pgpu_media_sample_read`, `pgpu_media_room`, `pgpu_media_get_status`); `pgpu_audio_volume (percent)` sets the volume,
   and its status says it (`PGPU_AUDIO_STATUS_VOLUME (flags)`: the RPi's
   `volume=` until a host changes it). A stream without video
   (`video_stream` 0) keeps its own clock: sound alone.
@@ -53,7 +54,21 @@ The host library (`libpgpu/`, board independent) has two layers:
     interleaved AAC track, no B-frames, 2880 samples): every offset, size and
     keyframe the same, times within 1 µs, read in 512-byte sectors (8 … 26
     sectors to open a file).
-  - `pgpu_video_sample_read` sends a sample in `VIDEO_DATA` packets, reading
+  - `libpgpu/pgpu_mp3.{h,c}` reads an MP3 (MPEG audio, layers 1 to 3) frame
+    by frame through it: a frame's header at a time, no index. It skips the
+    ID3v2 tags at the start (keeping their title and artist: `TIT2`, `TPE1`,
+    in UTF-8), an ID3v1 tag at the end (its title and artist if there was no
+    ID3v2) and a Xing or Info frame (its frame count: the duration), and
+    bytes between frames that aren't one (a frame counts when the next one
+    follows it). The duration without a frame count is the bitrate's
+    estimate until a pass has reached the end; then it's exact (the loop's
+    period). Checked on a PC, decoding with the RPi's own `gpu/audio/mp3.c`,
+    against ffmpeg: the demo track (320 kbps CBR, ID3v2.3), a LAME VBR file
+    (with Info frame), an MPEG-2 22.05 kHz mono file, a layer 2 file and the
+    VBR file with 768 bytes of garbage put in: the same frames, and the same
+    sound to within 1 of 32768 (ffmpeg drops LAME's encoder delay, 1105
+    frames, which this plays).
+  - `pgpu_media_sample_read` sends a sample in `MEDIA_DATA` packets, reading
     each packet's data through the callback straight into the packet (the
     samples go as they are: format AVCC). So the only copy on the host is the
     filesystem's, from its sector buffer (or the card's DMA) into the
@@ -67,27 +82,32 @@ The host library (`libpgpu/`, board independent) has two layers:
     by DMA straight into the packet. Unaligned, ESP-IDF's SD driver allocated
     a DMA buffer the size of the read, read into it and copied it over, on
     every read.
-  - `demos/video.c` plays the file `PGPU_VIDEO_PATH` if the host has a
-    filesystem (POSIX `open`/`lseek`/`read`), else an MP4 linked into the
-    host's image (memory as the file, `pgpu_mp4_open_memory`). When the screen
+  - `demos/media.c` plays the file `PGPU_MEDIA_PATH` if the host has a
+    filesystem (POSIX `open`/`lseek`/`read`; on a PC, `media_host`, the file
+    the `PGPU_MEDIA` environment variable names), else a file linked into
+    the host's image (memory as the file, `pgpu_mp4_open_memory`; CMake
+    `PGPU_MEDIA_EMBED`). The file is an MP4 or, if it's none, an MP3. When the screen
     changes (panel ↔ HDMI) it resizes the texture; the video keeps its place.
     If the file has an AAC track, its samples go to the audio stream the same
     way, in time order with the video's, and the video follows the sound's
     clock. Both tracks loop with the same period, the longer track's (the Big
     Buck Bunny trailer: video 32.48 s, audio 32.98 s), so they stay together
     round after round. A file with one of the two tracks plays that one:
-    video alone on its own clock, or sound alone (a black screen, the HUD),
-    paced by the sound's heard time. The volume: `+` and `-` on the console
+    video alone on its own clock, or sound alone, paced by the sound's heard
+    time. Sound alone (an MP3, or an MP4 without video) shows what's
+    playing: the title and artist, the stream (codec, rate, channels,
+    bitrate), the time on a bar and the volume. The volume: `+` and `-` on the console
     (10% a step; a PC's terminal in line mode: then Enter), `m` mutes and
     unmutes; the installer page has a slider (its `volumeRequest`, read by
     the WebAssembly demo each frame).
     `hosts/pc/videoplay` plays a file on the PC, through a reader that does as
     an SD filesystem does (whole sectors, a one-sector cache).
-  - **The ESP32-P4's microSD card** (`hosts/esp32p4/main/sdcard.c`, the video
+  - **The ESP32-P4's microSD card** (`hosts/esp32p4/main/sdcard.c`, the media
     app): SDMMC slot 0, 4 bits at 40 MHz (CLK GPIO43, CMD 44, D0–D3 39–42);
     the card's supply is on-chip LDO channel 4 through a P-MOSFET that GPIO45
     switches on (low). FAT32 at `/sdcard` (ESP-IDF 5.5's FatFs has exFAT
-    off), the file `/sdcard/video1.mp4` (CMake `PGPU_VIDEO_FILE`). Measured
+    off), the file `/sdcard/video1.mp4` (CMake `PGPU_MEDIA_FILE`: an MP4 or an
+    MP3). Measured
     on a 64 GB card: POSIX `read` into the packet 12.8 MB/s (16.4 MB/s into
     DMA-capable memory); unbuffered stdio (`fread` with no buffer) managed
     84 KB/s, buffered 2.1 MB/s. With stdio a 1920×800 24 fps film (1.9 GB,

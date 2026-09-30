@@ -42,7 +42,7 @@ static inline bool time_reached (absolute_time_t t)	{ return pgpu_time_us () >= 
 #ifdef __EMSCRIPTEN__
 static inline int getchar_timeout_us (uint32_t us)	{ (void) us; return PICO_ERROR_TIMEOUT; }
 #else
-#include <poll.h>
+#include <sys/poll.h>			/* (ESP-IDF has it there only) */
 static inline int getchar_timeout_us (uint32_t us)
 {
 	struct pollfd p = {0, POLLIN, 0};

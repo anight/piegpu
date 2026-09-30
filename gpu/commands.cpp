@@ -358,7 +358,7 @@ void CCommands::UpdateVideo (void)
 	{
 		if (m_Video.GetStatus (i, Status, TRUE))
 		{
-			Reply (PGPU_REPLY_VIDEO_STATUS, Status, CVideo::StatusWords);
+			Reply (PGPU_REPLY_MEDIA_STATUS, Status, CVideo::StatusWords);
 		}
 	}
 	if (m_pAudio)
@@ -366,7 +366,7 @@ void CCommands::UpdateVideo (void)
 		m_pAudio->Update ();
 		if (m_pAudio->GetStatus (Status, TRUE))
 		{
-			Reply (PGPU_REPLY_VIDEO_STATUS, Status, CAudio::StatusWords);
+			Reply (PGPU_REPLY_MEDIA_STATUS, Status, CAudio::StatusWords);
 		}
 	}
 }
@@ -425,8 +425,8 @@ void CCommands::Execute (u32 nHeader, const u32 *pPayload)
 		{PGPU_OP_TEXTURE_BIND_UNIT, 2}, {PGPU_OP_VERTEX_ATTRIB, 5},
 		{PGPU_OP_ATTRIB_ARRAY, 6}, {PGPU_OP_ATTRIBS_ENABLE, 1},
 		{PGPU_OP_PROGRAM_DRAW_INLINE, VARIABLE},
-		{PGPU_OP_VIDEO_OPEN, VARIABLE}, {PGPU_OP_VIDEO_DATA, VARIABLE}, {PGPU_OP_VIDEO_CONTROL, 4},
-		{PGPU_OP_VIDEO_GET_STATUS, 1}, {PGPU_OP_AUDIO_OPEN, VARIABLE},
+		{PGPU_OP_VIDEO_OPEN, VARIABLE}, {PGPU_OP_MEDIA_DATA, VARIABLE}, {PGPU_OP_MEDIA_CONTROL, 4},
+		{PGPU_OP_MEDIA_GET_STATUS, 1}, {PGPU_OP_AUDIO_OPEN, VARIABLE},
 	};
 
 	boolean bKnown = FALSE;
@@ -670,7 +670,7 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 		*pDetail = p[0];
 		return m_Textures.Params (p[0], p[1], p[2], p[3], p[4]);
 
-	// video (docs/protocol.md 7.12)
+	// media streams: video (docs/protocol.md 7.12) and audio (7.13)
 
 	case PGPU_OP_VIDEO_OPEN:
 		*pDetail = p[0];
@@ -683,34 +683,34 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 		return m_Video.Open (p[0], p[1], p[2], p[3] & 0xFFFF, p[3] >> 16, p[4] & 0xFFFF, p[4] >> 16,
 				     p[5], (const u8 *) (p + PGPU_VIDEO_OPEN_WORDS), p[6]);
 
-	case PGPU_OP_VIDEO_DATA:
+	case PGPU_OP_MEDIA_DATA:
 		*pDetail = p[0];
-		if (nLength < PGPU_VIDEO_DATA_HEADER || p[4] > (nLength - PGPU_VIDEO_DATA_HEADER) * 4)
+		if (nLength < PGPU_MEDIA_DATA_HEADER || p[4] > (nLength - PGPU_MEDIA_DATA_HEADER) * 4)
 		{
 			return PGPU_ERR_LENGTH;
 		}
 		if (p[0] == PGPU_AUDIO_STREAM)
 		{
 			return m_pAudio ? m_pAudio->Data (p[1], (s64) ((u64) p[3] << 32 | p[2]), p[5],
-							  (const u8 *) (p + PGPU_VIDEO_DATA_HEADER), p[4])
+							  (const u8 *) (p + PGPU_MEDIA_DATA_HEADER), p[4])
 					: PGPU_ERR_OBJECT;
 		}
 		return m_Video.Data (p[0], p[1], (s64) ((u64) p[3] << 32 | p[2]), p[5],
-				     (const u8 *) (p + PGPU_VIDEO_DATA_HEADER), p[4]);
+				     (const u8 *) (p + PGPU_MEDIA_DATA_HEADER), p[4]);
 
-	case PGPU_OP_VIDEO_CONTROL:
+	case PGPU_OP_MEDIA_CONTROL:
 		*pDetail = p[0];
 		if (p[0] == PGPU_AUDIO_STREAM)
 		{
 			return m_pAudio ? m_pAudio->Control (p[1], (s64) ((u64) p[3] << 32 | p[2])) : PGPU_ERR_OBJECT;
 		}
-		if (p[1] == PGPU_VIDEO_CLOSE || p[1] == PGPU_VIDEO_RESIZE)
+		if (p[1] == PGPU_MEDIA_CLOSE || p[1] == PGPU_VIDEO_RESIZE)
 		{
 			FlushJob (FALSE);	// draws so far may use the stream's frame
 		}
 		return m_Video.Control (p[0], p[1], (s64) ((u64) p[3] << 32 | p[2]));
 
-	case PGPU_OP_VIDEO_GET_STATUS: {
+	case PGPU_OP_MEDIA_GET_STATUS: {
 		*pDetail = p[0];
 		u32 Status[CVideo::StatusWords];
 		if (p[0] == PGPU_AUDIO_STREAM ? !m_pAudio || !m_pAudio->GetStatus (Status, FALSE)
@@ -718,7 +718,7 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 		{
 			return PGPU_ERR_ID;
 		}
-		Reply (PGPU_REPLY_VIDEO_STATUS, Status, CVideo::StatusWords);
+		Reply (PGPU_REPLY_MEDIA_STATUS, Status, CVideo::StatusWords);
 		} break;
 
 	case PGPU_OP_AUDIO_OPEN:

@@ -8,9 +8,10 @@
 #   gears breakout flight
 #   toy-NAME            Shadertoy-style: shaders/toy_NAME.frag; a game has
 #                       NAME.c (pong, snake, asteroids)
-#   video               an MP4 played by the RPi's decoder into a texture:
-#                       PGPU_VIDEO_MP4 (default: a 720p test pattern made with
-#                       ffmpeg), linked in
+#   media               an MP4 or an MP3 played by the RPi: the video decoded
+#                       into a texture, the sound (AAC, MP3) on HDMI;
+#                       PGPU_MEDIA_EMBED (default: a 720p test pattern made
+#                       with ffmpeg), linked in, or a file (PGPU_MEDIA_PATH)
 #
 # The Jet demos (demos/jet) are C++ with their own runtime: demos/jet/jet.cmake
 # (hosts/pico and hosts/esp32p4).
@@ -19,7 +20,7 @@ include(${CMAKE_CURRENT_LIST_DIR}/../libpgpu/pgpu_sources.cmake)
 set(PGPU_DEMOS ${CMAKE_CURRENT_LIST_DIR})
 set(PGPU_DEMO_SHADERS ${PGPU_DEMOS}/shaders)
 set(PGPU_DEMO_APPS selftest linktest gears breakout flight
-	toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids video)
+	toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids media)
 
 if(NOT COMMAND pgpu_demo)
 function(pgpu_demo target app)
@@ -74,25 +75,25 @@ function(pgpu_demo target app)
 		pgpu_glsl_program(TARGET ${target} NAME toy_${name} VS ${PGPU_DEMO_SHADERS}/toy.vert
 			DIR ${PGPU_DEMO_SHADERS} ARGS -a a_pos:float:2 -v triangles)
 
-	elseif(app STREQUAL "video" AND EMSCRIPTEN)	# a page's: the MP4 is the page's file
-		target_sources(${target} PRIVATE ${PGPU_DEMOS}/video.c ${PGPU_DEMOS}/video_mp4_none.c)
-		target_compile_definitions(${target} PRIVATE PGPU_VIDEO_PATH="/video.mp4")
+	elseif(app STREQUAL "media" AND EMSCRIPTEN)	# a page's: the file is the page's
+		target_sources(${target} PRIVATE ${PGPU_DEMOS}/media.c ${PGPU_DEMOS}/media_file_none.c)
+		target_compile_definitions(${target} PRIVATE PGPU_MEDIA_PATH="/media")
 		program(video -a a_pos:float:2 -v triangles)
 
-	elseif(app STREQUAL "video")		# an MP4 into a video texture (video.c)
-		set(mp4 "${PGPU_VIDEO_MP4}")
-		if(NOT mp4)
-			set(mp4 ${CMAKE_BINARY_DIR}/video-test.mp4)
-			add_custom_command(OUTPUT ${mp4}
+	elseif(app STREQUAL "media")		# an MP4 or an MP3, linked in (media.c)
+		set(file "${PGPU_MEDIA_EMBED}")
+		if(NOT file)
+			set(file ${CMAKE_BINARY_DIR}/video-test.mp4)
+			add_custom_command(OUTPUT ${file}
 				COMMAND ffmpeg -hide_banner -loglevel error -f lavfi
 					-i testsrc=size=1280x720:rate=30 -t 10 -c:v libx264 -profile:v high
-					-level 4.0 -pix_fmt yuv420p -bf 2 -g 60 -b:v 2M -y ${mp4}
+					-level 4.0 -pix_fmt yuv420p -bf 2 -g 60 -b:v 2M -y ${file}
 				COMMENT "Making the test video (ffmpeg)")
 		endif()
-		set(PGPU_VIDEO_MP4 ${mp4})
-		configure_file(${PGPU_DEMOS}/video_mp4.S.in ${CMAKE_CURRENT_BINARY_DIR}/video_mp4.S @ONLY)
-		set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/video_mp4.S PROPERTIES OBJECT_DEPENDS ${mp4})
-		target_sources(${target} PRIVATE ${PGPU_DEMOS}/video.c ${CMAKE_CURRENT_BINARY_DIR}/video_mp4.S)
+		set(PGPU_MEDIA_INCBIN ${file})
+		configure_file(${PGPU_DEMOS}/media_file.S.in ${CMAKE_CURRENT_BINARY_DIR}/media_file.S @ONLY)
+		set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/media_file.S PROPERTIES OBJECT_DEPENDS ${file})
+		target_sources(${target} PRIVATE ${PGPU_DEMOS}/media.c ${CMAKE_CURRENT_BINARY_DIR}/media_file.S)
 		program(video -a a_pos:float:2 -v triangles)
 
 	else()

@@ -1,12 +1,13 @@
 # piegpu
 
-A toy GPU for OpenGL and video rendering. A Raspberry Pi (RPi) runs bare
+A toy GPU for OpenGL rendering and media. A Raspberry Pi (RPi) runs bare
 metal (Circle) as the graphics card of a microcontroller (like a Raspberry Pi
 Pico or an ESP32): the microcontroller sends OpenGL ES 2.0 commands (and 1.1's
 fixed function), and the RPi renders them with its VideoCore IV V3D, to an
 ST7789 panel or to HDMI. Video (H.264, e.g. from an MP4) is decoded by the
-VideoCore into textures that any draw can use, and its sound (AAC) is
-decoded by the RPi and played on HDMI, with the picture following it.
+VideoCore into textures that any draw can use, and sound (AAC, e.g. the
+MP4's, or MP3) is decoded by the RPi and played on HDMI, with the picture
+following it.
 
 The host can be any microcontroller board capable of the link: I2S as the
 master (DATA, BCLK and FS out, the replies back on REPLY), a READY input and
@@ -35,7 +36,7 @@ Documentation ([docs/](docs/README.md)):
 
 | Directory | What |
 |---|---|
-| `gpu/` | the RPi's firmware: links (`link/`), outputs (`display/`), renderer, video (`video/`), audio (`audio/`, with FAAD2), SD card installer (`install/`) |
+| `gpu/` | the RPi's firmware: links (`link/`), outputs (`display/`), renderer, video (`video/`), audio (`audio/`, with FAAD2 and minimp3), SD card installer (`install/`) |
 | `drivers/` | the RPi's V3D and ST7789 (DMA) drivers |
 | `libpgpu/` | the host library: protocol encoding, pgl (the GL ES API), MP4 reader, HUD, self tests |
 | `transports/` | links for the host library: `pico-i2s`, `esp32p4-i2s`, `pc-usb` |
@@ -133,7 +134,7 @@ four); the Zero not yet. How it works:
                                        └─────┬──────┘           └─────────┘
                                              │ "USB" port, one cable:
                                              │  power; its log; USB boot
-                                             │  GL commands and video from a PC
+                                             │  GL commands and media from a PC
                                              │    or a page (instead of I2S)
                                              │  the installer (web/installer)
                                              │  a monitor for the PC's desktop
@@ -203,7 +204,7 @@ there. Without the SDO wire it can't tell: set `panel=yes` (see below).
   - power;
   - the RPi's log;
   - the installer (below);
-  - GL commands and video from a PC program or a page (below);
+  - GL commands and media (video, sound) from a PC program or a page (below);
   - the USB monitor (below).
 
   Without a card that holds piegpu, many RPi boards can boot over USB from
@@ -294,7 +295,9 @@ cmake -S hosts/pc -B hosts/pc/build && make -C hosts/pc/build -j$(($(nproc) - 1)
   whose answer comes once the RPi has executed the frame (and waited for
   the screen), so programs pace on the RPi's frames as on the Pico's. The
   demos build for the PC as `DEMO_host` (`hosts/pc/build/gears_host`: 60
-  fps on the panel, render 1.2 ms a frame).
+  fps on the panel, render 1.2 ms a frame). `media_host` plays the file
+  the `PGPU_MEDIA` environment variable names, an MP4 or an MP3 (else its
+  linked-in test video).
 - While a PC's desktop uses the RPi as a monitor (below), GL frames are
   rendered off screen: turn that monitor off first.
 - Two ways over the cable (`transports/pc-usb/pgpu_host.c`): the RPi's GL
@@ -426,20 +429,28 @@ then renamed into place. At the end the RPi restarts from the card, and the
 page shows where the screen went. Measured: 3.5 MB in 5.4 s; a 64 GB card
 formatted in 7.3 s.
 
-**Test OpenGL, Test video.** The page runs demos in the browser, with
+**Test OpenGL, Test Video, Test Audio.** The page runs demos in the browser, with
 libpgpu compiled to WebAssembly (`hosts/web`, Emscripten), their GL commands
 going over the same Web Serial port as the installer's (the PC's serial
 transport; `web/installer/gl.js` moves the bytes). No driver or udev rule is
 needed. Test OpenGL runs `demos/gears.c` (60 fps, render 1.2 ms, as
-`gears_host`); Test video runs `demos/video.c` on the Big Buck Bunny trailer
+`gears_host`); Test Video runs `demos/media.c` on the Big Buck Bunny trailer
 (853x480 H.264, Blender Foundation, CC BY 3.0), decoded by the RPi's
 VideoCore: 25 fps, 0 dropped; with its sound on an HDMI monitor that has
-speakers (5.1 AAC, mixed down to stereo, at the `volume=` setting). Stop
+speakers (5.1 AAC, mixed down to stereo, at the `volume=` setting). Test
+Audio runs it on an MP3, "Monkeys Spinning Monkeys" by Kevin MacLeod
+(incompetech.com, CC BY 4.0; 44.1 kHz stereo, 320 kbps, 2:05), decoded by
+the RPi (minimp3), with the title, artist and time on the screen. Verified on
+the Zero 2 W with the Dell S2421H: 0 broken frames, 0 ms of silence; the
+webcam's microphone heard the track in order and at its speed (3 s windows
+over 21 s, each found on its own in the track's first 40 s: 7 of 8 at the
+same place within 5 ms, the eighth under a noise in the room). Stop
 ends the demo's session (`STREAM_END`, docs/protocol.md §13): the RPi resets
 and its serial port carries the log and the installer again (firmware
 without it restarts instead). `make-firmware.sh`
 builds the demos when Emscripten is installed (`EMSDK`, default `~/emsdk`)
-and downloads the trailer (Blender's server doesn't let a page fetch it).
+and downloads the trailer and the MP3 into `web/installer/media/` (their
+servers don't let a page fetch them).
 
 ## The RPi as a USB monitor for Linux
 

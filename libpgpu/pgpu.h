@@ -91,22 +91,24 @@ typedef struct
    never get lost to other waits: compare the count to see a change */
 uint32_t pgpu_get_display (pgpu_display_t *display);
 
-/* video streams decoded by the RPi into textures (docs/protocol.md 7.12) */
+/* media streams (docs/protocol.md 7.12): video decoded by the RPi into
+   textures, sound played on HDMI (7.13). A stream's MEDIA_STATUS (for the
+   audio stream: frames are access units, shown_pts the time heard) */
 typedef struct
 {
-	uint32_t flags;			/* PGPU_VIDEO_OPEN_FLAG, _PLAYING, _ENDED, _ERROR */
+	uint32_t flags;			/* PGPU_MEDIA_OPEN_FLAG, _PLAYING, _ENDED, _ERROR */
 	uint32_t bytes_done;		/* sample bytes the decoder has taken, since the open */
 	uint32_t ring_bytes;		/* the RPi's buffer for the samples not taken yet */
 	uint32_t decoded, shown, dropped;	/* frames */
-	int64_t shown_pts;		/* the frame in the texture (PGPU_VIDEO_TIME_NONE: none) */
+	int64_t shown_pts;		/* the frame in the texture (PGPU_MEDIA_TIME_NONE: none) */
 	uint32_t waiting;		/* decoded frames waiting for their time */
 	uint32_t samples_done;		/* samples the decoder has taken, since the open */
 	uint32_t max_samples;		/* samples the RPi holds (not taken yet) */
-} pgpu_video_status_t;
+} pgpu_media_status_t;
 
 /* where data comes from: bytes at offset into buffer (a file on an SD card
    through its filesystem, memory, ...); false if it can't.
-   pgpu_video_sample_read calls it so that a filesystem can read whole sectors
+   pgpu_media_sample_read calls it so that a filesystem can read whole sectors
    by DMA straight into the packet: the reads of a sample after its first
    start at a PGPU_READ_SECTOR boundary of the file, into memory aligned to
    PGPU_READ_ALIGN (idle words before the packet put it there) */
@@ -124,32 +126,34 @@ typedef bool (*pgpu_read_t) (void *ctx, uint64_t offset, void *buffer, uint32_t 
    NULL: Annex B (start codes, SPS and PPS in the stream) */
 void pgpu_video_open (uint32_t stream, uint32_t texture, uint32_t width, uint32_t height,
 		      uint32_t coded_width, uint32_t coded_height, const void *avcc, uint32_t avcc_bytes);
-/* a whole sample (an access unit; flags PGPU_VIDEO_KEYFRAME, _CONFIG, _EOS),
+/* a whole sample (an access unit; flags PGPU_MEDIA_KEYFRAME, _CONFIG, _EOS),
    pts in microseconds; split into packets as needed. Send only what
-   pgpu_video_room () allows: the RPi rejects the rest */
-void pgpu_video_sample (uint32_t stream, uint32_t flags, int64_t pts, const void *data, uint32_t bytes);
+   pgpu_media_room () allows: the RPi rejects the rest */
+void pgpu_media_sample (uint32_t stream, uint32_t flags, int64_t pts, const void *data, uint32_t bytes);
 /* the same, the data read straight into the packets (bytes at offset through
    read, a packet's payload at a time: no buffer for the sample); false if a
    read failed (the RPi drops the part it has) */
-bool pgpu_video_sample_read (uint32_t stream, uint32_t flags, int64_t pts, uint32_t bytes,
+bool pgpu_media_sample_read (uint32_t stream, uint32_t flags, int64_t pts, uint32_t bytes,
 			     pgpu_read_t read, void *ctx, uint64_t offset);
-uint32_t pgpu_video_room (uint32_t stream);
-void pgpu_video_control (uint32_t stream, uint32_t op, int64_t arg);	/* PGPU_VIDEO_PLAY, ... */
+uint32_t pgpu_media_room (uint32_t stream);
+void pgpu_media_control (uint32_t stream, uint32_t op, int64_t arg);	/* PGPU_MEDIA_PLAY, ... */
 /* the stream's texture gets another size (same rules as the open); the
    decoding and the clock go on */
 void pgpu_video_resize (uint32_t stream, uint32_t width, uint32_t height);
-void pgpu_video_request_status (uint32_t stream);
+void pgpu_media_request_status (uint32_t stream);
 
-/* the audio stream (docs/protocol.md 7.13): AAC access units (raw, as MP4 has
-   them; asc the AudioSpecificConfig), decoded by the RPi and played on HDMI
-   with the video stream video_stream (0: none), whose clock then follows the
-   sound. Its samples, room, control and status as a video stream's, with
-   stream PGPU_AUDIO_STREAM: pgpu_video_sample_read, pgpu_video_room, ... */
-void pgpu_audio_open (uint32_t video_stream, const void *asc, uint32_t asc_bytes);
+/* the audio stream (docs/protocol.md 7.13), decoded by the RPi and played on
+   HDMI with the video stream video_stream (0: none), whose clock then follows
+   the sound. codec PGPU_AUDIO_AAC: AAC access units (raw, as MP4 has them),
+   config the AudioSpecificConfig (pgpu_mp4's asc); PGPU_AUDIO_MP3: MPEG audio
+   frames, config the first frame's 4-byte header (pgpu_mp3's header). Its
+   samples, room, control and status as a video stream's, with stream
+   PGPU_AUDIO_STREAM: pgpu_media_sample_read, pgpu_media_room, ... */
+void pgpu_audio_open (uint32_t codec, uint32_t video_stream, const void *config, uint32_t config_bytes);
 void pgpu_audio_volume (uint32_t percent);	/* 0 .. 100 (the RPi's default: its volume= option) */
-/* the last VIDEO_STATUS of a stream (the RPi sends one every 100 ms while it's
+/* the last MEDIA_STATUS of a stream (the RPi sends one every 100 ms while it's
    open); returns how many have come (0: none) */
-uint32_t pgpu_video_get_status (uint32_t stream, pgpu_video_status_t *status);
+uint32_t pgpu_media_get_status (uint32_t stream, pgpu_media_status_t *status);
 
 /* link */
 void pgpu_init (void);

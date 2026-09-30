@@ -19,7 +19,7 @@ extern "C" {
 
 #define INPUT_BUFFER_BYTES	(64 * 1024)	// the decoder's input buffers
 #define OUTPUT_BUFFERS		(CVideo::MaxFrames + 2)	// waiting, shown, being filled
-#define STATUS_US		100000		// periodic VIDEO_STATUS
+#define STATUS_US		100000		// periodic MEDIA_STATUS
 
 LOGMODULE ("video");
 
@@ -252,7 +252,7 @@ u32 CVideo::Data (unsigned nStream, u32 nFlags, s64 nPTS, unsigned nSampleBytes,
 	TStream &S = m_Streams[nStream];
 
 	TSample *pSample;
-	if (nFlags & PGPU_VIDEO_FIRST)
+	if (nFlags & PGPU_MEDIA_FIRST)
 	{
 		if (S.nSamples && !S.Samples[(S.nFirstSample + S.nSamples - 1) % MaxSamples].bComplete)
 		{
@@ -265,7 +265,7 @@ u32 CVideo::Data (unsigned nStream, u32 nFlags, s64 nPTS, unsigned nSampleBytes,
 		if (   S.nSamples == MaxSamples || nSampleBytes < nBytes
 		    || S.nRingUsed + nSampleBytes > RingBytes)
 		{
-			S.bSkipping = !(nFlags & PGPU_VIDEO_LAST);
+			S.bSkipping = !(nFlags & PGPU_MEDIA_LAST);
 			return PGPU_ERR_LIMIT;			// more than the host was told it could send
 		}
 		pSample = &S.Samples[(S.nFirstSample + S.nSamples++) % MaxSamples];
@@ -281,7 +281,7 @@ u32 CVideo::Data (unsigned nStream, u32 nFlags, s64 nPTS, unsigned nSampleBytes,
 	{
 		if (S.bSkipping)
 		{
-			S.bSkipping = !(nFlags & PGPU_VIDEO_LAST);
+			S.bSkipping = !(nFlags & PGPU_MEDIA_LAST);
 			return 0;
 		}
 		if (!S.nSamples || S.Samples[(S.nFirstSample + S.nSamples - 1) % MaxSamples].bComplete)
@@ -305,10 +305,10 @@ u32 CVideo::Data (unsigned nStream, u32 nFlags, s64 nPTS, unsigned nSampleBytes,
 	}
 	S.nRingUsed += nBytes;
 	pSample->nBytes += nBytes;
-	if (nFlags & PGPU_VIDEO_LAST)
+	if (nFlags & PGPU_MEDIA_LAST)
 	{
 		pSample->bComplete = TRUE;
-		pSample->nFlags |= nFlags & PGPU_VIDEO_EOS;	// (fewer bytes than it said: those)
+		pSample->nFlags |= nFlags & PGPU_MEDIA_EOS;	// (fewer bytes than it said: those)
 	}
 
 	return 0;
@@ -325,7 +325,7 @@ u32 CVideo::Control (unsigned nStream, u32 nOp, s64 nArg)
 
 	switch (nOp)
 	{
-	case PGPU_VIDEO_PLAY:
+	case PGPU_MEDIA_PLAY:
 		if (nArg == (s64) MMAL_TIME_UNKNOWN)
 		{
 			nArg = S.nPausedAt != (s64) MMAL_TIME_UNKNOWN ? S.nPausedAt
@@ -338,13 +338,13 @@ u32 CVideo::Control (unsigned nStream, u32 nOp, s64 nArg)
 		S.nPausedAt = MMAL_TIME_UNKNOWN;
 		break;
 
-	case PGPU_VIDEO_PAUSE:
+	case PGPU_MEDIA_PAUSE:
 		S.nPausedAt = MediaTime (S);
 		S.bPlaying = FALSE;
 		S.bStarted = TRUE;
 		break;
 
-	case PGPU_VIDEO_CLOSE:
+	case PGPU_MEDIA_CLOSE:
 		Close (nStream);
 		break;
 
@@ -561,17 +561,17 @@ void CVideo::Feed (TStream &S)
 		if (bLast)
 		{
 			pBuffer->flags |= MMAL_BUFFER_HEADER_FLAG_FRAME_END;
-			if (T.nFlags & PGPU_VIDEO_EOS)
+			if (T.nFlags & PGPU_MEDIA_EOS)
 			{
 				pBuffer->flags |= MMAL_BUFFER_HEADER_FLAG_EOS;
 				S.bEOSSent = TRUE;
 			}
 		}
-		if (T.nFlags & PGPU_VIDEO_KEYFRAME)
+		if (T.nFlags & PGPU_MEDIA_KEYFRAME)
 		{
 			pBuffer->flags |= MMAL_BUFFER_HEADER_FLAG_KEYFRAME;
 		}
-		if (T.nFlags & PGPU_VIDEO_CONFIG)
+		if (T.nFlags & PGPU_MEDIA_CONFIG)
 		{
 			pBuffer->flags |= MMAL_BUFFER_HEADER_FLAG_CONFIG;
 		}
@@ -779,10 +779,10 @@ boolean CVideo::GetStatus (unsigned nStream, u32 *pPayload, boolean bDue)
 
 	s64 nShownPTS = S.Shown.pBuffer ? S.Shown.nPTS : (s64) MMAL_TIME_UNKNOWN;
 	pPayload[0] = nStream;
-	pPayload[1] =   (S.bOpen ? PGPU_VIDEO_OPEN_FLAG : 0)
-		      | (S.bPlaying ? PGPU_VIDEO_PLAYING : 0)
-		      | (S.bEOS ? PGPU_VIDEO_ENDED : 0)
-		      | (S.bError ? PGPU_VIDEO_ERROR : 0);
+	pPayload[1] =   (S.bOpen ? PGPU_MEDIA_OPEN_FLAG : 0)
+		      | (S.bPlaying ? PGPU_MEDIA_PLAYING : 0)
+		      | (S.bEOS ? PGPU_MEDIA_ENDED : 0)
+		      | (S.bError ? PGPU_MEDIA_ERROR : 0);
 	pPayload[2] = S.nBytesDone;
 	pPayload[3] = RingBytes;
 	pPayload[4] = S.nDecoded;

@@ -593,9 +593,12 @@ async function restartRPi (how)
 
 // ---- demos on the RPi -----------------------------------------------------------
 
-// the video the Test video button plays (web/installer/make-firmware.sh puts
-// it here: the Big Buck Bunny trailer, Blender Foundation, CC BY 3.0)
-const TEST_VIDEO = 'videos/bbb_trailer-480p.mov';
+// the files the Test Video and Test Audio buttons play (web/installer/
+// make-firmware.sh puts them here): the Big Buck Bunny trailer (Blender
+// Foundation, CC BY 3.0), "Monkeys Spinning Monkeys" (Kevin MacLeod,
+// incompetech.com, CC BY 4.0)
+const TEST_VIDEO = 'media/bbb_trailer-480p.mov';
+const TEST_AUDIO = 'media/monkeys_spinning_monkeys.mp3';
 
 let demo = null;			// the running demo's GLStream
 
@@ -606,15 +609,27 @@ async function testOpenGL ()
 
 async function testVideo ()
 {
-	await runOnRPi ('video', 'The video', async () =>
+	await runMedia (TEST_VIDEO, 'video', 'The video');
+}
+
+async function testAudio ()
+{
+	await runMedia (TEST_AUDIO, 'sound', 'The sound');
+}
+
+// the media demo (demos/media.c) playing url, an MP4 or an MP3 (what: its
+// name in the messages)
+async function runMedia (url, what, title)
+{
+	await runOnRPi ('media', title, async () =>
 	{
-		status ('action-status', 'Fetching the test video…');
-		const response = await fetch (TEST_VIDEO);
+		status ('action-status', `Fetching the test ${what}…`);
+		const response = await fetch (url);
 		if (!response.ok)
 		{
-			throw new Error (`No test video on this page (${TEST_VIDEO}: web/installer/make-firmware.sh)`);
+			throw new Error (`No test ${what} on this page (${url}: web/installer/make-firmware.sh)`);
 		}
-		return {'/video.mp4': new Uint8Array (await response.arrayBuffer ())};
+		return {'/media': new Uint8Array (await response.arrayBuffer ())};
 	});
 }
 
@@ -636,7 +651,7 @@ async function runOnRPi (name, title, files)
 		demo = new GLStream (bytes => connection.writeRaw (bytes));
 		connection.rawSink = chunk => demo.push (chunk);
 		$('stop-demo').hidden = false;
-		$('volume-control').hidden = name !== 'video';
+		$('volume-control').hidden = name !== 'media';
 		status ('action-status', 'Starting…');
 		let code;
 		try
@@ -647,14 +662,15 @@ async function runOnRPi (name, title, files)
 				{
 					log (`(${name}) ${line}`);
 				}
-				const v = line.match (/^video: volume (\d+)%/);
+				const v = line.match (/^media: volume (\d+)%/);
 				if (v)
 				{
 					$('volume').value = v[1];		// (the RPi's, or the last set)
 					$('volume-value').textContent = `${v[1]}%`;
 				}
 				const m = line.match (new RegExp (`^${name}: (.*fps.*)$`));
-				if (m || / running$/.test (line))
+				const sound = /^media: sound: /.test (line) && !/^Running/.test ($('action-status').textContent);
+				if (m || sound || / running$/.test (line))
 				{
 					status ('action-status', m ? `Running: ${m[1]}.` : 'Running.', 'ok');
 				}
@@ -744,6 +760,7 @@ function updateButtons ()
 	$('card-retry').disabled = busy;
 	$('run-gears').disabled = busy || !installer;
 	$('test-video').disabled = busy || !installer;
+	$('test-audio').disabled = busy || !installer;
 	$('reset').disabled = busy || !installer;
 
 	// the board, its settings and the actions: while a board is connected
@@ -780,13 +797,14 @@ function init ()
 	$('save-settings').onclick = () => install (true);
 	$('run-gears').onclick = testOpenGL;
 	$('test-video').onclick = testVideo;
+	$('test-audio').onclick = testAudio;
 	$('stop-demo').onclick = () => demo?.stop ();
 	$('volume').oninput = () =>
 	{
 		$('volume-value').textContent = `${$('volume').value}%`;
 		if (demo)
 		{
-			demo.volumeRequest = Number ($('volume').value);	// (demos/video.c takes it)
+			demo.volumeRequest = Number ($('volume').value);	// (demos/media.c takes it)
 		}
 	};
 	$('reset').onclick = reset;

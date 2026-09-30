@@ -201,8 +201,8 @@ model is named below, the fact was measured on that one.
 
 ## Audio
 
-The audio stream (protocol §7.13, `gpu/audio/`): AAC decoded on the ARM,
-played on HDMI through the VideoCore's audio service.
+The audio stream (protocol §7.13, `gpu/audio/`): AAC or MP3 decoded on the
+ARM, played on HDMI through the VideoCore's audio service.
 
 - **Output** (`CAudioOut`): Circle's VCHIQ sound device
   (`addon/vc4/sound`), destination HDMI, 16-bit stereo in chunks of 2048
@@ -217,18 +217,29 @@ played on HDMI through the VideoCore's audio service.
   speakers gets no sound). One output a sample rate, kept for the whole run
   (the service is opened once a device); a stream's close stops it, the next
   stream starts it again.
-- **Decoding** (`aac.c`): FAAD2 2.11.3's libfaad (`gpu/audio/faad2`,
+- **Decoding AAC** (`aac.c`): FAAD2 2.11.3's libfaad (`gpu/audio/faad2`,
   vendored unchanged; GPL 2 or later, so it can be linked with Circle's GPL
   3), float out, more than two channels mixed down to stereo (FAAD2's
   downmatrix), mono doubled, the volume applied in the conversion to 16 bit.
-  It's a library of its own (`gpu/audio/faad2/Makefile`, `libaac.a`): the
-  gpu app's C flags force-include MMAL's header, and FAAD2 needs two shims
+  The decoders are a library of their own (`audio_codecs` in
+  `gpu/CMakeLists.txt`): the gpu app's C flags force-include MMAL's header,
+  and FAAD2 needs two shims
   for Circle, which has no C library (`compat/`: an `assert.h` found before
   Circle's, whose `circle/macros.h` redefines FAAD2's `ALIGN`; `qsort`,
   `abs`, and its three `fprintf`s to stderr dropped). Checked on a PC
   against ffmpeg: a stereo AAC file the same sample for sample (correlation
   1.00000, at most 245 of 32768 apart); FAAD2 drops the first unit's
   priming frames, so the frames of unit k start at unit k's pts.
+- **Decoding MP3** (`mp3.c`): minimp3 (`gpu/audio/minimp3`, one header,
+  vendored unchanged; CC0), MPEG-1, 2 and 2.5 audio layers 1 to 3, float
+  out, mono doubled, the volume applied as for AAC; its NEON code on the
+  Zero 2 W (AArch64), plain C on the Zero. A sample is one whole frame:
+  minimp3 takes a frame alone when it's exactly as long as its header says
+  (`mp3d_find_frame`), and keeps the bit reservoir between calls; a frame at
+  another sample rate than the stream's is refused. Its scratch space is on
+  the stack (about 16 KB; Circle's stacks are 128 KB). Checked on a PC
+  against ffmpeg with the host's reader (`libpgpu/pgpu_mp3.c`): the same
+  sound to within 1 of 32768 (host-library.md).
 - **A core of its own:** on the Zero 2 W the decoder runs on core 1
   (`CCores` in `gpu/kernel.h`; Circle configured with `ARM_ALLOW_MULTI_CORE`,
   `devtools/build-gpu.sh`; cores 2 and 3 halt). On the Zero, one
@@ -266,7 +277,7 @@ played on HDMI through the VideoCore's audio service.
   a WAV (`devtools/logs/pcm.wav`) and lists late chunks, chunks padded with
   silence and jumps in the samples.
 - **Verified** on the Zero 2 W with the Dell S2421H, the trailer through
-  `video_host`: the webcam's microphone recording cross-correlated with the
+  `video_host` (now `media_host`): the webcam's microphone recording cross-correlated with the
   trailer's audio decoded on the PC: 2 s windows over 40 s all within ±4 ms
   of their expected place, across the loop (period 33.0 s) too; 1843 units,
   0 broken, 30 ms of silence at the start; decoded on core 1. With the

@@ -94,7 +94,7 @@ export class GLStream
 }
 
 // run demos/NAME.js with this stream; print (line): its output; files: path
-// -> bytes, put in its file system first (the video demo's /video.mp4).
+// -> bytes, put in its file system first (the media demo's /media).
 // Resolves with its exit code when it ends (stopped: 0).
 export async function runDemo (name, stream, print, files = {})
 {

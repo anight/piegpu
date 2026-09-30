@@ -39,9 +39,9 @@ hosts/esp32p4/sdkconfig.old
 experiments/videodec/test720.h264
 experiments/videodec/test1080.h264
 
-# the installer page's firmware and demo (web/installer/make-firmware.sh)
+# the installer page's firmware, demos and their files (web/installer/make-firmware.sh)
 web/installer/firmware/
 web/installer/demos/
-web/installer/videos/
+web/installer/media/
 
 /build/

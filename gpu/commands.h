@@ -78,7 +78,7 @@ public:
 	/// \brief Connect to the VideoCore's video components (after VCHIQ)
 	boolean InitializeVideo (void)			{ return m_Video.Initialize (); }
 	CVideo *GetVideo (void)				{ return &m_Video; }
-	/// \brief The audio stream (stream 3: AUDIO_OPEN, and its VIDEO_* commands)
+	/// \brief The audio stream (stream 3: AUDIO_OPEN, and its MEDIA_* commands)
 	void SetAudio (CAudio *pAudio)			{ m_pAudio = pAudio; }
 	/// \brief Call often: the video streams' decoding and their status replies
 	void UpdateVideo (void);

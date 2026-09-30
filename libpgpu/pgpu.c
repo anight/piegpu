@@ -12,7 +12,7 @@
 #include <string.h>
 #include "pgpu_link.h"
 
-/* aligned: data read straight into a packet can be (pgpu_video_sample_read) */
+/* aligned: data read straight into a packet can be (pgpu_media_sample_read) */
 static uint32_t staging[2][PGPU_STAGING_WORDS] __attribute__ ((aligned (PGPU_READ_ALIGN)));
 static uint32_t current;		/* staging buffer being filled */
 static uint32_t fill;			/* words in it */
@@ -44,36 +44,36 @@ static uint32_t reply_head, reply_tail;	/* tail written by the parser */
 static uint32_t error_queue[ERROR_QUEUE][3];
 static uint32_t error_head, error_tail;
 
-/* VIDEO_STATUS replies: the latest one a stream, under a sequence count (as
-   DISPLAY); the bytes sent, for pgpu_video_room () */
-static uint32_t video_words[PGPU_MEDIA_STREAMS + 1][PGPU_VIDEO_STATUS_WORDS];
-static uint32_t video_seq[PGPU_MEDIA_STREAMS + 1];
-static uint32_t video_bytes_sent[PGPU_MEDIA_STREAMS + 1];
-static uint32_t video_samples_sent[PGPU_MEDIA_STREAMS + 1];
+/* MEDIA_STATUS replies: the latest one a stream, under a sequence count (as
+   DISPLAY); the bytes sent, for pgpu_media_room () */
+static uint32_t media_words[PGPU_MEDIA_STREAMS + 1][PGPU_MEDIA_STATUS_WORDS];
+static uint32_t media_seq[PGPU_MEDIA_STREAMS + 1];
+static uint32_t media_bytes_sent[PGPU_MEDIA_STREAMS + 1];
+static uint32_t media_samples_sent[PGPU_MEDIA_STREAMS + 1];
 
-uint32_t pgpu_video_get_status (uint32_t stream, pgpu_video_status_t *status)
+uint32_t pgpu_media_get_status (uint32_t stream, pgpu_media_status_t *status)
 {
 	pgpu_link_poll ();			/* replies that have come */
 	memset (status, 0, sizeof *status);
-	status->shown_pts = PGPU_VIDEO_TIME_NONE;
+	status->shown_pts = PGPU_MEDIA_TIME_NONE;
 	if (stream < 1 || stream > PGPU_MEDIA_STREAMS)
 	{
 		return 0;
 	}
 
-	uint32_t w[PGPU_VIDEO_STATUS_WORDS], seq;
+	uint32_t w[PGPU_MEDIA_STATUS_WORDS], seq;
 	do
 	{
-		while ((seq = LOAD (video_seq[stream])) & 1)
+		while ((seq = LOAD (media_seq[stream])) & 1)
 		{
 		}
-		for (int i = 0; i < PGPU_VIDEO_STATUS_WORDS; i++)
+		for (int i = 0; i < PGPU_MEDIA_STATUS_WORDS; i++)
 		{
-			w[i] = __atomic_load_n (&video_words[stream][i], __ATOMIC_RELAXED);
+			w[i] = __atomic_load_n (&media_words[stream][i], __ATOMIC_RELAXED);
 		}
 		__atomic_thread_fence (__ATOMIC_ACQUIRE);
 	}
-	while (__atomic_load_n (&video_seq[stream], __ATOMIC_RELAXED) != seq);
+	while (__atomic_load_n (&media_seq[stream], __ATOMIC_RELAXED) != seq);
 	if (!seq)
 	{
 		return 0;
@@ -92,18 +92,18 @@ uint32_t pgpu_video_get_status (uint32_t stream, pgpu_video_status_t *status)
 	return seq / 2;
 }
 
-uint32_t pgpu_video_room (uint32_t stream)
+uint32_t pgpu_media_room (uint32_t stream)
 {
-	pgpu_video_status_t st;
-	if (!pgpu_video_get_status (stream, &st) || !(st.flags & PGPU_VIDEO_OPEN_FLAG))
+	pgpu_media_status_t st;
+	if (!pgpu_media_get_status (stream, &st) || !(st.flags & PGPU_MEDIA_OPEN_FLAG))
 	{
 		return 0;
 	}
-	if (video_samples_sent[stream] - st.samples_done >= st.max_samples)
+	if (media_samples_sent[stream] - st.samples_done >= st.max_samples)
 	{
 		return 0;
 	}
-	uint32_t in_flight = video_bytes_sent[stream] - st.bytes_done;
+	uint32_t in_flight = media_bytes_sent[stream] - st.bytes_done;
 	return in_flight < st.ring_bytes ? st.ring_bytes - in_flight : 0;
 }
 
@@ -334,17 +334,17 @@ void pgpu_deliver_reply (uint8_t opcode, const uint32_t *payload, uint32_t lengt
 		}
 		return;
 	}
-	if (   opcode == PGPU_REPLY_VIDEO_STATUS && length >= PGPU_VIDEO_STATUS_WORDS
+	if (   opcode == PGPU_REPLY_MEDIA_STATUS && length >= PGPU_MEDIA_STATUS_WORDS
 	    && payload[0] >= 1 && payload[0] <= PGPU_MEDIA_STREAMS)
 	{
-		uint32_t stream = payload[0], seq = video_seq[stream];
-		STORE (video_seq[stream], seq + 1);
+		uint32_t stream = payload[0], seq = media_seq[stream];
+		STORE (media_seq[stream], seq + 1);
 		__atomic_thread_fence (__ATOMIC_RELEASE);
-		for (int i = 0; i < PGPU_VIDEO_STATUS_WORDS; i++)
+		for (int i = 0; i < PGPU_MEDIA_STATUS_WORDS; i++)
 		{
-			__atomic_store_n (&video_words[stream][i], payload[i], __ATOMIC_RELAXED);
+			__atomic_store_n (&media_words[stream][i], payload[i], __ATOMIC_RELAXED);
 		}
-		STORE (video_seq[stream], seq + 2);
+		STORE (media_seq[stream], seq + 2);
 		return;
 	}
 	if (opcode == PGPU_REPLY_STATUS && length >= 5)	/* (and queued, below) */
@@ -1221,7 +1221,7 @@ void pgpu_copy_tex_image (uint32_t texture, uint32_t level, uint32_t face, uint3
 	pgpu_end ();
 }
 
-/* ---- video (docs/protocol.md 7.12) ----------------------------------------------- */
+/* ---- media streams: video (docs/protocol.md 7.12) and audio (7.13) ----------- */
 
 void pgpu_video_open (uint32_t stream, uint32_t texture, uint32_t width, uint32_t height,
 		      uint32_t coded_width, uint32_t coded_height, const void *avcc, uint32_t avcc_bytes)
@@ -1253,15 +1253,15 @@ void pgpu_video_open (uint32_t stream, uint32_t texture, uint32_t width, uint32_
 	{
 		/* the RPi counts from 0 again; until its first status (the old
 		   stream's gone) there's no room */
-		video_bytes_sent[stream] = 0;
-		video_samples_sent[stream] = 0;
-		STORE (video_seq[stream], 0);
+		media_bytes_sent[stream] = 0;
+		media_samples_sent[stream] = 0;
+		STORE (media_seq[stream], 0);
 	}
 }
 
 /* whole sectors: with the padding, the header and the CRC, a packet fits in a
    staging buffer */
-#define VIDEO_CHUNK	((PGPU_STAGING_WORDS - PGPU_READ_ALIGN / 4 - 2 - PGPU_VIDEO_DATA_HEADER) * 4 \
+#define MEDIA_CHUNK	((PGPU_STAGING_WORDS - PGPU_READ_ALIGN / 4 - 2 - PGPU_MEDIA_DATA_HEADER) * 4 \
 			 / PGPU_READ_SECTOR * PGPU_READ_SECTOR)
 
 /* pgpu_begin, with idle words before the packet so that its payload word `at`
@@ -1282,43 +1282,43 @@ static uint32_t *begin_aligned (uint8_t opcode, uint32_t payload_words, uint32_t
 	return pgpu_begin (opcode, payload_words);
 }
 
-/* a sample in VIDEO_DATA packets, each packet's data from read (memory or a
+/* a sample in MEDIA_DATA packets, each packet's data from read (memory or a
    file: straight into the packet). With aligned: the first packet up to the
    file's next sector boundary (if the sample has a whole sector), then whole
    sectors into aligned packet data (see pgpu_read_t) */
-static bool video_sample (uint32_t stream, uint32_t flags, int64_t pts, uint32_t bytes,
+static bool media_sample (uint32_t stream, uint32_t flags, int64_t pts, uint32_t bytes,
 			  pgpu_read_t read, void *ctx, uint64_t offset, bool aligned)
 {
 	uint32_t done = 0;
 	bool ok = true;
 	do
 	{
-		uint32_t n = bytes - done < VIDEO_CHUNK ? bytes - done : VIDEO_CHUNK;
+		uint32_t n = bytes - done < MEDIA_CHUNK ? bytes - done : MEDIA_CHUNK;
 		uint32_t head = (uint32_t) (-offset % PGPU_READ_SECTOR);
 		if (aligned && done == 0 && head && head + PGPU_READ_SECTOR <= bytes)
 		{
 			n = head;			/* the partial sector alone */
 		}
-		uint32_t words = PGPU_VIDEO_DATA_HEADER + (n + 3) / 4;
-		uint32_t *p = aligned ? begin_aligned (PGPU_OP_VIDEO_DATA, words, PGPU_VIDEO_DATA_HEADER)
-				      : pgpu_begin (PGPU_OP_VIDEO_DATA, words);
+		uint32_t words = PGPU_MEDIA_DATA_HEADER + (n + 3) / 4;
+		uint32_t *p = aligned ? begin_aligned (PGPU_OP_MEDIA_DATA, words, PGPU_MEDIA_DATA_HEADER)
+				      : pgpu_begin (PGPU_OP_MEDIA_DATA, words);
 		p[0] = stream;
-		p[1] =   (flags & ~(PGPU_VIDEO_FIRST | PGPU_VIDEO_LAST))
-		       | (done == 0 ? PGPU_VIDEO_FIRST : 0)
-		       | (done + n == bytes ? PGPU_VIDEO_LAST : 0);
+		p[1] =   (flags & ~(PGPU_MEDIA_FIRST | PGPU_MEDIA_LAST))
+		       | (done == 0 ? PGPU_MEDIA_FIRST : 0)
+		       | (done + n == bytes ? PGPU_MEDIA_LAST : 0);
 		p[2] = (uint32_t) pts;
 		p[3] = (uint32_t) ((uint64_t) pts >> 32);
 		p[4] = n;
 		p[5] = bytes;					/* the whole sample's */
 		if (n)
 		{
-			p[PGPU_VIDEO_DATA_HEADER + (n + 3) / 4 - 1] = 0;	/* the last word's padding */
-			ok = read (ctx, offset + done, p + PGPU_VIDEO_DATA_HEADER, n);
+			p[PGPU_MEDIA_DATA_HEADER + (n + 3) / 4 - 1] = 0;	/* the last word's padding */
+			ok = read (ctx, offset + done, p + PGPU_MEDIA_DATA_HEADER, n);
 		}
 		if (!ok)
 		{
 			p[4] = 0;				/* this chunk empty, the sample unfinished */
-			p[1] &= ~PGPU_VIDEO_LAST;
+			p[1] &= ~PGPU_MEDIA_LAST;
 		}
 		pgpu_end ();
 		done += n;
@@ -1327,8 +1327,8 @@ static bool video_sample (uint32_t stream, uint32_t flags, int64_t pts, uint32_t
 
 	if (ok && stream >= 1 && stream <= PGPU_MEDIA_STREAMS)
 	{
-		video_bytes_sent[stream] += bytes;
-		video_samples_sent[stream]++;
+		media_bytes_sent[stream] += bytes;
+		media_samples_sent[stream]++;
 	}
 	return ok;
 }
@@ -1339,20 +1339,20 @@ static bool memory_read (void *ctx, uint64_t offset, void *buffer, uint32_t byte
 	return true;
 }
 
-void pgpu_video_sample (uint32_t stream, uint32_t flags, int64_t pts, const void *data, uint32_t bytes)
+void pgpu_media_sample (uint32_t stream, uint32_t flags, int64_t pts, const void *data, uint32_t bytes)
 {
-	video_sample (stream, flags, pts, bytes, memory_read, (void *) data, 0, false);
+	media_sample (stream, flags, pts, bytes, memory_read, (void *) data, 0, false);
 }
 
-bool pgpu_video_sample_read (uint32_t stream, uint32_t flags, int64_t pts, uint32_t bytes,
+bool pgpu_media_sample_read (uint32_t stream, uint32_t flags, int64_t pts, uint32_t bytes,
 			     pgpu_read_t read, void *ctx, uint64_t offset)
 {
-	return video_sample (stream, flags, pts, bytes, read, ctx, offset, true);
+	return media_sample (stream, flags, pts, bytes, read, ctx, offset, true);
 }
 
-void pgpu_video_control (uint32_t stream, uint32_t op, int64_t arg)
+void pgpu_media_control (uint32_t stream, uint32_t op, int64_t arg)
 {
-	uint32_t *p = pgpu_begin (PGPU_OP_VIDEO_CONTROL, 4);
+	uint32_t *p = pgpu_begin (PGPU_OP_MEDIA_CONTROL, 4);
 	p[0] = stream;
 	p[1] = op;
 	p[2] = (uint32_t) arg;
@@ -1362,41 +1362,41 @@ void pgpu_video_control (uint32_t stream, uint32_t op, int64_t arg)
 
 void pgpu_video_resize (uint32_t stream, uint32_t width, uint32_t height)
 {
-	pgpu_video_control (stream, PGPU_VIDEO_RESIZE, (int64_t) (width | height << 16));
+	pgpu_media_control (stream, PGPU_VIDEO_RESIZE, (int64_t) (width | height << 16));
 }
 
-void pgpu_video_request_status (uint32_t stream)	{ cmd1 (PGPU_OP_VIDEO_GET_STATUS, stream); }
+void pgpu_media_request_status (uint32_t stream)	{ cmd1 (PGPU_OP_MEDIA_GET_STATUS, stream); }
 
 /* ---- audio (docs/protocol.md 7.13) ----------------------------------------------- */
 
-void pgpu_audio_open (uint32_t video_stream, const void *asc, uint32_t asc_bytes)
+void pgpu_audio_open (uint32_t codec, uint32_t video_stream, const void *config, uint32_t config_bytes)
 {
-	if (!asc)
+	if (!config)
 	{
-		asc_bytes = 0;
+		config_bytes = 0;
 	}
-	uint32_t words = (asc_bytes + 3) / 4;
+	uint32_t words = (config_bytes + 3) / 4;
 	uint32_t *p = pgpu_begin (PGPU_OP_AUDIO_OPEN, PGPU_AUDIO_OPEN_WORDS + words);
 	if (!p)
 	{
 		return;
 	}
 	p[0] = PGPU_AUDIO_STREAM;
-	p[1] = PGPU_AUDIO_AAC;
+	p[1] = codec;
 	p[2] = video_stream;
-	p[3] = asc_bytes;
+	p[3] = config_bytes;
 	if (words)
 	{
 		p[PGPU_AUDIO_OPEN_WORDS + words - 1] = 0;
-		memcpy (p + PGPU_AUDIO_OPEN_WORDS, asc, asc_bytes);
+		memcpy (p + PGPU_AUDIO_OPEN_WORDS, config, config_bytes);
 	}
 	pgpu_end ();
-	video_bytes_sent[PGPU_AUDIO_STREAM] = 0;	/* (as pgpu_video_open) */
-	video_samples_sent[PGPU_AUDIO_STREAM] = 0;
-	STORE (video_seq[PGPU_AUDIO_STREAM], 0);
+	media_bytes_sent[PGPU_AUDIO_STREAM] = 0;	/* (as pgpu_video_open) */
+	media_samples_sent[PGPU_AUDIO_STREAM] = 0;
+	STORE (media_seq[PGPU_AUDIO_STREAM], 0);
 }
 
 void pgpu_audio_volume (uint32_t percent)
 {
-	pgpu_video_control (PGPU_AUDIO_STREAM, PGPU_AUDIO_VOLUME, percent);
+	pgpu_media_control (PGPU_AUDIO_STREAM, PGPU_AUDIO_VOLUME, percent);
 }

@@ -450,7 +450,12 @@ program wasn't compiled for it, the draw is reported as `ERROR` 10.
 | line width | 1 |
 | generic attributes | arrays disabled, current values (0, 0, 0, 1) |
 
-### 7.12 Video
+### 7.12 Media streams and video
+
+Three **media streams**: 1 and 2 are video, 3 is audio (§7.13). `VIDEO_OPEN`
+and `AUDIO_OPEN` open them; `MEDIA_DATA` (the samples), `MEDIA_CONTROL`,
+`MEDIA_GET_STATUS` and the `MEDIA_STATUS` reply serve all three, with the
+stream's id first.
 
 Video streams are decoded by the RPi's VideoCore into **video textures**:
 ordinary 2D textures (sampled by any program or the fixed function, on any
@@ -465,9 +470,9 @@ the GL frame rate.
 | Op | Name | Payload | Meaning |
 |---|---|---|---|
 | `0xC0` | VIDEO_OPEN | `u32 stream` (1 or 2), `u32 codec` (1 = H.264), `id texture`, `u16 width, u16 height`, `u16 coded_width, u16 coded_height`, `u32 format`, `u32 config_bytes`, `u8 config[config_bytes]` (padded to words) | The texture becomes (again) a video texture: RGBA, width × height (width a power of two, 32 … 2048; height a multiple of 16), one level, clamped (repeat and mirror work at power-of-two sizes), linear; black until the first frame. The stream is (re)opened for H.264 of the coded size, scaled to the texture (the whole picture: aspect is the drawing's business). Format 0 Annex B: samples with start codes, SPS and PPS in the stream (a CONFIG sample); format 1 AVCC: samples as MP4 stores them (NAL units with length prefixes), config the MP4's avcC (SPS and PPS, the length size). An open stream is closed first. |
-| `0xC1` | VIDEO_DATA | `u32 stream`, `u32 flags`, `s64 pts` (2 words, low first; microseconds), `u32 bytes` (in this packet), `u32 sample_bytes` (the whole sample's), `u8 data[bytes]` (padded to words) | A chunk of a **sample**: one access unit in decode order, in the stream's format. Flags: bit 0 FIRST chunk, bit 1 LAST chunk, bit 2 KEYFRAME, bit 3 CONFIG (SPS and PPS), bit 4 EOS (the stream's end; may have no data). A sample's chunks come in order, nothing of the stream between them; the pts and `sample_bytes` of the FIRST chunk count. A sample is taken whole or not at all (`LIMIT` for a sample that doesn't fit: its other chunks are then ignored). |
-| `0xC2` | VIDEO_CONTROL | `u32 stream`, `u32 op`, `s64 arg` | Op 1 PLAY: the clock runs from `arg` now (`0x8000000000000000`: from where it stands). Op 2 PAUSE: the clock stops (the texture keeps its frame). Op 3 CLOSE: the stream ends, the texture stays, black. Op 4 RESIZE: the texture becomes `arg` bits 15:0 wide, 31:16 high (the rules of `VIDEO_OPEN`), the stream goes on: the frames decoded and waiting are dropped, the ISP scales to the new size from the next one (for a screen that changed: the video keeps its place). |
-| `0xC3` | VIDEO_GET_STATUS | `u32 stream` | Replies `VIDEO_STATUS` (§9). |
+| `0xC1` | MEDIA_DATA | `u32 stream`, `u32 flags`, `s64 pts` (2 words, low first; microseconds), `u32 bytes` (in this packet), `u32 sample_bytes` (the whole sample's), `u8 data[bytes]` (padded to words) | A chunk of a **sample**: one access unit in decode order, in the stream's format. Flags: bit 0 FIRST chunk, bit 1 LAST chunk, bit 2 KEYFRAME, bit 3 CONFIG (SPS and PPS), bit 4 EOS (the stream's end; may have no data). A sample's chunks come in order, nothing of the stream between them; the pts and `sample_bytes` of the FIRST chunk count. A sample is taken whole or not at all (`LIMIT` for a sample that doesn't fit: its other chunks are then ignored). |
+| `0xC2` | MEDIA_CONTROL | `u32 stream`, `u32 op`, `s64 arg` | Op 1 PLAY: the clock runs from `arg` now (`0x8000000000000000`: from where it stands). Op 2 PAUSE: the clock stops (the texture keeps its frame). Op 3 CLOSE: the stream ends, the texture stays, black. Op 4 RESIZE: the texture becomes `arg` bits 15:0 wide, 31:16 high (the rules of `VIDEO_OPEN`), the stream goes on: the frames decoded and waiting are dropped, the ISP scales to the new size from the next one (for a screen that changed: the video keeps its place). |
+| `0xC3` | MEDIA_GET_STATUS | `u32 stream` | Replies `MEDIA_STATUS` (§9). |
 
 - **The clock:** without `PLAY` it starts when the first frame is shown, from
   that frame's pts. Frames whose time has passed are dropped for the newest
@@ -476,10 +481,10 @@ the GL frame rate.
   frame on screen (a gap: samples the host skipped or lost), the clock jumps
   to it, so the video never stops for a gap.
 - **Flow control:** the RPi holds 4 MB and 256 samples of a stream not yet
-  taken by its decoder. `VIDEO_STATUS` (every 100 ms while the stream is open,
+  taken by its decoder. `MEDIA_STATUS` (every 100 ms while the stream is open,
   and on request) says how many bytes and samples the decoder has taken since
   the open; the host sends a sample only if it fits in what's left
-  (`pgpu_video_room`, [host-library.md](host-library.md)). The video's data then never holds up the GL
+  (`pgpu_media_room`, [host-library.md](host-library.md)). The video's data then never holds up the GL
   commands behind it.
 - **Looping and seeking:** a stream is one clock: to loop, send the samples
   again with the times going on (the file's duration added); to jump, close
@@ -491,26 +496,29 @@ the GL frame rate.
 
 ### 7.13 Audio
 
-One **audio stream**, stream 3: AAC access units, decoded by the RPi and
-played on HDMI (when the monitor takes audio), mixed down to stereo. It can
+One **audio stream**, stream 3: AAC access units or MPEG audio frames (MP3),
+decoded by the RPi and played on HDMI (when the monitor takes audio), mixed
+down to stereo. It can
 be the clock of a video stream: that stream then shows the frame due at the
 time being heard, so picture and sound stay together.
 
 | Op | Name | Payload | Meaning |
 |---|---|---|---|
-| `0xC4` | AUDIO_OPEN | `u32 stream` (3), `u32 codec` (2 = AAC), `u32 video_stream` (0: none, or 1–2), `u32 config_bytes`, `u8 config[config_bytes]` (padded to words) | The stream is (re)opened for AAC with this AudioSpecificConfig (an MP4's esds has it): its samples are raw access units, as MP4 stores them. With a video stream, that stream's clock follows the sound from now on (without `PLAY`), and it shows its first frame until the sound starts. The volume is the RPi's default (its `volume=` option, 10%). `ENUM` for another codec or a configuration the decoder doesn't take. An open stream is closed first. |
+| `0xC4` | AUDIO_OPEN | `u32 stream` (3), `u32 codec` (2 = AAC, 3 = MP3), `u32 video_stream` (0: none, or 1–2), `u32 config_bytes`, `u8 config[config_bytes]` (padded to words) | The stream is (re)opened. Codec 2: AAC with this AudioSpecificConfig (an MP4's esds has it); its samples are raw access units, as MP4 stores them. Codec 3: MPEG-1, 2 or 2.5 audio, layer 3 (MP3), 2 or 1, config the first frame's 4-byte header (the sample rate and channels); its samples are whole frames, header first, as an MP3 file has them (without its ID3 tags or a Xing/Info frame); every frame at the first one's sample rate; not free format. With a video stream, that stream's clock follows the sound from now on (without `PLAY`), and it shows its first frame until the sound starts. The volume is the RPi's default (its `volume=` option, 10%). `ENUM` for another codec or a configuration the decoder doesn't take. An open stream is closed first. |
 
 The stream's other commands and its reply are a video stream's, with stream
 3:
 
-- `VIDEO_DATA`: a sample is one access unit (flags `FIRST`, `LAST`, `EOS`
-  as there; `KEYFRAME` and `CONFIG` are ignored); its `pts` is its first
-  frame's time.
-- `VIDEO_CONTROL`: `PLAY` (after a pause: the sound goes on; `arg` is
+- `MEDIA_DATA`: a sample is one access unit (an MP3 frame) (flags `FIRST`,
+  `LAST`, `EOS` as there; `KEYFRAME` and `CONFIG` are ignored); its `pts` is
+  its first frame's time. An MP3 frame's bit reservoir may start in the
+  frames before it, so the frames go in order; the first ones after the open
+  may give no sound.
+- `MEDIA_CONTROL`: `PLAY` (after a pause: the sound goes on; `arg` is
   ignored), `PAUSE` (silence; the sound, and so the video that follows it,
   stops), `CLOSE`, and op 5 `VOLUME`: `arg` the volume in percent, 0 … 100
   (from the next access unit).
-- `VIDEO_STATUS` (every 100 ms while it's open, and on `VIDEO_GET_STATUS`):
+- `MEDIA_STATUS` (every 100 ms while it's open, and on `MEDIA_GET_STATUS`):
   flags as a video stream's, and bits 15–8 the volume (percent); `bytes_done`, `ring_bytes`, `samples_done`,
   `max_samples` for flow control as there; `decoded`: access units decoded;
   `shown`: milliseconds of silence played because no sound was decoded yet
@@ -518,7 +526,7 @@ The stream's other commands and its reply are a video stream's, with stream
   `shown_pts`: the time being heard; `waiting`: milliseconds of sound decoded
   and waiting.
 - **Flow control** as a video stream's: 512 KB and 1024 samples not yet
-  decoded. The host sends both streams' samples in time order, as far ahead
+  decoded (MP3 at 44.1 kHz: 26 s). The host sends both streams' samples in time order, as far ahead
   as both allow.
 
 ---
@@ -538,7 +546,7 @@ The stream's other commands and its reply are a video stream's, with stream
 | `0x60`–`0x7F` | reserved for fixed-function additions |
 | `0x80`–`0x8F` | programs (§7.10) |
 | `0x90`–`0xBF` | reserved for program additions |
-| `0xC0`–`0xC7` | video (§7.12) and audio (§7.13) |
+| `0xC0`–`0xC7` | media streams: video (§7.12) and audio (§7.13) |
 | `0xC8`–`0xEF` | reserved |
 | `0xF0`–`0xFF` | debug and vendor |
 
@@ -561,7 +569,7 @@ A reply to a request uses the request's opcode (`GET_INFO` → `INFO`, `PING` �
 | `0x03` | PONG | `u32 cookie` | `PING` |
 | `0x04` | STATUS | `u32 frames`, `u32 crc_errors`, `u32 command_errors`, `u32 ring_free_bytes`, `u32 last_frame_us`, then the last measuring window (about a second): `u32 window_us`, `u32 window_frames`, `u32 v3d_busy_us` (binning and rendering), `u32 arm_busy_us` (receiving and executing commands, without the waits for the V3D and the panel), `u32 panel_wait_us` (for the panel DMA of the previous frame). Older Zeros send the first 5 words | `GET_STATUS` |
 | `0x05` | DISPLAY | `u32 output_flags`, `u16 width, u16 height`, `u16 monitor_width, u16 monitor_height`, `u32 monitor_refresh_mhz`, `u16 signal_width, u16 signal_height`, `u8 monitor_name[16]` (see below) | After each `INFO`, and whenever the screen or the HDMI monitor changes (§6.4) |
-| `0x06` | VIDEO_STATUS | `u32 stream`, `u32 flags` (bit 0 open, bit 1 playing, bit 2 ended: the EOS came out of the decoder, bit 3 error: a VideoCore component reported one), `u32 bytes_done`, `u32 ring_bytes`, `u32 decoded`, `u32 shown`, `u32 dropped` (frames), `s64 shown_pts` (2 words; `0x8000000000000000`: none), `u32 waiting` (decoded frames before their time), `u32 samples_done`, `u32 max_samples` | Every 100 ms while a stream is open, and `VIDEO_GET_STATUS`. `bytes_done` and `samples_done` count what the decoder has taken since `VIDEO_OPEN` (mod 2^32): the host may have `ring_bytes` and `max_samples` more in flight (§7.12) |
+| `0x06` | MEDIA_STATUS | `u32 stream`, `u32 flags` (bit 0 open, bit 1 playing, bit 2 ended: the EOS came out of the decoder, bit 3 error: a VideoCore component reported one), `u32 bytes_done`, `u32 ring_bytes`, `u32 decoded`, `u32 shown`, `u32 dropped` (frames), `s64 shown_pts` (2 words; `0x8000000000000000`: none), `u32 waiting` (decoded frames before their time), `u32 samples_done`, `u32 max_samples` | Every 100 ms while a stream is open, and `MEDIA_GET_STATUS`. `bytes_done` and `samples_done` count what the decoder has taken since the open (`VIDEO_OPEN`, `AUDIO_OPEN`; mod 2^32): the host may have `ring_bytes` and `max_samples` more in flight (§7.12) |
 | `0x11` | FRAME_DONE | `u32 frame_number`, `u32 render_us`, `u32 draws`, `u32 triangles` | After a frame whose `FRAME_END` had flag bit 0 set is handed to the panel |
 | `0x16` | PIXELS | `u32 offset`, `color pixels[1 … 61]` | `READ_PIXELS`: the pixels from `offset` (in pixels, rows bottom up), in as many replies as needed |
 | `0x7E` | CREDIT | `u32 bytes` | USB stream only (§13): the stream bytes the RPi has taken so far, since the session started |
