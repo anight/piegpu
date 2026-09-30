@@ -25,10 +25,11 @@
  * alpha is 0 it glows (its own light): the road's edges, the pads, the
  * screen, the roof's lights, the craft's engines, so the night is lit.
  *
- * At 1920x1080 the GPU's fill rate is the limit (as flight's): the sky is
- * drawn above the horizon only (the screen is cleared to the haze it meets
- * there), the stars in the sky's own pass, and the scenery's shader has no
- * dither.
+ * At 1920x1080 the GPU's fill rate is the limit (as flight's): everything
+ * is drawn near to far, the sky last (at the far plane, above the horizon
+ * only; the screen is cleared to the haze it meets there), so the V3D's early
+ * Z leaves what's hidden unshaded; the stars are in the sky's own pass, and
+ * the scenery's shader has no dither.
  */
 #include <math.h>
 #include <stdio.h>
@@ -456,7 +457,7 @@ static GLuint pad_texture (void)
 			if (x >= 12 && x <= 51)
 			{
 				int d = (int) (fabsf (x - 31.5f) * 0.9f);
-				int band = ((y - d) % 16 + 16) % 16;
+				int band = ((y + d) % 16 + 16) % 16;	/* (the tip at the largest v: pointing on) */
 				if (x == 12 || x == 51)
 				{
 					v_set (c, 0.95f, 0.80f, 0.10f);
@@ -534,7 +535,7 @@ static GLuint chevron_texture (void)
 	for (int y = 0; y < 32; y++)
 		for (int x = 0; x < 64; x++)
 		{
-			int band = ((int) (x - fabsf (y - 15.5f) * 0.9f) % 16 + 16) % 16;
+			int band = ((int) (x + fabsf (y - 15.5f) * 0.9f) % 16 + 16) % 16;	/* (the tip at the largest u: on) */
 			float c[4] = {0.06f, 0.06f, 0.07f, 1.0f};
 			if (y < 2 || y >= 30)
 				v_set (c, 0.85f, 0.85f, 0.85f);
@@ -706,7 +707,7 @@ static GLuint stars_texture (void)
 		{
 			float r = rnd2 (x, y, 15), b = 0.4f + 0.6f * rnd2 (x, y, 16);
 			float c[4] = {0, 0, 0, 0};
-			if (r > 0.992f)
+			if (r > 0.9975f)			/* (1 texel in 400) */
 				v_set (c, b, b, b * 1.1f);
 			put (64, x, y, c);
 		}
@@ -2128,10 +2129,77 @@ int main (void)
 		float sy = vpm[1] * sun[0] + vpm[5] * sun[1] + vpm[9] * sun[2];
 		float sw = vpm[3] * sun[0] + vpm[7] * sun[1] + vpm[11] * sun[2];
 
-		/* the haze below the horizon (a clear costs the GPU nothing), the sky
-		   above it */
+		/* near to far: the craft, the road, the scenery, the ground, then the
+		   sky, behind all of it; the V3D's early Z (gpu/geometry.cpp) rejects
+		   what's hidden before shading it. The screen is cleared to the haze,
+		   which the sky meets at the horizon (a clear costs the GPU nothing) */
 		glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-		glDisable (GL_DEPTH_TEST);
+		glEnable (GL_DEPTH_TEST);
+
+		/* the craft */
+		float models[CRAFTS][16];
+		frame_t frames[CRAFTS];
+		glUseProgram (cp);
+		glUniformMatrix4fv (c_vp, 1, GL_FALSE, vpm);
+		glUniform3fv (c_eye, 1, eye);
+		glActiveTexture (GL_TEXTURE0);
+		glBindBuffer (GL_ARRAY_BUFFER, mesh);
+		arrays (c_pos, c_normal, c_uv);
+		glVertexAttribPointer (c_pos, 3, GL_FLOAT, GL_FALSE, sizeof (craft_vertex_t), (void *) 0);
+		glVertexAttribPointer (c_normal, 3, GL_FLOAT, GL_FALSE, sizeof (craft_vertex_t), (void *) 12);
+		glVertexAttribPointer (c_uv, 2, GL_FLOAT, GL_FALSE, sizeof (craft_vertex_t), (void *) 24);
+		for (int i = 0; i < CRAFTS; i++)
+		{
+			craft_pose (&craft[i], t, models[i], &frames[i]);
+			glUniformMatrix4fv (c_model, 1, GL_FALSE, models[i]);
+			glBindTexture (GL_TEXTURE_2D, craft[i].texture);
+			glDrawArrays (GL_TRIANGLES, 0, craft_verts);
+		}
+
+		/* the road, its walls and deck, the scenery by it, the ground */
+		glUseProgram (sc.prog);
+		glUniformMatrix4fv (sc.vp, 1, GL_FALSE, vpm);
+		glUniformMatrix4fv (sc.model, 1, GL_FALSE, identity);
+		glUniform3fv (sc.eye, 1, eye);
+		glBindBuffer (GL_ARRAY_BUFFER, track);
+		scenery_pointers (&sc);
+		for (int r = 0; r < n_runs; r++)
+		{
+			glBindTexture (GL_TEXTURE_2D, runs[r].texture);
+			glDrawArrays (GL_TRIANGLE_STRIP, S_ROAD * strip_len + runs[r].first * TILE_RINGS * 2,
+				      (runs[r].tiles * TILE_RINGS + 1) * 2);
+		}
+		for (int side = 0; side < 2; side++)
+			for (int r = 0; r < n_wall_runs[side]; r++)
+			{
+				glBindTexture (GL_TEXTURE_2D, wall_runs[side][r].texture);
+				glDrawArrays (GL_TRIANGLE_STRIP, (side ? S_WALL_R : S_WALL_L) * strip_len
+					      + wall_runs[side][r].first * TILE_RINGS * 2, (wall_runs[side][r].tiles * TILE_RINGS + 1) * 2);
+			}
+		glBindTexture (GL_TEXTURE_2D, t_metal);
+		for (int strip = S_EDGE_L; strip <= S_EDGE_R; strip++)
+		{
+			glDrawArrays (GL_TRIANGLE_STRIP, strip * strip_len, strip_len);
+		}
+
+		glBindBuffer (GL_ARRAY_BUFFER, props);
+		scenery_pointers (&sc);
+		for (int part = 0; part < PARTS; part++)
+		{
+			if (part_count[part])
+			{
+				glBindTexture (GL_TEXTURE_2D, part_texture[part]);
+				glDrawArrays (GL_TRIANGLES, part_first[part], part_count[part]);
+			}
+		}
+
+		glBindBuffer (GL_ARRAY_BUFFER, ground);
+		glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, ground_index);
+		scenery_pointers (&sc);
+		glBindTexture (GL_TEXTURE_2D, t_ground);
+		glDrawElements (GL_TRIANGLES, GROUND_GRID * GROUND_GRID * 6, GL_UNSIGNED_SHORT, (void *) 0);
+
+		/* the sky above the horizon, at the far plane: only where nothing is */
 		float bottom = clampf (horizon - 0.02f, -1.0f, 1.0f);
 		if (bottom < 1.0f)
 		{
@@ -2166,74 +2234,12 @@ int main (void)
 				arrays (s_pos, -1, -1);
 				glVertexAttribPointer (s_pos, 2, GL_FLOAT, GL_FALSE, sizeof corners[0], (void *) 0);
 			}
+			glDepthMask (GL_FALSE);
 			glDrawArrays (GL_TRIANGLE_STRIP, 0, 4);
+			glDepthMask (GL_TRUE);
 		}
 
-		/* the scenery */
-		glEnable (GL_DEPTH_TEST);
-		glUseProgram (sc.prog);
-		glUniformMatrix4fv (sc.vp, 1, GL_FALSE, vpm);
-		glUniformMatrix4fv (sc.model, 1, GL_FALSE, identity);
-		glUniform3fv (sc.eye, 1, eye);
-		glActiveTexture (GL_TEXTURE0);
-		glBindBuffer (GL_ARRAY_BUFFER, ground);
-		glBindBuffer (GL_ELEMENT_ARRAY_BUFFER, ground_index);
-		scenery_pointers (&sc);
-		glBindTexture (GL_TEXTURE_2D, t_ground);
-		glDrawElements (GL_TRIANGLES, GROUND_GRID * GROUND_GRID * 6, GL_UNSIGNED_SHORT, (void *) 0);
-
-		glBindBuffer (GL_ARRAY_BUFFER, track);
-		scenery_pointers (&sc);
-		for (int r = 0; r < n_runs; r++)
-		{
-			glBindTexture (GL_TEXTURE_2D, runs[r].texture);
-			glDrawArrays (GL_TRIANGLE_STRIP, S_ROAD * strip_len + runs[r].first * TILE_RINGS * 2,
-				      (runs[r].tiles * TILE_RINGS + 1) * 2);
-		}
-		for (int side = 0; side < 2; side++)
-			for (int r = 0; r < n_wall_runs[side]; r++)
-			{
-				glBindTexture (GL_TEXTURE_2D, wall_runs[side][r].texture);
-				glDrawArrays (GL_TRIANGLE_STRIP, (side ? S_WALL_R : S_WALL_L) * strip_len
-					      + wall_runs[side][r].first * TILE_RINGS * 2, (wall_runs[side][r].tiles * TILE_RINGS + 1) * 2);
-			}
-		glBindTexture (GL_TEXTURE_2D, t_metal);
-		for (int strip = S_EDGE_L; strip <= S_EDGE_R; strip++)
-		{
-			glDrawArrays (GL_TRIANGLE_STRIP, strip * strip_len, strip_len);
-		}
-
-		glBindBuffer (GL_ARRAY_BUFFER, props);
-		scenery_pointers (&sc);
-		for (int part = 0; part < PARTS; part++)
-		{
-			if (part_count[part])
-			{
-				glBindTexture (GL_TEXTURE_2D, part_texture[part]);
-				glDrawArrays (GL_TRIANGLES, part_first[part], part_count[part]);
-			}
-		}
-
-		/* the craft */
-		float models[CRAFTS][16];
-		frame_t frames[CRAFTS];
-		glUseProgram (cp);
-		glUniformMatrix4fv (c_vp, 1, GL_FALSE, vpm);
-		glUniform3fv (c_eye, 1, eye);
-		glBindBuffer (GL_ARRAY_BUFFER, mesh);
-		arrays (c_pos, c_normal, c_uv);
-		glVertexAttribPointer (c_pos, 3, GL_FLOAT, GL_FALSE, sizeof (craft_vertex_t), (void *) 0);
-		glVertexAttribPointer (c_normal, 3, GL_FLOAT, GL_FALSE, sizeof (craft_vertex_t), (void *) 12);
-		glVertexAttribPointer (c_uv, 2, GL_FLOAT, GL_FALSE, sizeof (craft_vertex_t), (void *) 24);
-		for (int i = 0; i < CRAFTS; i++)
-		{
-			craft_pose (&craft[i], t, models[i], &frames[i]);
-			glUniformMatrix4fv (c_model, 1, GL_FALSE, models[i]);
-			glBindTexture (GL_TEXTURE_2D, craft[i].texture);
-			glDrawArrays (GL_TRIANGLES, 0, craft_verts);
-		}
-
-		/* their shadows, blended onto the road */
+		/* the craft's shadows, blended onto the road */
 		glUseProgram (sc.prog);
 		glBindBuffer (GL_ARRAY_BUFFER, shadow);
 		scenery_pointers (&sc);

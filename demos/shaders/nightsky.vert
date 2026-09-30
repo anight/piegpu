@@ -11,5 +11,5 @@ void main ()
 {
 	v_ndc = a_pos;
 	v_dir = a_dir;
-	gl_Position = vec4 (a_pos, 0.0, 1.0);
+	gl_Position = vec4 (a_pos, 0.99999, 1.0);	// at the far plane: drawn last, behind everything (antigrav)
 }
