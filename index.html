@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>piegpu installer</title>
+<style>
+:root
+{
+	--bg: #f6f7f9; --panel: #ffffff; --text: #1b1e24; --muted: #5d6573; --line: #d9dde4;
+	--accent: #2f6fdb; --accent-text: #ffffff; --ok: #1f8a4c; --warn: #b26a00; --bad: #c62f2f;
+	--code: #f0f2f5;
+}
+@media (prefers-color-scheme: dark)
+{
+	:root
+	{
+		--bg: #15171b; --panel: #1e2127; --text: #e6e8ec; --muted: #9aa2b1; --line: #343944;
+		--accent: #5b93f0; --accent-text: #0d1117; --ok: #45c07a; --warn: #e0a040; --bad: #f06c6c;
+		--code: #16181d;
+	}
+}
+*
+{
+	box-sizing: border-box;
+}
+body
+{
+	margin: 0; background: var(--bg); color: var(--text);
+	font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main
+{
+	max-width: 760px; margin: 0 auto; padding: 24px 16px 64px;
+}
+h1
+{
+	font-size: 24px; margin: 0 0 4px;
+}
+h2
+{
+	font-size: 17px; margin: 0 0 12px; display: flex; gap: 10px; align-items: center;
+}
+h2 .step
+{
+	display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
+	background: var(--accent); color: var(--accent-text); font-size: 13px;
+}
+.sub
+{
+	color: var(--muted); margin: 0 0 12px;
+}
+.sub b
+{
+	color: var(--text);
+}
+.note
+{
+	border-left: 3px solid var(--warn); padding: 6px 12px; margin: 0 0 20px;
+	background: var(--panel);
+}
+section
+{
+	background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+	padding: 18px; margin: 0 0 16px;
+}
+p
+{
+	margin: 0 0 10px;
+}
+.hint
+{
+	color: var(--muted); font-size: 14px;
+}
+button
+{
+	font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--text);
+	padding: 8px 14px; border-radius: 7px; cursor: pointer;
+}
+button.primary
+{
+	background: var(--accent); border-color: var(--accent); color: var(--accent-text);
+}
+button.danger
+{
+	border-color: var(--bad); color: var(--bad);
+}
+button:disabled
+{
+	opacity: 0.5; cursor: default;
+}
+h2 button.toggle
+{
+	margin-left: auto; padding: 4px 12px; font-size: 14px; font-weight: normal;
+}
+.buttons
+{
+	display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0 0;
+}
+fieldset
+{
+	border: 0; padding: 0; margin: 0 0 16px;
+}
+legend
+{
+	font-weight: 600; margin: 0 0 6px; padding: 0;
+}
+label.choice
+{
+	display: flex; gap: 8px; align-items: baseline; padding: 4px 0;
+}
+label.choice span
+{
+	color: var(--muted); font-size: 14px;
+}
+select, input[type=number]
+{
+	font: inherit; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px;
+	background: var(--panel); color: var(--text);
+}
+input[type=number]
+{
+	width: 90px;
+}
+.cvt
+{
+	display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0 0 24px;
+}
+details
+{
+	margin: 8px 0 0;
+}
+summary
+{
+	cursor: pointer; color: var(--muted);
+}
+pre
+{
+	background: var(--code); border: 1px solid var(--line); border-radius: 6px; padding: 10px;
+	overflow-x: auto; font: 13px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace; margin: 8px 0 0;
+	white-space: pre-wrap; word-break: break-all;
+}
+#log
+{
+	max-height: 280px; overflow-y: auto;
+}
+.status
+{
+	padding: 10px 12px; border-radius: 7px; border: 1px solid var(--line); margin: 12px 0 0;
+}
+.status.ok
+{
+	border-color: var(--ok); color: var(--ok);
+}
+.status.warn
+{
+	border-color: var(--warn); color: var(--warn);
+}
+.status.bad
+{
+	border-color: var(--bad); color: var(--bad);
+}
+.card-facts
+{
+	display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; margin: 0 0 6px;
+}
+.card-facts dt
+{
+	color: var(--muted);
+}
+.card-facts dd
+{
+	margin: 0;
+}
+.card-facts button.upgrade
+{
+	padding: 1px 10px; margin-left: 6px; font-size: 14px;
+	background: var(--accent); border-color: var(--accent); color: var(--accent-text);
+}
+progress
+{
+	width: 100%; height: 10px; margin: 10px 0 2px;
+}
+.panel
+{
+	border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; margin: 14px 0 0;
+}
+code
+{
+	font: 13px ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+a
+{
+	color: var(--accent);
+}
+[hidden]
+{
+	display: none !important;
+}
+</style>
+</head>
+<body>
+<main>
+	<h1>piegpu installer</h1>
+	<p class="sub">Puts piegpu on the Raspberry Pi's microSD card from this page. Step by
+		step, with what to do if something doesn't work: the
+		<a href="https://github.com/anight/piegpu/blob/main/docs/installation.md">installation guide</a>.<br><span id="version"></span></p>
+	<p class="note"><b>Supported for now: the Raspberry Pi Zero / Zero W and the Zero 2 W.</b></p>
+
+	<section id="unsupported" hidden>
+		<div class="status bad">This browser can't talk to USB devices: use Chrome or Edge on a
+			desktop computer (they have WebUSB and Web Serial). Here you can still prepare a card
+			in this computer's card reader, as a zip (Prepare a card).</div>
+	</section>
+
+	<section>
+		<h2><span class="step">1</span>Connect the RPi</h2>
+		<p><b>A new card:</b> put piegpu on it first. <b>Prepare a card</b> writes it onto the card
+			in this computer's card reader; with no card reader, start the RPi over USB (below).
+			<b>A card with piegpu:</b> connect the RPi's <b>USB</b> port (not PWR IN) to this
+			computer with a data cable, and press <b>Connect</b>
+			(<a href="https://github.com/anight/piegpu/blob/main/docs/installation.md#step-2-connect">step 2 of the guide</a>).</p>
+		<div class="buttons">
+			<button id="connect" class="primary">Connect</button>
+			<button id="prepare">Prepare a card</button>
+			<button id="reset" disabled>Reset</button>
+			<button id="continue" class="primary" hidden>Continue</button>
+		</div>
+		<div id="prepare-panel" class="panel" hidden>
+			<p>Put the microSD card in this computer's card reader. It must be <b>FAT32</b>: cards
+				up to 32 GB usually are; a bigger one (exFAT) needs formatting first
+				(<a href="https://github.com/anight/piegpu/blob/main/docs/installation.md#formatting-a-card-as-fat32">how</a>). Choose the board: the Zero 2 W's
+				big chip is marked RP3A0. The settings (section 3) go on the card too.
+				(<a href="https://github.com/anight/piegpu/blob/main/docs/installation.md#way-a-with-a-card-reader">Way A in the guide</a>.)</p>
+			<label>Board <select id="prepare-board">
+				<option value="" selected disabled>Choose the board…</option>
+				<option value="zero">Raspberry Pi Zero / Zero W</option>
+				<option value="zero2">Raspberry Pi Zero 2 W</option>
+			</select></label>
+			<div class="buttons">
+				<button id="prepare-write" class="primary" disabled>Choose the card and write</button>
+				<button id="prepare-zip" disabled>Download a .zip</button>
+			</div>
+			<progress id="prepare-progress" max="1" value="0" hidden></progress>
+			<div id="prepare-status" class="status" hidden></div>
+		</div>
+		<p class="hint" style="margin-top: 12px">
+			<b>Choose the card and write</b> writes the files straight onto the card (Chrome, Edge);
+			<b>Download a .zip</b> gives them to unpack onto the card (any browser).
+			<b>Reset</b> restarts a connected RPi from its card.</p>
+		<details id="usb-boot">
+			<summary>No card reader? Start a blank RPi over USB</summary>
+			<p class="hint">An RPi whose card is new or empty waits for this computer over USB,
+				and the page starts piegpu on it (a Zero or a Zero 2 W: the board takes its own
+				build); then Install piegpu writes its card. If the card holds another system
+				(Raspberry Pi OS, say), take it out first and put it back when the page asks. Once
+				per computer the browser needs access to the RPi's boot mode: on Linux
+				<code>sudo apt install rpiboot</code> (or a udev rule), on Windows the WinUSB driver
+				(<a href="https://github.com/anight/piegpu/blob/main/docs/installation.md#access-to-usb-devices">how</a>;
+				<a href="https://github.com/anight/piegpu/blob/main/docs/installation.md#way-b-without-a-card-reader">Way B in the guide</a>).</p>
+			<div class="buttons"><button id="boot">Start a blank RPi</button></div>
+		</details>
+		<div id="connect-status" class="status" hidden></div>
+	</section>
+
+	<section id="card-section" hidden>
+		<h2><span class="step">2</span>The board</h2>
+		<dl class="card-facts" id="card-facts"></dl>
+		<div id="card-status" class="status" hidden></div>
+		<div class="buttons">
+			<button id="card-retry" hidden>I've put the card in</button>
+			<button id="format" class="danger" hidden>Erase and format the card</button>
+		</div>
+	</section>
+
+	<section id="settings-section" hidden>
+		<h2><span class="step">3</span>Settings
+			<button id="settings-toggle" class="toggle" aria-expanded="false" aria-controls="settings-body">Show</button></h2>
+		<div id="settings-body" hidden>
+		<fieldset>
+			<legend>Host</legend>
+			<label class="choice"><input type="radio" name="host" value="auto">
+				Auto <span>a PC over USB once it connects, else a Pico or ESP32-P4 over I2S</span></label>
+			<label class="choice"><input type="radio" name="host" value="usb">
+				USB <span>only a PC</span></label>
+			<label class="choice"><input type="radio" name="host" value="i2s">
+				I2S <span>only a Pico or ESP32-P4 (a PC's GL commands are ignored)</span></label>
+		</fieldset>
+		<fieldset>
+			<legend>USB monitor</legend>
+			<label class="choice"><input type="radio" name="gud" value="off">
+				Off <span>no monitor for the PC (GL commands, the log and this page work as before)</span></label>
+			<label class="choice"><input type="radio" name="gud" value="on">
+				On <span>a Linux PC can show its desktop on the RPi's screen (GUD)</span></label>
+		</fieldset>
+		<fieldset>
+			<legend>Screen</legend>
+			<label class="choice"><input type="radio" name="output" value="auto">
+				Auto <span>HDMI while a monitor is connected, else the panel</span></label>
+			<label class="choice"><input type="radio" name="output" value="panel">
+				Panel <span>always the panel</span></label>
+			<label class="choice"><input type="radio" name="output" value="hdmi">
+				HDMI <span>always HDMI</span></label>
+		</fieldset>
+		<fieldset>
+			<legend>Panel</legend>
+			<label class="choice"><input type="radio" name="panel" value="auto">
+				Detect <span>the RPi reads the panel's ID at start (its SDO wired to pin 21)</span></label>
+			<label class="choice"><input type="radio" name="panel" value="yes">
+				Always there <span>for a panel without the SDO wire</span></label>
+			<label class="choice"><input type="radio" name="panel" value="none">
+				None <span>no panel: the screen stays on HDMI</span></label>
+		</fieldset>
+		<fieldset>
+			<legend>HDMI</legend>
+			<label class="choice"><input type="radio" name="hdmiMode" value="firmware">
+				The firmware chooses the mode <span>(it prefers TV modes, such as 720x576 at 50 Hz)</span></label>
+			<label class="choice"><input type="radio" name="hdmiMode" value="monitor">
+				The monitor's preferred computer mode</label>
+			<label class="choice"><input type="radio" name="hdmiMode" value="custom">
+				This mode:</label>
+			<div class="cvt">
+				<input type="number" id="cvtWidth" min="320" max="1920" step="2" aria-label="width"> x
+				<input type="number" id="cvtHeight" min="200" max="1200" step="2" aria-label="height"> at
+				<input type="number" id="cvtRate" min="24" max="75" aria-label="refresh rate"> Hz
+			</div>
+			<p style="margin-top: 10px">
+				<label>Screen size
+				<select id="hdmiPixels">
+					<option value="0">the monitor's own (up to 1920x1200)</option>
+					<option value="921600">at most 1280x720</option>
+					<option value="230400">at most 640x360 (faster)</option>
+				</select></label>
+			</p>
+		</fieldset>
+		<details>
+			<summary>The files these settings make</summary>
+			<pre id="preview-cmdline"></pre>
+			<pre id="preview-config"></pre>
+		</details>
+		</div>
+	</section>
+
+	<section id="actions-section" hidden>
+		<h2><span class="step">4</span>Actions</h2>
+		<div class="buttons">
+			<button id="install" class="primary" disabled>Install piegpu</button>
+			<button id="save-settings" disabled>Save the settings only</button>
+			<button id="run-gears" disabled>Test OpenGL</button>
+			<button id="test-video" disabled>Test Video</button>
+			<button id="test-audio" disabled>Test Audio</button>
+			<select id="test-audio-format" title="The format Test Audio plays">
+				<option value="mp3">MP3</option>
+				<option value="ogg">Ogg Vorbis</option>
+			</select>
+			<button id="stop-demo" hidden>Stop</button>
+			<label id="volume-control" hidden>Volume <input type="range" id="volume" min="0" max="100" step="5" value="10">
+				<span id="volume-value">10%</span></label>
+		</div>
+		<progress id="progress" max="1" value="0" hidden></progress>
+		<div id="action-status" class="status" hidden></div>
+		<p class="hint" style="margin-top: 12px">
+			<b>Install piegpu</b> writes the firmware and the settings above to the card, then
+			restarts the RPi from it; <b>Save the settings only</b> writes just the settings.
+			<b>Test OpenGL</b> runs gears (glxgears' three gears) on the RPi: the demo runs in this page
+			(WebAssembly) and sends its OpenGL ES commands over the serial port (it needs the Host
+			setting Auto or USB on the card). <b>Test Video</b> plays the Big Buck Bunny trailer (853x480
+			H.264; Blender Foundation, <a href="https://peach.blender.org/">CC BY 3.0</a>) the same
+			way, decoded by the RPi's VideoCore, with its sound (AAC) on an HDMI monitor that has
+			speakers. <b>Test Audio</b> plays an MP3 or an Ogg Vorbis file there (the format beside it),
+			decoded by the RPi: "Monkeys Spinning Monkeys" by Kevin MacLeod
+			(<a href="https://incompetech.com">incompetech.com</a>,
+			<a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>).
+			While a demo runs, the RPi takes commands from this page only; <b>Stop</b> ends
+			the demo's session, and the RPi answers this page again (older firmware restarts).</p>
+	</section>
+
+	<section>
+		<details id="log-details">
+			<summary>The RPi's log</summary>
+			<pre id="log"></pre>
+		</details>
+	</section>
+	<p class="hint">piegpu: BSD 2-Clause licence; its RPi firmware (the kernels) GPL-3.0, as it
+		links Circle and FAAD2: source at <a href="https://github.com/anight/piegpu">github.com/anight/piegpu</a>.
+		The Raspberry Pi's own firmware files: <a href="firmware/LICENCE.broadcom">Broadcom's
+		licence</a>.</p>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>
