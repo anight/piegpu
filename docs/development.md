@@ -263,6 +263,14 @@ ARM, played on HDMI through the VideoCore's audio service.
   panel, so the picture against the sound can't be timed).
 - **Volume:** `volume=` on the command line (percent, default 10), and
   `VOLUME` for a stream.
+- **Closing a stream** cancels the output (Circle's `Cancel`, which waits
+  for the chunks queued in the VideoCore to complete). The VideoCore can
+  report more completed than was written (seen after it ran dry, by 17232
+  bytes); Circle compared those counts unsigned, took the difference for a
+  queue that never ends, and waited for good: the watchdog restarted the RPi
+  (a jump in the media demo closes and opens the stream). piegpu's fork
+  compares them signed, and waits at most 500 ms, logging it if it has to
+  stop anyway.
 - **The VideoCore running dry** is flagged in its completion messages: bit
   30 of their byte count (undocumented; Circle's driver masked bits 31–30
   off, Linux's takes such a count as an underrun). piegpu's fork counts
