@@ -4,13 +4,18 @@
  * The file is cut into BLOCK-sized blocks; BLOCKS of them are kept in PSRAM
  * (DMA-capable and aligned, esp_dma_capable_malloc: the SD controller then
  * reads into them by DMA, SOC_SDMMC_PSRAM_DMA_CAPABLE). A read copies from the blocks it covers,
- * waiting for any that isn't there yet. The reads' places are followed by up
- * to CURSORS cursors: an MP4's interleaved samples make one, each of its
- * tracks' sample tables (six a track) one more. The task on core 1 keeps
- * each cursor's block loaded, and for a cursor that streams (it has moved on
- * to a next block twice within STREAM_US: the samples; a table's cursor moves
- * on every few minutes) the AHEAD blocks after it; the block a read waits
- * for first. A block in use or in a cursor's window isn't replaced, but for
+ * waiting for any that isn't there yet. The places of the samples' reads
+ * (reads of more than SAMPLE_BYTES: an MP4's sample tables are read 256 bytes
+ * at a time, and only kept, the least recently used going first) are
+ * followed by up to CURSORS cursors: an MP4's interleaved samples make one. The
+ * task on core 1 keeps each cursor's block loaded, and for a cursor that
+ * streams (it has moved on to a next block twice within STREAM_US) the AHEAD
+ * blocks after it; the block a read waits for first. Only a cursor read from
+ * within ACTIVE_US keeps anything: one left behind (a jump, or the samples of
+ * two tracks moving apart) lets its blocks go. (Cursors kept for good, and the
+ * tables' reads followed too, filled every block with their windows after
+ * some jumps or half an hour of a film, and reads waited for block after
+ * block.) A block in use or in a cursor's window isn't replaced, but for
  * the block a read waits for, which always gets one: else a read could wait
  * for nothing (once the windows took every block, 25 minutes into a film). The task has the file to itself (its own descriptor); the demo's
  * thread only copies.
@@ -35,6 +40,8 @@
 #define WAIT_US		5000000			/* the most a read waits for its block */
 #define SLOW_LOAD_US	50000			/* a block's load counted as slow (normal: 16 ms) */
 #define STREAM_US	20000000		/* two moves on within this: a cursor streams */
+#define SAMPLE_BYTES	512			/* reads of more: samples, which cursors follow */
+#define ACTIVE_US	3000000			/* a cursor read from within this keeps its blocks */
 
 enum {EMPTY, LOADING, READY, FAILED};
 
@@ -54,6 +61,7 @@ typedef struct
 	int64_t block;				/* -1: unused */
 	uint32_t used;
 	uint64_t moved_us;			/* when it last moved on to a next block */
+	uint64_t used_us;			/* when a read last followed it */
 	bool streaming;				/* it moved on twice within STREAM_US */
 } cursor_t;
 
@@ -91,7 +99,13 @@ static int find (reader_t *r, int64_t block)
 	return -1;
 }
 
-/* a block a read waits for or a cursor keeps loaded */
+/* a cursor read from lately */
+static bool active (const cursor_t *k)
+{
+	return k->block >= 0 && now_us () - k->used_us < ACTIVE_US;
+}
+
+/* a block a read waits for or an active cursor keeps loaded */
 static bool needed (reader_t *r, int64_t block)
 {
 	if (block == r->want)
@@ -101,7 +115,7 @@ static bool needed (reader_t *r, int64_t block)
 	for (int c = 0; c < CURSORS; c++)
 	{
 		const cursor_t *k = &r->cursor[c];
-		if (k->block >= 0 && block >= k->block && block <= k->block + (k->streaming ? AHEAD : 0))
+		if (active (k) && block >= k->block && block <= k->block + (k->streaming ? AHEAD : 0))
 		{
 			return true;
 		}
@@ -123,7 +137,7 @@ static int64_t next_load (reader_t *r)
 		int best = -1;
 		for (int c = 0; c < CURSORS; c++)
 		{
-			if (!done[c] && r->cursor[c].block >= 0 && (best < 0 || r->cursor[c].used > r->cursor[best].used))
+			if (!done[c] && active (&r->cursor[c]) && (best < 0 || r->cursor[c].used > r->cursor[best].used))
 			{
 				best = c;
 			}
@@ -262,6 +276,7 @@ static void follow (reader_t *r, int64_t block)
 		}
 	}
 	k->used = ++r->clock;
+	k->used_us = now_us ();
 }
 
 static bool media_read (void *ctx, uint64_t offset, void *buffer, uint32_t bytes)
@@ -282,7 +297,10 @@ static bool media_read (void *ctx, uint64_t offset, void *buffer, uint32_t bytes
 		uint32_t n = BLOCK - in < bytes ? BLOCK - in : bytes;
 
 		xSemaphoreTake (r->lock, portMAX_DELAY);
-		follow (r, block);
+		if (total > SAMPLE_BYTES)
+		{
+			follow (r, block);
+		}
 		int i;
 		while ((i = find (r, block)) < 0 || r->slot[i].state == LOADING)
 		{

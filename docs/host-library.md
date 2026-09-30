@@ -141,13 +141,18 @@ The host library (`libpgpu/`, board independent) has two layers:
   - **So the P4 reads ahead** (`hosts/esp32p4/main/media_reader.c`,
     `PGPU_MEDIA_READER`): the file in 256 KB blocks, 32 of them (8 MB) in
     PSRAM, loaded by DMA (the P4's SD controller reads into PSRAM) by a task
-    on core 1; a read copies from them. Cursors follow the reads (the
-    interleaved samples, each sample table), and a cursor that moves on to
-    the next block (the samples) keeps the 4 blocks after it loaded; a table's
-    cursor keeps its own block. 15 minutes of that film: 3 stalls (24 block
+    on core 1; a read copies from them. Cursors follow the samples' reads
+    (more than 512 bytes; the sample tables, read 256 bytes at a time, are
+    only kept, least recently used first); a cursor that moves on to a next
+    block twice within 20 s keeps the 4 blocks after it loaded, and only a
+    cursor read from within 3 s keeps anything. (Cursors kept for good
+    filled every block with their windows after some jumps, or about half an
+    hour into the film, and reads then waited for block after block.) 15 minutes of that film: 3 stalls (24 block
     loads of 56–93 ms), 0 reads waiting on them, 0 ms of silence, 35–46 fps
     through them (1–6 frames dropped a 5 s window); blocks loaded match the
-    bytes read (1 of 399 loaded for nothing in 5 minutes). What still drops
+    bytes read (1 of 399 loaded for nothing in 5 minutes). From 26:37 to
+    30:36 of the film (where it used to fall apart): 285 blocks loaded for
+    280 blocks' worth read, 4 waits (69 ms), 0 ms of silence. What still drops
     is the film's busiest stretch (106–126 s: the link, below).
   - **The link is the limit on the P4:** its chip (revision v1.0) runs I2S
     from the APLL, at most 125 MHz, divided by 2 to MCLK and by 2 again to
