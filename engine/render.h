@@ -5,7 +5,10 @@
  * colours, RGB565, mipmapped by the GPU), the faces' lightmaps packed into
  * atlas pages (a texel of padding round each, copied from its edge, so the
  * filtering never mixes two faces), and every face as triangles in one vertex
- * buffer, grouped by model, texture and lightmap page (a batch each). A frame
+ * buffer, grouped by model, texture and lightmap page (a batch each). The
+ * level is read where it is (in flash on a microcontroller): what's sent is
+ * made a little at a time (a lightmap's block, a few rows of a texture, some
+ * vertices), and what's kept is small (16-bit indices, a bit a face). A frame
  * is then the host's work only: the leaves the eye's leaf can see (the PVS),
  * those in the view (their boxes against the frustum), their faces facing the
  * eye; each batch's such faces as few draws as their runs in the buffer.
@@ -37,15 +40,10 @@ typedef struct
 
 typedef struct
 {
-	int model, texture, page, kind;
-	int first_face, faces;			/* in render_t.order */
+	uint16_t model, texture;
+	uint8_t page, kind;
+	uint16_t first_face, faces;		/* in render_t.order */
 } render_batch_t;
-
-typedef struct
-{
-	int first, count;			/* vertices */
-	unsigned frame;				/* marked visible in this frame */
-} render_face_t;
 
 typedef struct
 {
@@ -62,14 +60,14 @@ typedef struct
 	float (*hazes)[3];			/* a sky's back layer's colour, on average */
 	GLuint pages[RENDER_MAX_PAGES];
 	int n_pages;
-	render_face_t *faces;			/* by the BSP's face index */
-	int *order;				/* face indices, batch by batch */
+	uint16_t *first;			/* a face's first vertex, by the BSP's face index */
+	uint8_t *shown;				/* the faces to draw this frame: a bit each */
+	uint16_t *order;			/* face indices, batch by batch */
 	render_batch_t *batches;
 	int n_batches;
-	int *model_batches;			/* a model's first batch; [n_models] the end */
+	uint16_t *model_batches;		/* a model's first batch; [n_models] the end */
 	uint8_t *pvs;
 	int pvs_leaf;				/* the leaf pvs is for */
-	unsigned frame;
 	float time;				/* seconds: the liquids' and the sky's (the caller's to set) */
 	float eye[3];				/* the last render_world's */
 	render_stats_t stats;

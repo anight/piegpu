@@ -64,7 +64,6 @@ typedef struct
 typedef struct
 {
 	float origin[3];
-	char classname[32];
 	bool taken;
 } game_item_t;
 

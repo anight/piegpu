@@ -33,7 +33,6 @@ typedef struct
 typedef struct
 {
 	const bsp_t *bsp;
-	bsp_clipnode_t *hull0;			/* the render tree as clip nodes (leaves: their contents) */
 	collide_solid_t solids[COLLIDE_MAX_SOLIDS];	/* the brush models that block */
 	int n_solids;
 } collide_t;

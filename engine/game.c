@@ -33,10 +33,10 @@ static float vdot (const float *a, const float *b)	{ return a[0] * b[0] + a[1] *
 static bool find_target (const bsp_t *b, const char *name, bsp_entity_t *out)
 {
 	const char *cursor = NULL;
-	while (name && bsp_entity_next (b, &cursor, out))
+	char t[BSP_VALUE];
+	while (name[0] && bsp_entity_next (b, &cursor, out))
 	{
-		const char *t = bsp_entity_value (out, "targetname");
-		if (t && strcmp (t, name) == 0)
+		if (bsp_entity_value (out, "targetname", t) && strcmp (t, name) == 0)
 		{
 			return true;
 		}
@@ -46,8 +46,8 @@ static bool find_target (const bsp_t *b, const char *name, bsp_entity_t *out)
 
 static void add_mover (game_t *g, const bsp_entity_t *e, int kind)
 {
-	const char *m = bsp_entity_value (e, "model");
-	if (!m || m[0] != '*' || g->n_movers >= GAME_MAX_MOVERS)
+	char m[BSP_VALUE];
+	if (!bsp_entity_value (e, "model", m) || m[0] != '*' || g->n_movers >= GAME_MAX_MOVERS)
 	{
 		return;
 	}
@@ -60,29 +60,24 @@ static void add_mover (game_t *g, const bsp_entity_t *e, int kind)
 		return;
 	}
 	v->kind = kind;
-	const char *s = bsp_entity_value (e, "speed");
-	v->speed = s ? (float) atof (s) : kind == GAME_PLAT ? 150.0f : 100.0f;
-	s = bsp_entity_value (e, "wait");
-	v->wait = s ? (float) atof (s) : 3.0f;
+	v->speed = bsp_entity_float (e, "speed", kind == GAME_PLAT ? 150.0f : 100.0f);
+	v->wait = bsp_entity_float (e, "wait", 3.0f);
 	const bsp_model_t *bm = &g->bsp->models[v->model];
 	if (kind == GAME_TRAIN)		/* round its corners: its mins at each */
 	{
 		bsp_entity_t c;
-		const char *first = bsp_entity_value (e, "target");
-		static char name[64];
-		snprintf (name, sizeof name, "%s", first ? first : "");
+		char first[BSP_VALUE], name[BSP_VALUE];
+		bsp_entity_value (e, "target", first);
+		memcpy (name, first, sizeof name);
 		while (v->corners < GAME_MAX_PATH && find_target (g->bsp, name, &c))
 		{
-			float o[3];
+			float o[3] = {0, 0, 0};
 			bsp_entity_vector (&c, "origin", o);
 			for (int k = 0; k < 3; k++)
 				v->path[v->corners][k] = o[k] - bm->mins[k];
-			s = bsp_entity_value (&c, "wait");
-			v->waits[v->corners++] = s ? (float) atof (s) : 0.0f;
-			s = bsp_entity_value (&c, "target");
-			if (!s || (first && strcmp (s, first) == 0))
+			v->waits[v->corners++] = bsp_entity_float (&c, "wait", 0.0f);
+			if (!bsp_entity_value (&c, "target", name) || strcmp (name, first) == 0)
 				break;
-			snprintf (name, sizeof name, "%s", s);
 		}
 		if (v->corners < 2)
 		{
@@ -94,15 +89,13 @@ static void add_mover (game_t *g, const bsp_entity_t *e, int kind)
 	}
 	else if (kind == GAME_PLAT)	/* drawn at the top; starts at the bottom */
 	{
-		s = bsp_entity_value (e, "height");
-		float h = s ? (float) atof (s) : bm->maxs[2] - bm->mins[2] - 8;
+		float h = bsp_entity_float (e, "height", bm->maxs[2] - bm->mins[2] - 8);
 		vset (v->pos[0], 0, 0, -h);
 		vset (v->pos[1], 0, 0, 0);
 	}
 	else				/* drawn closed; opens along its angle by its size less lip */
 	{
-		s = bsp_entity_value (e, "angle");
-		float angle = s ? (float) atof (s) : 0.0f, dir[3];
+		float angle = bsp_entity_float (e, "angle", 0.0f), dir[3];
 		if (angle == -1.0f)
 			vset (dir, 0, 0, 1);
 		else if (angle == -2.0f)
@@ -110,8 +103,7 @@ static void add_mover (game_t *g, const bsp_entity_t *e, int kind)
 		else
 			vset (dir, cosf (angle * 3.14159265f / 180), sinf (angle * 3.14159265f / 180), 0);
 		float size[3] = {bm->maxs[0] - bm->mins[0], bm->maxs[1] - bm->mins[1], bm->maxs[2] - bm->mins[2]};
-		s = bsp_entity_value (e, "lip");
-		float lip = s ? (float) atof (s) : 8.0f;
+		float lip = bsp_entity_float (e, "lip", 8.0f);
 		float dist = fabsf (dir[0]) * size[0] + fabsf (dir[1]) * size[1] + fabsf (dir[2]) * size[2] - lip;
 		vset (v->pos[0], 0, 0, 0);
 		vset (v->pos[1], dir[0] * dist, dir[1] * dist, dir[2] * dist);
@@ -225,13 +217,14 @@ static void update_mover (game_t *g, game_mover_t *v, float dt)
 
 static void add_trigger (game_t *g, const bsp_entity_t *e, int kind)
 {
-	const char *m = bsp_entity_value (e, "model");
+	char m[BSP_VALUE], target[BSP_VALUE];
 	bsp_entity_t t;
-	if (!m || m[0] != '*' || g->n_triggers >= GAME_MAX_TRIGGERS || atoi (m + 1) >= g->bsp->n_models)
+	if (!bsp_entity_value (e, "model", m) || m[0] != '*' || g->n_triggers >= GAME_MAX_TRIGGERS || atoi (m + 1) >= g->bsp->n_models)
 	{
 		return;
 	}
-	if (!find_target (g->bsp, bsp_entity_value (e, "target"), &t))
+	bsp_entity_value (e, "target", target);
+	if (!find_target (g->bsp, target, &t))
 	{
 		printf ("game: a %s without its target\n", kind == GAME_PUSH ? "trigger_push" : "trigger_teleport");
 		return;
@@ -243,8 +236,7 @@ static void add_trigger (game_t *g, const bsp_entity_t *e, int kind)
 	memcpy (tr->mins, bm->mins, sizeof tr->mins);
 	memcpy (tr->maxs, bm->maxs, sizeof tr->maxs);
 	bsp_entity_vector (&t, "origin", tr->target);
-	const char *a = bsp_entity_value (&t, "angle");
-	tr->yaw = a ? (float) atof (a) * 3.14159265f / 180 : 0.0f;
+	tr->yaw = bsp_entity_float (&t, "angle", 0.0f) * 3.14159265f / 180;
 }
 
 /* the triggers the player's box is in: thrown, teleported */
@@ -293,23 +285,21 @@ bool game_init (game_t *g, const bsp_t *b)
 	const char *cursor = NULL;
 	bsp_entity_t e;
 	bool start = false;
+	char cls[BSP_VALUE];
 	while (bsp_entity_next (b, &cursor, &e))
 	{
-		const char *cls = bsp_entity_value (&e, "classname");
-		if (!cls)
+		if (!bsp_entity_value (&e, "classname", cls))
 		{
 			continue;
 		}
 		if (strcmp (cls, "info_player_start") == 0 && bsp_entity_vector (&e, "origin", g->start))
 		{
-			const char *a = bsp_entity_value (&e, "angle");
-			g->start_yaw = a ? (float) atof (a) * 3.14159265f / 180 : 0.0f;
+			g->start_yaw = bsp_entity_float (&e, "angle", 0.0f) * 3.14159265f / 180;
 			start = true;
 		}
 		else if (strncmp (cls, "item_", 5) == 0 && g->n_items < GAME_MAX_ITEMS
 			 && bsp_entity_vector (&e, "origin", g->items[g->n_items].origin))
 		{
-			snprintf (g->items[g->n_items].classname, sizeof g->items[0].classname, "%s", cls);
 			g->n_items++;
 		}
 		else if (strcmp (cls, "func_door") == 0)

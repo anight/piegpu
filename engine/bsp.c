@@ -180,49 +180,57 @@ static const char *token (const char *p, const char *end, char *out, size_t max,
 bool bsp_entity_next (const bsp_t *b, const char **cursor, bsp_entity_t *e)
 {
 	const char *p = *cursor ? *cursor : b->entities, *end = b->entities + b->entities_size;
-	char t[64];
+	char t[BSP_VALUE];
 	bool q;
-	memset (e, 0, sizeof *e);
 	if (!(p = token (p, end, t, sizeof t, &q)) || q || t[0] != '{')
 	{
 		return false;
 	}
+	e->start = p;
 	while ((p = token (p, end, t, sizeof t, &q)) != NULL)
 	{
 		if (!q && t[0] == '}')
 		{
+			e->end = p;
 			*cursor = p;
 			return true;
 		}
-		char value[64];
-		if (!(p = token (p, end, value, sizeof value, &q)))
+		if (!(p = token (p, end, t, sizeof t, &q)))		/* (its value) */
 		{
 			break;
-		}
-		if (e->pairs < BSP_MAX_PAIRS)
-		{
-			snprintf (e->key[e->pairs], sizeof e->key[0], "%s", t);
-			snprintf (e->value[e->pairs], sizeof e->value[0], "%s", value);
-			e->pairs++;
 		}
 	}
 	return false;
 }
 
-const char *bsp_entity_value (const bsp_entity_t *e, const char *key)
+bool bsp_entity_value (const bsp_entity_t *e, const char *key, char out[BSP_VALUE])
 {
-	for (int i = 0; i < e->pairs; i++)
+	const char *p = e->start;
+	char k[BSP_VALUE];
+	bool q;
+	while ((p = token (p, e->end, k, sizeof k, &q)) != NULL && q)
 	{
-		if (strcmp (e->key[i], key) == 0)
+		if (!(p = token (p, e->end, out, BSP_VALUE, &q)))
 		{
-			return e->value[i];
+			break;
+		}
+		if (strcmp (k, key) == 0)
+		{
+			return true;
 		}
 	}
-	return NULL;
+	out[0] = '\0';
+	return false;
+}
+
+float bsp_entity_float (const bsp_entity_t *e, const char *key, float fallback)
+{
+	char v[BSP_VALUE];
+	return bsp_entity_value (e, key, v) ? (float) atof (v) : fallback;
 }
 
 bool bsp_entity_vector (const bsp_entity_t *e, const char *key, float v[3])
 {
-	const char *s = bsp_entity_value (e, key);
-	return s && sscanf (s, "%f %f %f", &v[0], &v[1], &v[2]) == 3;
+	char s[BSP_VALUE];
+	return bsp_entity_value (e, key, s) && sscanf (s, "%f %f %f", &v[0], &v[1], &v[2]) == 3;
 }

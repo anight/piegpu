@@ -10,31 +10,35 @@
 
 #define DIST_EPSILON	0.03125f	/* stop this far in front of a plane */
 
+/* a hull's tree: hull 0 the render tree (its leaves' contents), the others
+   clip nodes (their contents in place of leaves); both read in the file */
 typedef struct
 {
-	const bsp_clipnode_t *nodes;
-	const bsp_plane_t *planes;
+	const bsp_t *bsp;
+	bool render;				/* hull 0 */
 	int head;
 } hull_t;
+
+static const bsp_plane_t *node_plane (const hull_t *h, int num)
+{
+	return &h->bsp->planes[h->render ? h->bsp->nodes[num].plane : h->bsp->clipnodes[num].plane];
+}
+
+/* a node's child: a node (>= 0), else contents */
+static int node_child (const hull_t *h, int num, int side)
+{
+	if (!h->render)
+	{
+		return h->bsp->clipnodes[num].children[side];
+	}
+	int c = h->bsp->nodes[num].children[side];
+	return c >= 0 ? c : h->bsp->leaves[-1 - c].contents;
+}
 
 bool collide_init (collide_t *c, const bsp_t *b)
 {
 	memset (c, 0, sizeof *c);
 	c->bsp = b;
-	c->hull0 = malloc (b->n_nodes * sizeof *c->hull0);
-	if (!c->hull0)
-	{
-		return false;
-	}
-	for (int i = 0; i < b->n_nodes; i++)
-	{
-		c->hull0[i].plane = b->nodes[i].plane;
-		for (int k = 0; k < 2; k++)
-		{
-			int child = b->nodes[i].children[k];
-			c->hull0[i].children[k] = (int16_t) (child >= 0 ? child : b->leaves[-1 - child].contents);
-		}
-	}
 	return true;
 }
 
@@ -61,7 +65,7 @@ void collide_move_solid (collide_t *c, int solid, const float offset[3])
 
 static hull_t hull_of (const collide_t *c, int model, int hull)
 {
-	hull_t h = {hull == 0 ? c->hull0 : c->bsp->clipnodes, c->bsp->planes, c->bsp->models[model].headnode[hull]};
+	hull_t h = {c->bsp, hull == 0, c->bsp->models[model].headnode[hull]};
 	return h;
 }
 
@@ -75,8 +79,7 @@ static int point_contents (const hull_t *h, int num, const float p[3])
 {
 	while (num >= 0)
 	{
-		const bsp_clipnode_t *n = &h->nodes[num];
-		num = n->children[plane_dist (&h->planes[n->plane], p) < 0.0f];
+		num = node_child (h, num, plane_dist (node_plane (h, num), p) < 0.0f);
 	}
 	return num;
 }
@@ -96,16 +99,15 @@ static bool trace_node (const hull_t *h, int num, float f1, float f2, const floa
 		}
 		return true;
 	}
-	const bsp_clipnode_t *n = &h->nodes[num];
-	const bsp_plane_t *pl = &h->planes[n->plane];
+	const bsp_plane_t *pl = node_plane (h, num);
 	float d1 = plane_dist (pl, p1), d2 = plane_dist (pl, p2);
 	if (d1 >= 0.0f && d2 >= 0.0f)
 	{
-		return trace_node (h, n->children[0], f1, f2, p1, p2, t);
+		return trace_node (h, node_child (h, num, 0), f1, f2, p1, p2, t);
 	}
 	if (d1 < 0.0f && d2 < 0.0f)
 	{
-		return trace_node (h, n->children[1], f1, f2, p1, p2, t);
+		return trace_node (h, node_child (h, num, 1), f1, f2, p1, p2, t);
 	}
 
 	/* it crosses the plane: the near side first, then the far one */
@@ -117,13 +119,13 @@ static bool trace_node (const hull_t *h, int num, float f1, float f2, const floa
 		mid[k] = p1[k] + frac * (p2[k] - p1[k]);
 	}
 	int side = d1 < 0.0f;
-	if (!trace_node (h, n->children[side], f1, fm, p1, mid, t))
+	if (!trace_node (h, node_child (h, num, side), f1, fm, p1, mid, t))
 	{
 		return false;
 	}
-	if (point_contents (h, n->children[side ^ 1], mid) != BSP_CONTENTS_SOLID)
+	if (point_contents (h, node_child (h, num, side ^ 1), mid) != BSP_CONTENTS_SOLID)
 	{
-		return trace_node (h, n->children[side ^ 1], fm, f2, mid, p2, t);
+		return trace_node (h, node_child (h, num, side ^ 1), fm, f2, mid, p2, t);
 	}
 	if (t->all_solid)
 	{

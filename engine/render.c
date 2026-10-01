@@ -28,13 +28,39 @@ static int kind_of (const char *name)
 	       : strncmp (name, "light", 5) == 0 ? KIND_BRIGHT : KIND_LIT;
 }
 
-static GLuint upload (const void *texels, int w, int h, GLenum format, GLenum type)
+#define ROWS_BYTES	2048		/* a texture's rows converted at a time */
+
+/* a texture from 8-bit texels (w x h of them at src, stride bytes a row):
+   RGB565, or RGBA5551 see-through where colour 0; a few rows at a time */
+static GLuint upload (const uint8_t *src, uint32_t stride, uint32_t w, uint32_t h, bool see_through)
 {
+	GLenum format = see_through ? GL_RGBA : GL_RGB, type = see_through ? GL_UNSIGNED_SHORT_5_5_5_1 : GL_UNSIGNED_SHORT_5_6_5;
+	uint32_t rows = ROWS_BYTES / (w * 2);
+	rows = rows < 1 ? 1 : rows > h ? h : rows;
+	uint16_t *texels = malloc (w * rows * 2);
+	if (!texels)
+	{
+		return 0;
+	}
 	GLuint t;
 	glGenTextures (1, &t);
 	glBindTexture (GL_TEXTURE_2D, t);
 	glPixelStorei (GL_UNPACK_ALIGNMENT, 2);
-	glTexImage2D (GL_TEXTURE_2D, 0, format, w, h, 0, format, type, texels);
+	glTexImage2D (GL_TEXTURE_2D, 0, format, w, h, 0, format, type, NULL);
+	for (uint32_t y0 = 0; y0 < h; y0 += rows)
+	{
+		uint32_t n = h - y0 < rows ? h - y0 : rows;
+		for (uint32_t y = 0; y < n; y++)
+			for (uint32_t x = 0; x < w; x++)
+			{
+				uint8_t p = src[(y0 + y) * stride + x];
+				const uint8_t *c = bsp_palette[p];
+				texels[y * w + x] = see_through ? (uint16_t) ((c[0] >> 3) << 11 | (c[1] >> 3) << 6 | (c[2] >> 3) << 1 | (p != 0))
+								: (uint16_t) ((c[0] >> 3) << 11 | (c[1] >> 2) << 5 | c[2] >> 3);
+			}
+		glTexSubImage2D (GL_TEXTURE_2D, 0, 0, y0, w, n, format, type, texels);
+	}
+	free (texels);
 	glGenerateMipmap (GL_TEXTURE_2D);
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -65,78 +91,65 @@ static bool upload_textures (render_t *r)
 			continue;
 		}
 		const uint8_t *src = (const uint8_t *) mt + mt->offsets[0];
-		uint16_t *texels = malloc (mt->width * mt->height * 2);
-		if (!texels)
-		{
-			return false;
-		}
 		if (kind_of (mt->name) == KIND_SKY && mt->width == 2 * mt->height)
 		{
-			/* the sky's two layers: the back (the right half) RGB565, the
-			   front (the left) RGBA5551, see-through where colour 0 */
+			/* the sky's two layers: the back (the right half), the front
+			   (the left) see-through where colour 0; the haze the back's average */
 			uint32_t h = mt->height;
-			for (uint32_t y = 0; y < h; y++)		/* the haze: the back's average */
+			for (uint32_t y = 0; y < h; y++)
 				for (uint32_t x = 0; x < h; x++)
 					for (int c = 0; c < 3; c++)
 						r->hazes[i][c] += bsp_palette[src[y * mt->width + h + x]][c] / (255.0f * h * h);
-			for (int layer = 0; layer < 2; layer++)
-			{
-				for (uint32_t y = 0; y < h; y++)
-					for (uint32_t x = 0; x < h; x++)
-					{
-						uint8_t p = src[y * mt->width + x + (layer ? 0 : h)];
-						const uint8_t *c = bsp_palette[p];
-						texels[y * h + x] = layer
-							? (uint16_t) ((c[0] >> 3) << 11 | (c[1] >> 3) << 6 | (c[2] >> 3) << 1 | (p != 0))
-							: (uint16_t) ((c[0] >> 3) << 11 | (c[1] >> 2) << 5 | c[2] >> 3);
-					}
-				if (layer)
-					r->fronts[i] = upload (texels, h, h, GL_RGBA, GL_UNSIGNED_SHORT_5_5_5_1);
-				else
-					r->textures[i] = upload (texels, h, h, GL_RGB, GL_UNSIGNED_SHORT_5_6_5);
-			}
-			free (texels);
-			continue;
+			r->textures[i] = upload (src + h, mt->width, h, h, false);
+			r->fronts[i] = upload (src, mt->width, h, h, true);
 		}
-		for (uint32_t k = 0; k < mt->width * mt->height; k++)
+		else
 		{
-			const uint8_t *c = bsp_palette[src[k]];
-			texels[k] = (uint16_t) ((c[0] >> 3) << 11 | (c[1] >> 2) << 5 | c[2] >> 3);
+			r->textures[i] = upload (src, mt->width, mt->width, mt->height, false);
 		}
-		r->textures[i] = upload (texels, mt->width, mt->height, GL_RGB, GL_UNSIGNED_SHORT_5_6_5);
-		free (texels);
+		if (!r->textures[i])
+		{
+			return false;
+		}
 	}
 	return true;
 }
 
-/* ---- lightmaps: packed into pages, rows of blocks ---------------------------------------- */
+/* ---- lightmaps: packed into pages, rows of blocks, a block sent at a time ------------------- */
 
 typedef struct
 {
-	int page, x, y;				/* the block (its padding's corner) */
-	int bmin[2];				/* the face's texture extents' minimum, in luxels (16 texels) */
-	int w, h;				/* luxels */
+	uint8_t page, x, y;			/* the block (its padding's corner) */
 	bool lit;
+	int16_t bmin[2];			/* the face's texture extents' minimum, in luxels (16 texels) */
 } face_light_t;
 
-static uint8_t page_texels[RENDER_PAGE * RENDER_PAGE];
+#define MAX_LUXELS	64		/* a face's lightmap across, at most */
+
 static int shelf_x, shelf_y, shelf_h;
 
-static void page_upload (render_t *r)
+/* a page, its texels to come */
+static bool page_new (render_t *r)
 {
+	if (r->n_pages >= RENDER_MAX_PAGES)
+	{
+		printf ("render: the lightmaps need more than %d pages\n", RENDER_MAX_PAGES);
+		return false;
+	}
 	glGenTextures (1, &r->pages[r->n_pages]);
 	glBindTexture (GL_TEXTURE_2D, r->pages[r->n_pages]);
-	glPixelStorei (GL_UNPACK_ALIGNMENT, 1);
-	glTexImage2D (GL_TEXTURE_2D, 0, GL_LUMINANCE, RENDER_PAGE, RENDER_PAGE, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, page_texels);
+	glTexImage2D (GL_TEXTURE_2D, 0, GL_LUMINANCE, RENDER_PAGE, RENDER_PAGE, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, NULL);
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	r->n_pages++;
+	shelf_x = shelf_y = shelf_h = 0;
+	return true;
 }
 
-/* a block of w x h texels: its corner in the page (a new page if needed); false: no pages left */
-static bool page_block (render_t *r, int w, int h, int *page, int *x, int *y)
+/* a block of w x h texels into the pages (a new one if needed): where; false: no pages left */
+static bool page_block (render_t *r, int w, int h, const uint8_t *texels, uint8_t *page, uint8_t *x, uint8_t *y)
 {
 	if (shelf_x + w > RENDER_PAGE)
 	{
@@ -144,19 +157,16 @@ static bool page_block (render_t *r, int w, int h, int *page, int *x, int *y)
 		shelf_y += shelf_h;
 		shelf_h = 0;
 	}
-	if (shelf_y + h > RENDER_PAGE)
+	if ((shelf_y + h > RENDER_PAGE || r->n_pages == 0) && !page_new (r))
 	{
-		if (r->n_pages + 1 >= RENDER_MAX_PAGES)
-		{
-			return false;
-		}
-		page_upload (r);
-		memset (page_texels, 0, sizeof page_texels);
-		shelf_x = shelf_y = shelf_h = 0;
+		return false;
 	}
-	*page = r->n_pages;
-	*x = shelf_x;
-	*y = shelf_y;
+	*page = (uint8_t) (r->n_pages - 1);
+	*x = (uint8_t) shelf_x;
+	*y = (uint8_t) shelf_y;
+	glBindTexture (GL_TEXTURE_2D, r->pages[*page]);
+	glPixelStorei (GL_UNPACK_ALIGNMENT, 1);
+	glTexSubImage2D (GL_TEXTURE_2D, 0, shelf_x, shelf_y, w, h, GL_LUMINANCE, GL_UNSIGNED_BYTE, texels);
 	shelf_x += w;
 	shelf_h = h > shelf_h ? h : shelf_h;
 	return true;
@@ -165,19 +175,19 @@ static bool page_block (render_t *r, int w, int h, int *page, int *x, int *y)
 static bool pack_lightmaps (render_t *r, face_light_t *fl, int *white_x, int *white_y)
 {
 	const bsp_t *b = r->bsp;
-	memset (page_texels, 0, sizeof page_texels);
-	shelf_x = shelf_y = shelf_h = 0;
-	int page;
-	if (!page_block (r, 3, 3, &page, white_x, white_y))	/* the unlit faces' texel: 128, twice: their colour */
+	uint8_t *block = malloc ((MAX_LUXELS + 2) * (MAX_LUXELS + 2)), page, x, y;
+	if (!block)
 	{
 		return false;
 	}
-	for (int k = 0; k < 9; k++)
+	memset (block, 128, 9);			/* the unlit faces' texel: 128, twice: their colour */
+	if (!page_block (r, 3, 3, block, &page, &x, &y))
 	{
-		page_texels[(*white_y + k / 3) * RENDER_PAGE + *white_x + k % 3] = 128;
+		free (block);
+		return false;
 	}
-	*white_x += 1;
-	*white_y += 1;
+	*white_x = x + 1;
+	*white_y = y + 1;
 
 	for (int i = 0; i < b->n_faces; i++)
 	{
@@ -203,38 +213,33 @@ static bool pack_lightmaps (render_t *r, face_light_t *fl, int *white_x, int *wh
 		}
 		for (int a = 0; a < 2; a++)
 		{
-			fl[i].bmin[a] = (int) floorf (mn[a] / 16);
+			fl[i].bmin[a] = (int16_t) floorf (mn[a] / 16);
 		}
-		fl[i].w = (int) ceilf (mx[0] / 16) - fl[i].bmin[0] + 1;
-		fl[i].h = (int) ceilf (mx[1] / 16) - fl[i].bmin[1] + 1;
-		if (fl[i].w > 64 || fl[i].h > 64 || (size_t) f->light_ofs + fl[i].w * fl[i].h > b->lighting_size)
+		int w = (int) ceilf (mx[0] / 16) - fl[i].bmin[0] + 1, h = (int) ceilf (mx[1] / 16) - fl[i].bmin[1] + 1;
+		if (w > MAX_LUXELS || h > MAX_LUXELS || (size_t) f->light_ofs + w * h > b->lighting_size)
 		{
 			fl[i].lit = false;		/* (broken: shown unlit) */
 			continue;
 		}
-		int x, y;
-		if (!page_block (r, fl[i].w + 2, fl[i].h + 2, &fl[i].page, &x, &y))
+		const uint8_t *src = b->lighting + f->light_ofs;
+		for (int ty = -1; ty <= h; ty++)		/* with its edges copied round it */
+			for (int tx = -1; tx <= w; tx++)
+			{
+				int sx = tx < 0 ? 0 : tx >= w ? w - 1 : tx;
+				int sy = ty < 0 ? 0 : ty >= h ? h - 1 : ty;
+				block[(ty + 1) * (w + 2) + tx + 1] = src[sy * w + sx];
+			}
+		if (!page_block (r, w + 2, h + 2, block, &fl[i].page, &fl[i].x, &fl[i].y))
 		{
-			printf ("render: the lightmaps need more than %d pages\n", RENDER_MAX_PAGES);
+			free (block);
 			return false;
 		}
-		fl[i].x = x;
-		fl[i].y = y;
-		const uint8_t *src = b->lighting + f->light_ofs;
-		for (int ty = -1; ty <= fl[i].h; ty++)		/* with its edges copied round it */
-			for (int tx = -1; tx <= fl[i].w; tx++)
-			{
-				int sx = tx < 0 ? 0 : tx >= fl[i].w ? fl[i].w - 1 : tx;
-				int sy = ty < 0 ? 0 : ty >= fl[i].h ? fl[i].h - 1 : ty;
-				page_texels[(y + 1 + ty) * RENDER_PAGE + x + 1 + tx] = src[sy * fl[i].w + sx];
-			}
 	}
-	page_upload (r);
+	free (block);
 	return true;
 }
 
 /* ---- the faces' triangles, batch by batch ------------------------------------------------------ */
-
 
 static int face_model (const bsp_t *b, int face)
 {
@@ -248,37 +253,39 @@ static int face_model (const bsp_t *b, int face)
 	return -1;
 }
 
-static int *face_keys;				/* model, texture (the sky's last), page: packed */
+static int32_t *face_keys;			/* model, texture (the sky's last), page: packed */
 
 static int by_key (const void *a, const void *b)
 {
-	int ka = face_keys[*(const int *) a], kb = face_keys[*(const int *) b];
-	return ka < kb ? -1 : ka > kb ? 1 : *(const int *) a - *(const int *) b;
+	int ia = *(const uint16_t *) a, ib = *(const uint16_t *) b;
+	return face_keys[ia] < face_keys[ib] ? -1 : face_keys[ia] > face_keys[ib] ? 1 : ia - ib;
 }
+
+#define CHUNK		64		/* vertices sent at a time */
 
 bool render_init (render_t *r, const bsp_t *b)
 {
 	memset (r, 0, sizeof *r);
 	r->bsp = b;
 	r->pvs_leaf = -1;
-	face_light_t *fl = calloc (b->n_faces, sizeof *fl);
-	r->faces = calloc (b->n_faces, sizeof *r->faces);
+
+	/* kept: a face's first vertex, a bit a face, the order, the PVS */
+	r->first = malloc (b->n_faces * sizeof *r->first);
+	r->shown = calloc ((b->n_faces + 7) / 8, 1);
 	r->order = malloc (b->n_faces * sizeof *r->order);
-	face_keys = malloc (b->n_faces * sizeof *face_keys);
 	r->pvs = malloc ((b->n_leaves + 7) / 8);
 	r->model_batches = calloc (b->n_models + 1, sizeof *r->model_batches);
+	/* for now: the faces' lightmap blocks and sort keys, the vertices on their way */
+	face_light_t *fl = calloc (b->n_faces, sizeof *fl);
+	face_keys = malloc (b->n_faces * sizeof *face_keys);
+	vertex_t *chunk = malloc (CHUNK * sizeof *chunk);
 	int white_x, white_y;
-	if (   !fl || !r->faces || !r->order || !face_keys || !r->pvs || !r->model_batches
-	    || !upload_textures (r) || !pack_lightmaps (r, fl, &white_x, &white_y))
-	{
-		free (fl);
-		free (face_keys);
-		return false;
-	}
+	bool ok =    r->first && r->shown && r->order && r->pvs && r->model_batches && fl && face_keys && chunk
+		  && upload_textures (r) && pack_lightmaps (r, fl, &white_x, &white_y);
 
 	/* the faces in batch order: by model, texture (the sky's last), lightmap page */
 	int n = 0, vertices = 0;
-	for (int i = 0; i < b->n_faces; i++)
+	for (int i = 0; ok && i < b->n_faces; i++)
 	{
 		int m = face_model (b, i);
 		if (m < 0 || b->faces[i].edges < 3)
@@ -289,56 +296,67 @@ bool render_init (render_t *r, const bsp_t *b)
 		const bsp_miptex_t *mt = bsp_miptex (b, t);
 		bool sky = mt && kind_of (mt->name) == KIND_SKY;
 		face_keys[i] = (m << 20) | (sky << 19) | (t & 0x7FF) << 8 | fl[i].page;
-		r->order[n++] = i;
+		r->order[n++] = (uint16_t) i;
 		vertices += (b->faces[i].edges - 2) * 3;
 	}
-	qsort (r->order, n, sizeof *r->order, by_key);
-	r->batches = malloc ((n + 1) * sizeof *r->batches);
-	if (!r->batches)
+	if (ok && vertices > 65535)
 	{
-		return false;
+		printf ("render: %d vertices, more than 16-bit indices reach\n", vertices);
+		ok = false;
 	}
-	for (int k = 0; k < n; k++)
+	if (ok)
+	{
+		qsort (r->order, n, sizeof *r->order, by_key);
+		r->n_batches = 0;
+		for (int k = 0; k < n; k++)
+		{
+			r->n_batches += k == 0 || face_keys[r->order[k]] != face_keys[r->order[k - 1]];
+		}
+		r->batches = malloc ((r->n_batches ? r->n_batches : 1) * sizeof *r->batches);
+		ok = r->batches != NULL;
+	}
+	for (int k = 0, nb = 0; ok && k < n; k++)
 	{
 		int i = r->order[k];
 		if (k == 0 || face_keys[i] != face_keys[r->order[k - 1]])
 		{
-			render_batch_t *bt = &r->batches[r->n_batches++];
-			bt->model = face_keys[i] >> 20;
-			bt->texture = b->texinfo[b->faces[i].texinfo].miptex;
+			render_batch_t *bt = &r->batches[nb++];
+			bt->model = (uint16_t) (face_keys[i] >> 20);
+			bt->texture = (uint16_t) b->texinfo[b->faces[i].texinfo].miptex;
 			bt->page = fl[i].page;
 			const bsp_miptex_t *mt = bsp_miptex (b, bt->texture);
-			bt->kind = mt ? kind_of (mt->name) : KIND_LIT;
-			bt->first_face = k;
+			bt->kind = (uint8_t) (mt ? kind_of (mt->name) : KIND_LIT);
+			bt->first_face = (uint16_t) k;
 			bt->faces = 0;
 		}
-		r->batches[r->n_batches - 1].faces++;
+		r->batches[nb - 1].faces++;
 	}
-	for (int m = 0, k = 0; m <= b->n_models; m++)
+	for (int m = 0, k = 0; ok && m <= b->n_models; m++)
 	{
 		while (k < r->n_batches && r->batches[k].model < m)
 		{
 			k++;
 		}
-		r->model_batches[m] = k;
+		r->model_batches[m] = (uint16_t) k;
 	}
 
-	/* the vertices: a fan a face, uploaded a chunk at a time */
-	glGenBuffers (1, &r->buffer);
-	glBindBuffer (GL_ARRAY_BUFFER, r->buffer);
-	glBufferData (GL_ARRAY_BUFFER, vertices * (GLsizeiptr) sizeof (vertex_t), NULL, GL_STATIC_DRAW);
-	static vertex_t chunk[192];
+	/* the vertices: a fan a face, sent a chunk at a time */
+	if (ok)
+	{
+		glGenBuffers (1, &r->buffer);
+		glBindBuffer (GL_ARRAY_BUFFER, r->buffer);
+		glBufferData (GL_ARRAY_BUFFER, vertices * (GLsizeiptr) sizeof (vertex_t), NULL, GL_STATIC_DRAW);
+	}
 	int in_chunk = 0, written = 0, at = 0;
-	for (int k = 0; k < n; k++)
+	for (int k = 0; ok && k < n; k++)
 	{
 		int i = r->order[k];
 		const bsp_face_t *f = &b->faces[i];
 		const bsp_texinfo_t *ti = &b->texinfo[f->texinfo];
 		const bsp_miptex_t *mt = bsp_miptex (b, ti->miptex);
 		float tw = mt ? (float) mt->width : 64.0f, th = mt ? (float) mt->height : 64.0f;
-		r->faces[i].first = at;
-		r->faces[i].count = (f->edges - 2) * 3;
-		at += r->faces[i].count;
+		r->first[i] = (uint16_t) at;
+		at += (f->edges - 2) * 3;
 		for (int t = 1; t + 1 < f->edges; t++)
 		{
 			const int corner[3] = {0, t, t + 1};
@@ -363,7 +381,7 @@ bool render_init (render_t *r, const bsp_t *b)
 					v->lu = (white_x + 0.5f) / RENDER_PAGE;
 					v->lv = (white_y + 0.5f) / RENDER_PAGE;
 				}
-				if (in_chunk == (int) (sizeof chunk / sizeof chunk[0]))
+				if (in_chunk == CHUNK)
 				{
 					glBufferSubData (GL_ARRAY_BUFFER, written * (GLintptr) sizeof (vertex_t), in_chunk * sizeof (vertex_t), chunk);
 					written += in_chunk;
@@ -372,13 +390,18 @@ bool render_init (render_t *r, const bsp_t *b)
 			}
 		}
 	}
-	if (in_chunk)
+	if (ok && in_chunk)
 	{
 		glBufferSubData (GL_ARRAY_BUFFER, written * (GLintptr) sizeof (vertex_t), in_chunk * sizeof (vertex_t), chunk);
 	}
+	free (chunk);
 	free (fl);
 	free (face_keys);
 	face_keys = NULL;
+	if (!ok)
+	{
+		return false;
+	}
 
 	/* the programs */
 	const struct { const void *info; size_t size; } binaries[3] =
@@ -441,7 +464,7 @@ static void begin (render_t *r, int program, const float vp[16], const float off
 static void bind (render_t *r, const render_batch_t *bt)
 {
 	const bsp_t *b = r->bsp;
-	bool known = bt->texture >= 0 && bt->texture < b->n_miptex;
+	bool known = bt->texture < b->n_miptex;
 	glActiveTexture (GL_TEXTURE1);
 	GLuint front = known && r->fronts[bt->texture] ? r->fronts[bt->texture] : known ? r->textures[bt->texture] : 0;
 	glBindTexture (GL_TEXTURE_2D, bt->kind == KIND_SKY ? front : r->pages[bt->page]);
@@ -461,6 +484,7 @@ static void bind (render_t *r, const render_batch_t *bt)
 /* the batches [first, last): their faces marked in this frame (or all), in runs */
 static void draw_batches (render_t *r, int first, int last, bool all, const float vp[16], const float offset[3])
 {
+	const bsp_t *b = r->bsp;
 	int program = -1;
 	for (int k = first; k < last; k++)
 	{
@@ -469,11 +493,12 @@ static void draw_batches (render_t *r, int first, int last, bool all, const floa
 		bool bound = false;
 		for (int j = bt->first_face; j <= bt->first_face + bt->faces; j++)
 		{
-			const render_face_t *f = j < bt->first_face + bt->faces ? &r->faces[r->order[j]] : NULL;
-			bool show = f && (all || f->frame == r->frame);
-			if (show && run_count && f->first == run_first + run_count)
+			int i = j < bt->first_face + bt->faces ? r->order[j] : -1;
+			bool show = i >= 0 && (all || (r->shown[i >> 3] & (1 << (i & 7))));
+			int first = show ? r->first[i] : -1, count = show ? (b->faces[i].edges - 2) * 3 : 0;
+			if (show && run_count && first == run_first + run_count)
 			{
-				run_count += f->count;		/* (the run goes on) */
+				run_count += count;		/* (the run goes on) */
 				continue;
 			}
 			if (run_count)
@@ -491,8 +516,8 @@ static void draw_batches (render_t *r, int first, int last, bool all, const floa
 				glDrawArrays (GL_TRIANGLES, run_first, run_count);
 				r->stats.draws++;
 			}
-			run_first = show ? f->first : -1;
-			run_count = show ? f->count : 0;
+			run_first = first;
+			run_count = count;
 			r->stats.faces += show;
 		}
 	}
@@ -501,7 +526,7 @@ static void draw_batches (render_t *r, int first, int last, bool all, const floa
 void render_world (render_t *r, const float eye[3], const float vp[16])
 {
 	const bsp_t *b = r->bsp;
-	r->frame++;
+	memset (r->shown, 0, (b->n_faces + 7) / 8);
 	memset (&r->stats, 0, sizeof r->stats);
 	memcpy (r->eye, eye, sizeof r->eye);
 
@@ -552,7 +577,7 @@ void render_world (render_t *r, const float eye[3], const float vp[16])
 			float d = pl->normal[0] * eye[0] + pl->normal[1] * eye[1] + pl->normal[2] * eye[2] - pl->dist;
 			if ((f->side ? -d : d) > 0.01f)		/* facing the eye */
 			{
-				r->faces[i].frame = r->frame;
+				r->shown[i >> 3] |= (uint8_t) (1 << (i & 7));
 			}
 		}
 	}

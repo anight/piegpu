@@ -76,19 +76,21 @@ void bsp_leaf_pvs (const bsp_t *bsp, int leaf, uint8_t *out);
 /* a face's vertex k (0 .. edges - 1) */
 const float *bsp_face_vertex (const bsp_t *bsp, const bsp_face_t *face, int k);
 
-/* entities: key and value pairs between braces, as the text has them */
-#define BSP_MAX_PAIRS	32
+/* entities: key and value pairs between braces, as the text has them; an
+   entity is where it is in the file (nothing copied), its values read out
+   as they're asked for */
+#define BSP_VALUE	64		/* a value's room, with its '\0' (longer ones cut short) */
 typedef struct
 {
-	int pairs;
-	char key[BSP_MAX_PAIRS][64];
-	char value[BSP_MAX_PAIRS][64];
+	const char *start, *end;		/* its pairs, in the entity lump */
 } bsp_entity_t;
 
 /* the next entity after *cursor (NULL: the first); false at the end */
 bool bsp_entity_next (const bsp_t *bsp, const char **cursor, bsp_entity_t *entity);
-/* a key's value, or NULL */
-const char *bsp_entity_value (const bsp_entity_t *entity, const char *key);
+/* a key's value into out (BSP_VALUE bytes); false if the key isn't there */
+bool bsp_entity_value (const bsp_entity_t *entity, const char *key, char out[BSP_VALUE]);
+/* a key's value as a number, or fallback */
+float bsp_entity_float (const bsp_entity_t *entity, const char *key, float fallback);
 /* "x y z" */
 bool bsp_entity_vector (const bsp_entity_t *entity, const char *key, float v[3]);
 

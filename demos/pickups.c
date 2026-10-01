@@ -3,6 +3,7 @@
  */
 #include "pickups.h"
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 #include "mat4.h"
 #include "gem_program.h"
@@ -27,7 +28,7 @@ const float *pickups_color (const pickups_t *s, int item)
 	return s->shape == PICKUPS_COIN ? gold : gem_colors[item % (int) (sizeof gem_colors / sizeof gem_colors[0])];
 }
 
-static float mesh[MAX_VERTICES][6];
+static float (*mesh)[6];			/* (while it's made and sent) */
 static int n;
 
 /* a triangle, counter-clockwise from outside; its normal the face's */
@@ -79,6 +80,11 @@ void pickups_init (pickups_t *s, int shape)
 	static const float corners[6][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, -1}, {1, 1}, {-1, 1}};
 	memset (s, 0, sizeof *s);
 	s->shape = shape;
+	mesh = malloc (MAX_VERTICES * sizeof mesh[0]);
+	if (!mesh)
+	{
+		return;
+	}
 	n = 0;
 	if (shape == PICKUPS_COIN)
 		coin ();
@@ -108,6 +114,8 @@ void pickups_init (pickups_t *s, int shape)
 	glGenBuffers (1, &s->mesh);
 	glBindBuffer (GL_ARRAY_BUFFER, s->mesh);
 	glBufferData (GL_ARRAY_BUFFER, n * sizeof mesh[0], mesh, GL_STATIC_DRAW);
+	free (mesh);
+	mesh = NULL;
 	glGenBuffers (1, &s->quad);
 	glBindBuffer (GL_ARRAY_BUFFER, s->quad);
 	glBufferData (GL_ARRAY_BUFFER, sizeof corners, corners, GL_STATIC_DRAW);
