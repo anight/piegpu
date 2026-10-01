@@ -1,7 +1,9 @@
 /*
  * hud.h - text and bars over a GL ES 2.0 scene (pgl), in pixels from the top
  * left. Build the contents with hud_begin, hud_rect and hud_text, then
- * hud_end uploads them; hud_draw draws the last contents (every frame).
+ * hud_end; hud_draw draws the last contents (every frame). The RPi keeps
+ * them: built again, only what changed is sent, and where the calls are the
+ * same and only the text differs (the same length), that's its characters.
  */
 #ifndef HUD_H
 #define HUD_H

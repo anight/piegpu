@@ -16,7 +16,7 @@ set(PGPU_HUD_SOURCES ${PGPU_LIB}/hud/hud.c ${PGPU_LIB}/hud/perf.c)
 set(PGPU_INCLUDE_DIRS ${PGPU_LIB} ${PGPU_LIB}/gles ${PGPU_LIB}/hud ${PGPU_ROOT}/protocol)
 # pico/stdlib.h for hosts other than the Pico (the demos and self tests use it)
 set(PGPU_COMPAT_INCLUDE_DIR ${PGPU_LIB}/compat)
-set(PGPU_HUD_GLSL_ARGS -a a_pos:float:2 -a a_uv:float:2 -a a_color:ubyte_norm:4 -v triangles)
+set(PGPU_HUD_GLSL_ARGS -a a_pos:float:2 -a a_corner:ubyte:2 -a a_color:ubyte_norm:4 -a a_glyph:ubyte:1 -v triangles)
 
 if(NOT COMMAND pgpu_glsl_program)
 function(pgpu_glsl_program)
