@@ -572,6 +572,7 @@ speaker: its own buffer more), not after what waits of the stream.
 | `0xC6` | SOUND_DELETE | `u32 id` (0: all) | The sound is gone; the channels playing it stop. |
 | `0xC7` | SOUND_PLAY | `u32 channel` (0 … 15), `u32 id` (0: stop), `u32 volumes` (left in bits 15–0, right in 31–16; 0 … 256, 256 as recorded), `u32 flags` (bit 0 `LOOP`) | The channel plays the sound from its start, in place of what it played. With `LOOP` it goes round (and is faded in over 43 ms: a loop starts anywhere in its wave) till the channel is stopped (faded out) or given another sound. `OBJECT` if the sound isn't there. |
 | `0xC8` | SOUND_VOLUME | `u32 channel`, `u32 volumes` | The volumes of what the channel plays, eased to over 43 ms (a source that moves, or its listener). |
+| `0xC9` | SOUND_PITCH | `u32 channel`, `u32 pitch` (16.16 fixed point: `0x10000` as recorded) | How fast the channel plays what it has, 1/8 … 8 (kept within that): the sound's pitch and its length change together (an engine's note, a source passing). From where it is in the sound, so nothing clicks. `SOUND_PLAY` starts at `0x10000`. |
 
 The sounds are the session's: `RESET` (and the session's end) stops the
 channels and drops them. The RPi's volume and mute (its settings, and the
@@ -597,7 +598,7 @@ HDMI's at 48 kHz.
 | `0x80`–`0x8F` | programs (§7.10) |
 | `0x90`–`0xBF` | reserved for program additions |
 | `0xC0`–`0xC4` | media streams: video (§7.12) and audio (§7.13) |
-| `0xC5`–`0xC8` | sound effects (§7.14) |
+| `0xC5`–`0xC9` | sound effects (§7.14) |
 | `0xC9`–`0xEF` | reserved |
 | `0xF0`–`0xFF` | debug and vendor |
 

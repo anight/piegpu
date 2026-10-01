@@ -122,6 +122,7 @@ u32 CSounds::Play (unsigned nChannel, unsigned nId, unsigned nLeft, unsigned nRi
 	C.nRight = nRight > 256 ? 256 : (int) nRight;
 	C.nNowLeft = C.bLoop ? 0 : C.nLeft;		// (a loop starts anywhere in its wave: faded in)
 	C.nNowRight = C.bLoop ? 0 : C.nRight;
+	C.nPitch = PGPU_SOUND_PITCH_ONE;
 	return 0;
 }
 
@@ -139,6 +140,17 @@ u32 CSounds::Volume (unsigned nChannel, unsigned nLeft, unsigned nRight)
 	return 0;
 }
 
+u32 CSounds::Pitch (unsigned nChannel, u32 nPitch)
+{
+	if (nChannel >= Channels)
+	{
+		return PGPU_ERR_ID;
+	}
+	m_Channel[nChannel].nPitch =   nPitch < PGPU_SOUND_PITCH_MIN ? PGPU_SOUND_PITCH_MIN
+				     : nPitch > PGPU_SOUND_PITCH_MAX ? PGPU_SOUND_PITCH_MAX : nPitch;
+	return 0;
+}
+
 boolean CSounds::Mix (s16 *pFrames, unsigned nFrames, unsigned nRate)
 {
 	boolean bMixed = FALSE;
@@ -151,7 +163,8 @@ boolean CSounds::Mix (s16 *pFrames, unsigned nFrames, unsigned nRate)
 			continue;
 		}
 		bMixed = TRUE;
-		u64 nStep = ((u64) pSound->nRate << 16) / nRate, nEnd = (u64) pSound->nFrames << 16;
+		// (the place in the sound goes on from where it is: a change of pitch doesn't click)
+		u64 nStep = ((u64) pSound->nRate << 16) / nRate * C.nPitch >> 16, nEnd = (u64) pSound->nFrames << 16;
 		int nLeft = C.nNowLeft, nRight = C.nNowRight;
 		for (unsigned i = 0; i < nFrames; i++)
 		{

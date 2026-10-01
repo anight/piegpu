@@ -7,6 +7,8 @@
 #   linktest            the link at full speed both ways, checked word by word
 #   gears breakout flight
 #   antigrav            anti-gravity racing, after WipEout: six craft, a circuit
+#                       (its sounds: antigrav_sounds.c, made by
+#                       tools/make_antigrav_sounds.py)
 #   walk                the BSP engine (engine/): a Quake-format level walked
 #                       through; PGPU_LEVEL (default engine/levels/base.bsp).
 #                       It and the next two with sound effects, mixed by the
@@ -77,7 +79,7 @@ function(pgpu_demo target app)
 		program(plume -a a_geom:float:4 -v triangles)
 
 	elseif(app STREQUAL "antigrav")	# anti-gravity racing, after WipEout
-		target_sources(${target} PRIVATE ${PGPU_DEMOS}/antigrav.c)
+		target_sources(${target} PRIVATE ${PGPU_DEMOS}/antigrav.c ${PGPU_DEMOS}/antigrav_sounds.c)
 		program(sky -a a_pos:float:2 -v triangles)
 		program(scenery -a a_pos:float:3 -a a_uv:float:2 -a a_shade:float:1 -v triangles)
 		program(craft -a a_pos:float:3 -a a_normal:float:3 -a a_uv:float:2 -v triangles)

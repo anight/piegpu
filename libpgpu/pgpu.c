@@ -1560,6 +1560,11 @@ void pgpu_sound_volume (uint32_t channel, uint32_t left, uint32_t right)
 	cmd2 (PGPU_OP_SOUND_VOLUME, channel, (left & 0xFFFFu) | right << 16);
 }
 
+void pgpu_sound_pitch (uint32_t channel, float pitch)
+{
+	cmd2 (PGPU_OP_SOUND_PITCH, channel, (uint32_t) (pitch * PGPU_SOUND_PITCH_ONE + 0.5f));
+}
+
 void pgpu_audio_volume (uint32_t percent)
 {
 	pgpu_media_control (PGPU_AUDIO_STREAM, PGPU_AUDIO_VOLUME, percent);

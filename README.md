@@ -337,11 +337,12 @@ are in a third file, `speakers.txt` (below).
   or Ogg Vorbis from the host, decoded by the RPi (on a Zero 2 W on its
   second core); a video stream can follow its clock.
 - **Sound effects** (§7.14): the host sends short mono sounds once and plays
-  them on 16 channels, each with its volume left and right; the RPi mixes
-  them into what it plays, the stream's sound or silence, so an effect is
-  heard as soon as the output allows (HDMI: the 85 ms the VideoCore holds;
-  a Bluetooth speaker: its own buffer, not measured). The engine's demos use
-  them (below).
+  them on 16 channels, each with its volume left and right and its pitch
+  (how fast it plays: an engine's note); the RPi mixes them into what it
+  plays, the stream's sound or silence, so an effect is heard as soon as the
+  output allows (HDMI: the 85 ms the VideoCore holds; a Bluetooth speaker:
+  its own buffer, not measured). The engine's demos and `antigrav` use them
+  (below).
 - **The output:** a Bluetooth speaker while one is connected, else HDMI (a
   monitor with speakers). The volume and mute (Settings, `volume=`, `mute=`)
   apply to all of it.
@@ -387,7 +388,7 @@ Every host builds them (`demos/demos.cmake`):
 | Demo | What |
 |---|---|
 | `gears`, `breakout`, `flight` | the classic gears; a 3D Breakout that plays itself; a biplane over a cloud deck |
-| `antigrav` | anti-gravity racing, after WipEout: six craft, a circuit |
+| `antigrav` | anti-gravity racing, after WipEout: six craft, a circuit; heard from the craft followed (engines whose note is their speed, the wind, the crowd, pads, the countdown) |
 | `walk` | the BSP engine (`engine/`): a Quake-format level walked through, doors that open, a lift |
 | `keep` | the engine outdoors: a castle at dusk, a moat of lava, a lift, nine gems to find |
 | `isles` | the engine in the sky: floating islands, a moving platform, a jump pad, a portal, coins |

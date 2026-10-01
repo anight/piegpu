@@ -181,12 +181,15 @@ uint32_t pgpu_media_get_status (uint32_t stream, pgpu_media_status_t *status);
    mixes into what it plays (the audio stream's sound too). A channel plays
    one sound at a time, with its volume left and right (0 .. PGPU_SOUND_FULL):
    a sound played on a busy channel takes it over. With PGPU_SOUND_LOOP it
-   goes round till the channel is stopped (or given another). */
+   goes round till the channel is stopped (or given another). A channel's
+   pitch is how fast it plays what it has (1: as recorded, 1/8 .. 8; a sound
+   played there starts at 1): an engine's note. */
 void pgpu_sound_data (uint32_t id, uint32_t rate, uint32_t format, const void *samples, uint32_t frames);
 void pgpu_sound_delete (uint32_t id);		/* 0: all of them */
 void pgpu_sound_play (uint32_t channel, uint32_t id, uint32_t left, uint32_t right, uint32_t flags);
 void pgpu_sound_stop (uint32_t channel);
 void pgpu_sound_volume (uint32_t channel, uint32_t left, uint32_t right);	/* of what plays there */
+void pgpu_sound_pitch (uint32_t channel, float pitch);				/* of what plays there */
 
 /* link */
 void pgpu_init (void);

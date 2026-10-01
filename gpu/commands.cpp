@@ -440,7 +440,7 @@ void CCommands::Execute (u32 nHeader, const u32 *pPayload)
 		{PGPU_OP_VIDEO_OPEN, VARIABLE}, {PGPU_OP_MEDIA_DATA, VARIABLE}, {PGPU_OP_MEDIA_CONTROL, 4},
 		{PGPU_OP_MEDIA_GET_STATUS, 1}, {PGPU_OP_AUDIO_OPEN, VARIABLE},
 		{PGPU_OP_SOUND_DATA, VARIABLE}, {PGPU_OP_SOUND_DELETE, 1}, {PGPU_OP_SOUND_PLAY, 4},
-		{PGPU_OP_SOUND_VOLUME, 2},
+		{PGPU_OP_SOUND_VOLUME, 2}, {PGPU_OP_SOUND_PITCH, 2},
 	};
 
 	boolean bKnown = FALSE;
@@ -777,6 +777,10 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 	case PGPU_OP_SOUND_VOLUME:			// channel, volumes
 		*pDetail = p[0];
 		return m_pAudio ? m_pAudio->SoundVolume (p[0], p[1] & 0xFFFF, p[1] >> 16) : PGPU_ERR_OBJECT;
+
+	case PGPU_OP_SOUND_PITCH:			// channel, pitch (16.16)
+		*pDetail = p[0];
+		return m_pAudio ? m_pAudio->SoundPitch (p[0], p[1]) : PGPU_ERR_OBJECT;
 
 	case PGPU_OP_TEXTURE_DELETE:
 		*pDetail = p[0];

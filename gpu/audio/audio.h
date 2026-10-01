@@ -100,6 +100,7 @@ public:
 	/// \brief Call often (core 0): the output for the effects, as there's a stream, a speaker, or neither
 	void UpdateSounds (void);
 
+	u32 SoundPitch (unsigned nChannel, u32 nPitch)				{ return m_Sounds.Pitch (nChannel, nPitch); }
 	/// \brief The MEDIA_STATUS reply of the audio stream
 	boolean GetStatus (u32 *pPayload, boolean bDue);
 

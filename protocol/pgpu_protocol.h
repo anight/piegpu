@@ -121,6 +121,7 @@ enum pgpu_opcode
 	PGPU_OP_SOUND_DELETE	= 0xC6,
 	PGPU_OP_SOUND_PLAY	= 0xC7,
 	PGPU_OP_SOUND_VOLUME	= 0xC8,
+	PGPU_OP_SOUND_PITCH	= 0xC9,
 
 	/* debug */
 	PGPU_OP_DEBUG_SCREENSHOT = 0xF0		/* dump the last presented frame to the RPi's USB log */
@@ -201,6 +202,9 @@ enum pgpu_reply
 #define PGPU_SOUND_DATA_WORDS		5	/* before the samples */
 #define PGPU_SOUND_LOOP			(1u << 0)	/* SOUND_PLAY flags: again from its start, till stopped */
 #define PGPU_SOUND_FULL			256	/* a channel's volume: as recorded */
+#define PGPU_SOUND_PITCH_ONE		65536u	/* SOUND_PITCH: as recorded (16.16) */
+#define PGPU_SOUND_PITCH_MIN		(PGPU_SOUND_PITCH_ONE / 8)
+#define PGPU_SOUND_PITCH_MAX		(PGPU_SOUND_PITCH_ONE * 8)
 #define PGPU_AUDIO_STATUS_VOLUME(flags)	(((flags) >> 8) & 0xFFu)	/* its MEDIA_STATUS flags: the volume */
 
 enum pgpu_error

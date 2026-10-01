@@ -259,6 +259,9 @@ the ring, the volume, the pause): HDMI's (`CAudioOut`) and the speaker's
   them: the stream's, or one kept running for them (the speaker's while it's
   there, else HDMI's at 48 kHz). A loop starts and stops through a 43 ms
   fade (it's cut anywhere in its wave); volumes are eased the same way.
+  A channel's pitch (`SOUND_PITCH`) scales its step through the sound, from
+  where it is: no click. `antigrav`'s engines are one loop each, their note
+  the craft's speed.
   Checked with the capture (`PCM`): a level's hum at 100 and 200 Hz, steps
   4.4 a second, a door's grinding louder on its side; with a Pico as the
   host, 60 fps as before.

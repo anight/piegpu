@@ -38,6 +38,8 @@ public:
 	/// \param nId 0: the channel stopped
 	u32 Play (unsigned nChannel, unsigned nId, unsigned nLeft, unsigned nRight, u32 nFlags);
 	u32 Volume (unsigned nChannel, unsigned nLeft, unsigned nRight);
+	/// \param nPitch How fast it plays, 16.16 (PGPU_SOUND_PITCH_ONE: as recorded)
+	u32 Pitch (unsigned nChannel, u32 nPitch);
 	/// \brief Every channel stopped, every sound gone (a new session)
 	void Reset (void);
 
@@ -63,6 +65,7 @@ private:
 		boolean bStopping;		// a loop told to stop: faded out first
 		int nLeft, nRight;		// asked for, 0 .. 256
 		int nNowLeft, nNowRight;	// as last mixed (a change is eased: no click)
+		u32 nPitch;			// 16.16: how fast it plays
 	};
 
 	TSound m_Sound[MaxSounds];

@@ -25,6 +25,13 @@
  * alpha is 0 it glows (its own light): the road's edges, the pads, the
  * screen, the roof's lights, the craft's engines, so the night is lit.
  *
+ * It is heard from the seat of the craft followed (the RPi mixes the sound:
+ * pgpu.h's sound effects; the sounds are made by tools/make_antigrav_sounds.py):
+ * its engine, whose note is its speed, and the wind; the others' engines from
+ * where they are, higher while they close and lower once past; the crowd by
+ * the stands; a pad's kick, the wall, hulls touching, the air under a gantry
+ * and through the hoops; the countdown, the laps and the finish.
+ *
  * At 1920x1080 the GPU's fill rate is the limit (as flight's): everything
  * is drawn near to far, the sky last (at the far plane, above the horizon
  * only; the screen is cleared to the haze it meets there), so the V3D's early
@@ -46,6 +53,7 @@
 #include "scenery_program.h"
 #include "craft_program.h"
 #include "nightsky_program.h"
+#include "antigrav_sounds.h"
 
 #define PI		3.14159265f
 
@@ -766,7 +774,10 @@ typedef struct
 	float lap_start, best_lap, finish;
 	int place;			/* at the finish, 1 ..; 0 racing */
 	float roll, yaw;
+	unsigned events;		/* EV_*, since the sound last heard them */
 } craft_t;
+
+enum { EV_PAD = 1, EV_WALL = 2, EV_BUMP = 4, EV_LAP = 8, EV_FINISH = 16 };
 
 static craft_t craft[CRAFTS] =
 {
@@ -1517,6 +1528,7 @@ static void race_reset (float now)
 		c->best_lap = c->finish = 0.0f;
 		c->place = 0;
 		c->roll = c->yaw = 0.0f;
+		c->events = 0;
 		c->vmax = 100.0f + 12.0f * ((rng & 0xFF) / 255.0f);		/* each race its own */
 		c->grip = A_LAT * (0.92f + 0.16f * ((rng >> 8 & 0xFF) / 255.0f));
 	}
@@ -1597,6 +1609,7 @@ static void craft_update (craft_t *c, float dt, float t_race)
 		c->x = copysignf (lim, c->x);
 		c->vx *= -0.3f;
 		c->v *= 1.0f - 0.8f * dt;
+		c->events |= EV_WALL;
 	}
 
 	/* along: laps and pads */
@@ -1615,6 +1628,11 @@ static void craft_update (craft_t *c, float dt, float t_race)
 		{
 			c->place = ++finished;
 			c->finish = t_race;
+			c->events |= EV_FINISH;
+		}
+		else if (c->lap >= 1 && c->lap < LAPS)
+		{
+			c->events |= EV_LAP;
 		}
 	}
 	/* no passing through another: kept behind it, beside it pushed apart */
@@ -1645,12 +1663,15 @@ static void craft_update (craft_t *c, float dt, float t_race)
 			o->x += push;
 			c->vx = -fabsf (c->vx) * (dx > 0.0f ? 1.0f : -1.0f);
 			o->vx = fabsf (o->vx) * (dx > 0.0f ? 1.0f : -1.0f);
+			c->events |= EV_BUMP;
+			o->events |= EV_BUMP;
 		}
 	}
 	int tile = (int) (c->s / step) / TILE_RINGS;
 	if (tile != c->tile && pad_tile[tile])
 	{
 		c->boost = PAD_BOOST;
+		c->events |= EV_PAD;
 	}
 	c->tile = tile;
 
@@ -1658,6 +1679,208 @@ static void craft_update (craft_t *c, float dt, float t_race)
 	float roll = clampf (curvature_at (c->s) * ve * ve * 0.0045f + c->vx * 0.05f, -0.55f, 0.55f);
 	c->roll += (roll - c->roll) * (1.0f - expf (-dt * 6.0f));
 	c->yaw = atan2f (c->vx, fmaxf (ve, 5.0f));
+}
+
+/* ---- the sound ---------------------------------------------------------------------- */
+
+enum
+{
+	CH_ENGINE, CH_WIND, CH_CROWD,
+	CH_OTHER,				/* the others' engines: CRAFTS - 1 channels */
+	CH_BOOST = CH_OTHER + CRAFTS - 1, CH_OTHER_BOOST,
+	CH_WHOOSH,				/* two, in turn: the hoops come faster than one ends */
+	CH_BUMP = CH_WHOOSH + 2, CH_SCRAPE, CH_SIGNAL
+};
+
+static struct { int left, right; float pitch; } ch_now[PGPU_SOUND_CHANNELS];
+
+/* a loop's volumes (0 .. 1) and pitch: sent when they change */
+static void ch_set (int ch, float left, float right, float pitch)
+{
+	int l = (int) (clampf (left, 0.0f, 1.0f) * PGPU_SOUND_FULL + 0.5f);
+	int r = (int) (clampf (right, 0.0f, 1.0f) * PGPU_SOUND_FULL + 0.5f);
+	if (l != ch_now[ch].left || r != ch_now[ch].right)
+	{
+		pgpu_sound_volume (ch, l, r);
+		ch_now[ch].left = l;
+		ch_now[ch].right = r;
+	}
+	if (fabsf (pitch - ch_now[ch].pitch) > 0.003f)
+	{
+		pgpu_sound_pitch (ch, pitch);
+		ch_now[ch].pitch = pitch;
+	}
+}
+
+/* a loop's volume to a side: pan -1 (left) .. 1 (right) */
+static void ch_set_pan (int ch, float vol, float pan, float pitch)
+{
+	ch_set (ch, vol * fminf (1.0f, 1.0f - pan), vol * fminf (1.0f, 1.0f + pan), pitch);
+}
+
+/* a sound once */
+static void ch_shot (int ch, int sound, float vol, float pan, float pitch)
+{
+	float l = clampf (vol * fminf (1.0f, 1.0f - pan), 0.0f, 1.0f), r = clampf (vol * fminf (1.0f, 1.0f + pan), 0.0f, 1.0f);
+	pgpu_sound_play (ch, sound, (uint32_t) (l * PGPU_SOUND_FULL), (uint32_t) (r * PGPU_SOUND_FULL), 0);
+	if (pitch != 1.0f)
+	{
+		pgpu_sound_pitch (ch, pitch);
+	}
+}
+
+/* the sounds to the RPi, the loops started (silent yet) */
+static void sound_init (void)
+{
+	for (int i = 1; i < ASND_COUNT; i++)
+	{
+		pgpu_sound_data (i, antigrav_sounds[i].rate, PGPU_SOUND_U8, antigrav_sounds[i].samples, antigrav_sounds[i].frames);
+	}
+	for (int ch = 0; ch < CH_BOOST; ch++)
+	{
+		pgpu_sound_play (ch, ch == CH_ENGINE ? ASND_ENGINE : ch == CH_WIND ? ASND_WIND : ch == CH_CROWD ? ASND_CROWD : ASND_ENGINE_OTHER,
+				 0, 0, PGPU_SOUND_LOOP);
+		ch_now[ch].left = ch_now[ch].right = 0;
+		ch_now[ch].pitch = 1.0f;
+	}
+}
+
+/* is a gantry, a hoop, the gate at the line or the stadium's mouth over this ring? */
+static bool over_ring (int r)
+{
+	if (r == 0 || r == tunnel_first)
+	{
+		return true;
+	}
+	for (int g = 0; g < n_gantries; g++)
+	{
+		if (r == gantries[g])
+		{
+			return true;
+		}
+	}
+	for (int h = 0; h < HOOPS && hoop_first >= 0; h++)
+	{
+		if (r == (hoop_first + h * HOOP_GAP) % n_rings)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+/* a frame's: what the craft followed hears now */
+static void sound_update (float t, float in_phase)
+{
+	static float last_wall = -1.0f, last_bump = -1.0f, cheer_at = -100.0f;
+	static int last_count, last_phase = -1, last_ring = -1, lap_heard, whoosh;
+	craft_t *me = &craft[follow];
+	float ve = me->v + me->boost;
+	float quiet = phase == RESULTS ? 0.5f : 1.0f;		/* (the results are read in some peace) */
+	int at = (int) (me->s / step) % n_rings;
+	bool inside = tunnel_first >= 0 && at >= tunnel_first && at < tunnel_first + TUNNEL_RINGS;
+
+	/* its engine (revved as the countdown ends; louder under the stadium's roof) and the wind */
+	float rev = phase == GRID ? 0.25f * clampf ((in_phase - (GRID_SECONDS - 3.0f)) / 3.0f, 0.0f, 1.0f) : 0.0f;
+	float engine = quiet * (inside ? 1.25f : 1.0f) * (0.32f + 0.14f * clampf (ve / 100.0f, 0.0f, 1.0f));
+	ch_set (CH_ENGINE, engine, engine, 0.55f + ve / 105.0f + rev);
+	float air = clampf (ve / 125.0f, 0.0f, 1.0f);
+	ch_set (CH_WIND, quiet * 0.40f * air * air, quiet * 0.40f * air * air, 0.75f + 0.5f * air);
+
+	/* the others: from where they are, the short way round the circuit;
+	   the note higher while the gap closes, lower while it opens */
+	for (int i = 0, ch = CH_OTHER; i < CRAFTS; i++)
+	{
+		craft_t *o = &craft[i];
+		if (o == me)
+		{
+			continue;
+		}
+		float ds = o->s - me->s, dx = o->x - me->x, ov = o->v + o->boost;
+		ds -= track_len * roundf (ds / track_len);
+		float d2 = ds * ds + dx * dx;
+		float vol = d2 < 120.0f * 120.0f ? quiet * (0.25f + 0.30f * clampf (ov / 60.0f, 0.0f, 1.0f)) / (1.0f + d2 / 150.0f) : 0.0f;
+		float pan = dx / sqrtf (d2 + 4.0f);
+		float closing = (ve - ov) * ds / sqrtf (ds * ds + 16.0f);
+		ch_set_pan (ch++, vol, pan, (0.62f + ov / 115.0f) * (1.0f + clampf (closing / 80.0f, -0.25f, 0.25f)));
+		if ((o->events & EV_PAD) && d2 < 70.0f * 70.0f)
+		{
+			ch_shot (CH_OTHER_BOOST, ASND_BOOST, 0.5f / (1.0f + d2 / 400.0f), pan, 1.15f);
+		}
+		o->events = 0;
+	}
+
+	/* the crowd: by the stands, and all of it for the finish */
+	int near = 1000;
+	for (int k = -50; k <= 50; k++)
+	{
+		if (stand_ring[((at + k) % n_rings + n_rings) % n_rings] && abs (k) < near)
+		{
+			near = abs (k);
+		}
+	}
+	float cheer = clampf (1.0f - (t - cheer_at) / 6.0f, 0.0f, 1.0f);
+	float crowd = fmaxf (0.28f * clampf (1.0f - near / 50.0f, 0.0f, 1.0f), 0.45f * cheer);
+	ch_set (CH_CROWD, crowd, crowd, 1.0f + 0.12f * cheer);
+
+	/* what happened to it */
+	if (me->events & EV_PAD)
+	{
+		ch_shot (CH_BOOST, ASND_BOOST, 0.6f, 0.0f, 1.0f);
+	}
+	if ((me->events & EV_WALL) && t - last_wall > 0.35f)
+	{
+		ch_shot (CH_SCRAPE, ASND_SCRAPE, 0.6f, me->x > 0.0f ? 0.7f : -0.7f, 1.0f);
+		last_wall = t;
+	}
+	if ((me->events & EV_BUMP) && t - last_bump > 0.3f)		/* (bounced off: the other is where it came from) */
+	{
+		ch_shot (CH_BUMP, ASND_BUMP, 0.6f, me->vx < 0.0f ? 0.6f : -0.6f, 1.0f);
+		last_bump = t;
+	}
+	if (phase == GRID)
+	{
+		lap_heard = 0;
+	}
+	if ((me->events & EV_LAP) && me->lap > lap_heard)		/* the last lap's a third higher */
+	{
+		ch_shot (CH_SIGNAL, ASND_LAP, 0.6f, 0.0f, me->lap == LAPS - 1 ? 1.26f : 1.0f);
+		lap_heard = me->lap;
+	}
+	if (me->events & EV_FINISH)
+	{
+		ch_shot (CH_SIGNAL, ASND_FINISH, 0.6f, 0.0f, 1.0f);
+		cheer_at = t;
+	}
+	me->events = 0;
+
+	/* the air under what's over the road (every ring since the last frame's) */
+	if (phase != GRID && last_ring >= 0)
+	{
+		for (int r = last_ring, n = 0; r != at && n < 8; n++)
+		{
+			r = (r + 1) % n_rings;
+			if (over_ring (r))
+			{
+				ch_shot (CH_WHOOSH + whoosh, ASND_WHOOSH, 0.2f + 0.45f * air, 0.0f, 0.85f + 0.35f * air);
+				whoosh ^= 1;
+			}
+		}
+	}
+	last_ring = at;
+
+	/* the countdown */
+	int count = phase == GRID && in_phase > GRID_SECONDS - 3.0f ? (int) ceilf (GRID_SECONDS - in_phase) : 0;
+	if (count && count != last_count)
+	{
+		ch_shot (CH_SIGNAL, ASND_BEEP, 0.6f, 0.0f, 1.0f);
+	}
+	if (phase == RACE && last_phase == GRID)
+	{
+		ch_shot (CH_SIGNAL, ASND_GO, 0.6f, 0.0f, 1.0f);
+	}
+	last_count = count;
+	last_phase = phase;
 }
 
 /* the order now: by places at the finish, then by distance */
@@ -2030,6 +2253,7 @@ int main (void)
 
 	/* the race */
 	absolute_time_t start = get_absolute_time (), last = start;
+	sound_init ();
 	race_reset (0.0f);
 	apply_sky ();
 	float projection[16], cam_f[3] = {0, 0, -1}, identity[16];
@@ -2092,6 +2316,7 @@ int main (void)
 					craft_update (&craft[i], dt / n, t - race_start);
 				}
 		}
+		sound_update (t, t - phase_start);
 
 		/* the camera: behind the craft followed, level, turning with the road ahead */
 		const craft_t *me = &craft[follow];

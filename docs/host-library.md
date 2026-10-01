@@ -35,7 +35,8 @@ The host library (`libpgpu/`, board independent) has two layers:
   takes); `pgpu_sound_play (channel, id, left, right, flags)` plays it on one
   of 16 channels, with its volume left and right (0 … `PGPU_SOUND_FULL`),
   `PGPU_SOUND_LOOP` to go round; `pgpu_sound_volume` changes what plays
-  there, `pgpu_sound_stop` stops it, `pgpu_sound_delete` drops a sound. The
+  there, `pgpu_sound_pitch` how fast (an engine's note: 1 as recorded),
+  `pgpu_sound_stop` stops it, `pgpu_sound_delete` drops a sound. The
   RPi mixes the channels into what it plays. Where a sound is in a scene is
   the host's: `engine/sound.c` places the BSP engine's in Quake's manner
   (quieter with the distance, louder on its side), one-shot channels for
