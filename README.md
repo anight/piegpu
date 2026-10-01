@@ -201,6 +201,8 @@ and signals READY (room for a packet) and FRAME (a frame went to the screen).
   kit's; its most) and 40 MHz from chip revision v3.0 on
   (`transports/esp32p4-i2s`).
 - On the Pico the link uses only physical pins 21–27 (GP16–GP21 and GND).
+  The stick and the game controller, if there, are on picosdl's pins:
+  GP26, GP27 and GP22 (31, 32, 29), GP6 and GP7 (9, 10).
 
 ### RPi ↔ ST7789 panel
 
@@ -406,8 +408,13 @@ Every host builds them (`demos/demos.cmake`):
 | `jet-NAME` | the Jet demos (`demos/jet`): a model viewer and CubeCoders' example scenes |
 | `selftest`, `linktest` | the link, the protocol and pgl tested; the link at full speed both ways |
 
-`walk`, `keep` and `isles` play without keys too (an autopilot walks the
-level) and have sound effects, placed in Quake's manner (`engine/sound.c`:
+`walk`, `keep` and `isles` are played with the console's keys (w s a d, the
+arrows, q e, space) and, on the Pico, with an analog stick and an Adafruit
+Gamepad QT where they're wired (`hosts/pico/input`: picosdl's drivers and
+pins, GP26/27 and GP22, I2C1 on GP6/7; each looked for at the start): the
+stick walks and turns, the controller's Y and A step sideways, B, X or the
+stick pressed jump. Without any of it for 10 s an autopilot walks the level.
+They have sound effects, placed in Quake's manner (`engine/sound.c`:
 quieter with the distance, louder on the side they're on): steps, the jump,
 landings, lifts and doors with their motors, jump pads and teleporters,
 pickups, the wind, lava. The sounds are made from nothing by

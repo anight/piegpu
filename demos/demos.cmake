@@ -96,6 +96,15 @@ function(pgpu_demo target app)
 		target_sources(${target} PRIVATE ${PGPU_DEMOS}/${app}.c ${engine}/bsp.c ${engine}/render.c ${engine}/collide.c
 			${engine}/game.c ${engine}/keys.c ${engine}/palette.c ${engine}/sound.c ${engine}/sounds/sound_data.c
 			${CMAKE_CURRENT_BINARY_DIR}/level_file_${app}.S)
+		# the board's stick and game controller (engine/pad.h): the host's
+		# PGPU_PAD_SOURCES (and their PGPU_PAD_INCLUDES, PGPU_PAD_LIBS), or none
+		if(PGPU_PAD_SOURCES)
+			target_sources(${target} PRIVATE ${PGPU_PAD_SOURCES})
+			target_include_directories(${target} PRIVATE ${PGPU_PAD_INCLUDES})
+			target_link_libraries(${target} ${PGPU_PAD_LIBS})
+		else()
+			target_sources(${target} PRIVATE ${engine}/pad_none.c)
+		endif()
 		target_include_directories(${target} PRIVATE ${engine})
 		pgpu_glsl_program(TARGET ${target} NAME world DIR ${engine}/shaders
 			ARGS -a a_pos:float:3 -a a_uv:float:2 -a a_luv:float:2 -v triangles)

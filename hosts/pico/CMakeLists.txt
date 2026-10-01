@@ -28,6 +28,13 @@ set(DEMOS ${ROOT}/demos)
 set(SHADERS ${DEMOS}/shaders)
 include(${ROOT}/libpgpu/pgpu.cmake)
 
+# the board's analog stick and game controller, for the BSP engine's demos
+# (input/: picosdl's drivers and wiring; each is looked for at the start)
+set(PGPU_PAD_SOURCES ${CMAKE_CURRENT_LIST_DIR}/input/pad_pico.c ${CMAKE_CURRENT_LIST_DIR}/input/joystick.c
+	${CMAKE_CURRENT_LIST_DIR}/input/seesaw_gamepad.c)
+set(PGPU_PAD_INCLUDES ${CMAKE_CURRENT_LIST_DIR}/input)
+set(PGPU_PAD_LIBS hardware_adc hardware_i2c)
+
 include(${ROOT}/demos/demos.cmake)
 
 # pico_host_executable (name sources...): an executable on the I2S transport,

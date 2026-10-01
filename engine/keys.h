@@ -2,7 +2,10 @@
  * keys.h - the player's keys, from the console (stdio: a PC's terminal, the
  * P4's serial port): w s forward and back, a d sideways, the arrows or q e to
  * turn (up and down: walk), space to jump. A terminal sends no key-up, only a
- * key's repeats: a key holds for KEYS_HOLD_S after each. On a PC
+ * key's repeats: a key holds for KEYS_HOLD_S after each. And from the board's
+ * stick and game controller, where it has them (pad.h): the stick forward and
+ * back and to turn, the controller's Y and A (its left and right buttons) to
+ * step sideways, B, X or the stick pressed to jump. On a PC
  * (ENGINE_RAW_TERMINAL) the terminal takes keys as they're pressed, not
  * echoed, and is put back at the end (on exit, and on the signals the
  * transport ends the session on).
@@ -20,7 +23,8 @@ enum { KEYS_FORWARD, KEYS_BACK, KEYS_LEFT, KEYS_RIGHT, KEYS_TURN_LEFT, KEYS_TURN
 typedef struct
 {
 	float held[KEYS_N];			/* seconds each is held still */
-	float idle;				/* since a key was last pressed */
+	float idle;				/* since a key was last pressed (or the stick moved) */
+	bool pad;				/* the board has a stick or a game controller */
 } keys_t;
 
 /* after pgpu_init (its signal handlers are chained) */

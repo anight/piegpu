@@ -2,6 +2,7 @@
  * keys.c - see keys.h
  */
 #include "keys.h"
+#include "pad.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -56,6 +57,7 @@ void keys_init (keys_t *k)
 {
 	memset (k, 0, sizeof *k);
 	k->idle = 1e9f;
+	k->pad = pad_init ();
 #ifdef ENGINE_RAW_TERMINAL
 	raw_terminal ();
 #endif
@@ -116,6 +118,20 @@ void keys_input (keys_t *k, const game_t *g, game_input_t *in, float dt)
 	in->turn = KEYS_TURN * ((k->held[KEYS_TURN_LEFT] > 0) - (k->held[KEYS_TURN_RIGHT] > 0));
 	in->look = -g->pitch * 2.0f;
 	in->jump = k->held[KEYS_JUMP] > 0;
+	pad_t pad;
+	if (k->pad && pad_read (&pad))
+	{
+		float side = (float) !!(pad.buttons & PAD_A) - (float) !!(pad.buttons & PAD_Y);
+		bool jump = pad.buttons & (PAD_B | PAD_X | PAD_STICK);
+		if (pad.x != 0.0f || pad.y != 0.0f || side != 0.0f || jump)
+		{
+			k->idle = 0.0f;
+		}
+		in->forward = in->forward + pad.y > 1.0f ? 1.0f : in->forward + pad.y < -1.0f ? -1.0f : in->forward + pad.y;
+		in->side = in->side + side > 1.0f ? 1.0f : in->side + side < -1.0f ? -1.0f : in->side + side;
+		in->turn -= KEYS_TURN * pad.x;
+		in->jump = in->jump || jump;
+	}
 	for (int i = 0; i < KEYS_N; i++)
 	{
 		k->held[i] = k->held[i] > dt ? k->held[i] - dt : 0.0f;
