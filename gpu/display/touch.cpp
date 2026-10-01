@@ -39,6 +39,8 @@ CTouch::CTouch (CPanelOutput *pPanel)
 	m_nGood (0),
 	m_nIdle (0),
 	m_nPresses (0),
+	m_bTracking (FALSE),
+	m_nSmoothX (0), m_nSmoothY (0), m_nShownX (0), m_nShownY (0),
 	m_nX (0), m_nY (0), m_nRawX (0), m_nRawY (0), m_nPressure (0)
 {
 	memset (m_Raw, 0, sizeof m_Raw);
@@ -93,10 +95,10 @@ boolean CTouch::Initialize (const char *pOption, const char *pCalibration)
 	static const u8 Commands[Bytes] =
 	{
 		CONTROL (CH_Z1, ADC_ON), 0, CONTROL (CH_Z2, ADC_ON), 0,
-		CONTROL (CH_Y, ADC_ON), 0,		// (thrown away: the first is noisy)
-		CONTROL (CH_Y, ADC_ON), 0, CONTROL (CH_X, ADC_ON), 0,
-		CONTROL (CH_Y, ADC_ON), 0, CONTROL (CH_X, ADC_ON), 0,
-		CONTROL (CH_Y, ADC_ON), 0, CONTROL (CH_X, POWER_DOWN), 0,
+		CONTROL (CH_Y, ADC_ON), 0, CONTROL (CH_Y, ADC_ON), 0, CONTROL (CH_Y, ADC_ON), 0, CONTROL (CH_Y, ADC_ON), 0,
+		CONTROL (CH_Y, ADC_ON), 0, CONTROL (CH_Y, ADC_ON), 0, CONTROL (CH_Y, ADC_ON), 0, CONTROL (CH_Y, ADC_ON), 0,
+		CONTROL (CH_X, ADC_ON), 0, CONTROL (CH_X, ADC_ON), 0, CONTROL (CH_X, ADC_ON), 0, CONTROL (CH_X, ADC_ON), 0,
+		CONTROL (CH_X, ADC_ON), 0, CONTROL (CH_X, ADC_ON), 0, CONTROL (CH_X, ADC_ON), 0, CONTROL (CH_X, POWER_DOWN), 0,
 		0, 0
 	};
 	m_pDriver->SetAux (ChipSelect, ClockSpeed, Commands, Bytes, AuxRoutine, this);
@@ -142,18 +144,42 @@ void CTouch::AuxRoutine (const u8 *pRx, void *pParam)
 	pThis->m_nReadings = pThis->m_nReadings + 1;
 }
 
-// how far apart the closest two are
-int CTouch::Spread (int a, int b, int c)
+// A channel's samples (Samples of them, one after another): the sum of the
+// middle four (the two lowest and the two highest dropped), and how far
+// apart those four are
+int CTouch::Middle (const u8 *p, int *pSpread)
 {
-	int ab = a > b ? a - b : b - a, ac = a > c ? a - c : c - a, bc = b > c ? b - c : c - b;
-	return ab < ac ? (ab < bc ? ab : bc) : (ac < bc ? ac : bc);
+	int v[Samples];
+	for (unsigned i = 0; i < Samples; i++)		// (sorted as they come)
+	{
+		int n = VALUE (p + 2 * i);
+		unsigned k = i;
+		for (; k > 0 && v[k - 1] > n; k--)
+		{
+			v[k] = v[k - 1];
+		}
+		v[k] = n;
+	}
+	*pSpread = v[Samples / 2 + 1] - v[Samples / 2 - 2];
+	return v[Samples / 2 - 2] + v[Samples / 2 - 1] + v[Samples / 2] + v[Samples / 2 + 1];
 }
 
-int CTouch::BestTwo (int a, int b, int c)
+// A reading's position (1/16 pixels) to the one that's reported: smoothed
+// (a quarter of the way to each new one; all the way if it's Jump away: the
+// finger went there), and followed only when it's more than Slack away, so
+// far behind it. A held finger's noise stays inside
+void CTouch::Follow (int nPosition, int *pSmooth, int *pShown)
 {
-	int ab = a > b ? a - b : b - a, ac = a > c ? a - c : c - a, bc = b > c ? b - c : c - b;
-	return   ab <= ac && ab <= bc ? (a + b) / 2
-	       : ac <= ab && ac <= bc ? (a + c) / 2 : (b + c) / 2;
+	int nOff = nPosition - *pSmooth;
+	*pSmooth = nOff > Jump || nOff < -Jump ? nPosition : *pSmooth + nOff / 4;
+	if (*pSmooth - *pShown > Slack)
+	{
+		*pShown = *pSmooth - Slack;
+	}
+	else if (*pShown - *pSmooth > Slack)
+	{
+		*pShown = *pSmooth + Slack;
+	}
 }
 
 boolean CTouch::Update (u32 *pPayload)
@@ -183,21 +209,21 @@ boolean CTouch::Update (u32 *pPayload)
 	// the results start one byte after their commands (the first byte out is a command's)
 	const u8 *r = Raw + 1;
 	int nZ1 = VALUE (r), nZ2 = VALUE (r + 2);
-	int nY = BestTwo (VALUE (r + 6), VALUE (r + 10), VALUE (r + 14));
-	int nX = BestTwo (VALUE (r + 8), VALUE (r + 12), VALUE (r + 16));
+	int nSpreadY, nSpreadX;
+	int nY4 = Middle (r + 4, &nSpreadY), nX4 = Middle (r + 4 + 2 * Samples, &nSpreadX);	// (four times the reading)
 	int nPressure = nZ1 + 4095 - nZ2;
 
-	// a touch: pressed hard enough, its X and Y readings agreeing (the best
-	// two of each), twice running. Let go: Z1 near 0 (nothing pressed), twice
+	// a touch: pressed hard enough, its X and Y samples agreeing (the middle
+	// four of each), twice running. Let go: Z1 near 0 (nothing pressed), twice
 	// running. Any other reading changes nothing: now and then one comes with
 	// Z2 at full scale and a Z1 that says pressed (nothing is: a touch pulls
-	// Z2 down), or with its X or Y readings apart
-	boolean bAgree =    Spread (VALUE (r + 6), VALUE (r + 10), VALUE (r + 14)) <= MaxSpread
-			 && Spread (VALUE (r + 8), VALUE (r + 12), VALUE (r + 16)) <= MaxSpread;
+	// Z2 down), or with its X or Y samples apart
+	boolean bAgree = nSpreadY <= MaxSpread && nSpreadX <= MaxSpread;
 	boolean bDown = m_bDown, bTouched = FALSE;
 	if (nZ1 < MinZ1)
 	{
 		m_nGood = 0;
+		m_bTracking = FALSE;
 		if (++m_nIdle >= 2)
 		{
 			bDown = FALSE;
@@ -213,6 +239,22 @@ boolean CTouch::Update (u32 *pPayload)
 	{
 		return FALSE;
 	}
+	if (bTouched)
+	{
+		// where: the panel's pixels by the calibration (1/16s of them), then
+		// steadied (a new touch starts where it is)
+		int nA4 = m_bSwap ? nY4 : nX4, nB4 = m_bSwap ? nX4 : nY4;
+		int x = (nA4 - 4 * m_nX0) * (WIDTH - 1) * 4 / (m_nX1 - m_nX0);
+		int y = (nB4 - 4 * m_nY0) * (HEIGHT - 1) * 4 / (m_nY1 - m_nY0);
+		if (!m_bTracking)
+		{
+			m_nSmoothX = m_nShownX = x;
+			m_nSmoothY = m_nShownY = y;
+			m_bTracking = TRUE;
+		}
+		Follow (x, &m_nSmoothX, &m_nShownX);
+		Follow (y, &m_nSmoothY, &m_nShownY);
+	}
 	if (!bDown && !m_bDown)
 	{
 		return FALSE;				// (still not touched: nothing new)
@@ -221,16 +263,14 @@ boolean CTouch::Update (u32 *pPayload)
 	boolean bChanged = bDown != m_bDown;
 	if (bDown && bTouched)				// (where: a touched reading's)
 	{
-		int nA = m_bSwap ? nY : nX, nB = m_bSwap ? nX : nY;
-		int x = (nA - m_nX0) * (WIDTH - 1) / (m_nX1 - m_nX0);
-		int y = (nB - m_nY0) * (HEIGHT - 1) / (m_nY1 - m_nY0);
+		int x = (m_nShownX + 8) >> 4, y = (m_nShownY + 8) >> 4;
 		x = x < 0 ? 0 : x > WIDTH - 1 ? WIDTH - 1 : x;
 		y = y < 0 ? 0 : y > HEIGHT - 1 ? HEIGHT - 1 : y;
 		bChanged = bChanged || x != m_nX || y != m_nY;
 		m_nX = (u16) x;
 		m_nY = (u16) y;
-		m_nRawX = (u16) nX;
-		m_nRawY = (u16) nY;
+		m_nRawX = (u16) (nX4 / 4);
+		m_nRawY = (u16) (nY4 / 4);
 		m_nPressure = (u16) nPressure;
 		if (!m_bDown)
 		{
