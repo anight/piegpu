@@ -1,11 +1,12 @@
 # piegpu command protocol, version 1
 
 This document specifies the link between the **host** (a microcontroller such
-as the Pico 2 W or the ESP32-P4, or a PC over USB, §13; it runs the
-application) and the **Raspberry Pi** (RPi: the GPU, which renders with the
-VideoCore IV V3D and drives the ST7789 panel or HDMI). Supported for now: the
-Raspberry Pi Zero / Zero W and the Zero 2 W. "Pico" below stands for any host:
-the protocol was first written for the Pico 2 W.
+as the Pi Pico or the ESP32, or a PC over USB, §13; it runs the application)
+and the **Raspberry Pi** (RPi: the GPU, which renders with the VideoCore IV
+V3D and drives the ST7789 panel or HDMI, decodes video and sound, and mixes
+sound effects). Supported for now: the Raspberry Pi Zero, the Zero W and the
+Zero 2 W. "Pico" below stands for any host: the protocol was first written
+for the Pi Pico.
 
 Version 1 has two pipelines, which can be mixed within a frame:
 - a **fixed-function pipeline in the style of OpenGL ES 1.1** (option A), run by
@@ -14,6 +15,10 @@ Version 1 has two pipelines, which can be mixed within a frame:
   vertex and fragment shaders, compiled on the PC by `tools/glslc` into QPU code
   and uploaded as program blobs. The RPi runs them in the V3D's GL shader mode,
   with vertex shading on the QPUs and clipping in hardware.
+
+Besides drawing, a host can send media for the RPi to decode (§7.12 video
+into textures, §7.13 sound) and short sounds for it to mix (§7.14), and is
+told of the screen (§6.4) and of the panel's touch screen (§9).
 
 Status: **draft**. Everything is normative unless marked *informative*.
 
@@ -34,7 +39,7 @@ Status: **draft**. Everything is normative unless marked *informative*.
 
 ### 2.1 Pins
 
-| Signal | Direction | Pico 2 W pin (GPIO) | RPi pin (GPIO, function) |
+| Signal | Direction | Pico pin (GPIO) | RPi pin (GPIO, function) |
 |---|---|---|---|
 | DATA | Pico → RPi | 21 (GP16) | 38 (GPIO20, PCM_DIN) |
 | BCLK | Pico → RPi | 22 (GP17) | 12 (GPIO18, PCM_CLK) |
@@ -63,7 +68,8 @@ clock and frame-sync **slave** for both directions.
 - **Bit clock:** up to **75 MHz** (the Pico 2 W at 150 MHz system clock, PIO at
   2 cycles per bit). That's 75 Mbit/s = **9.375 MB/s** of payload in each
   direction. Measured on the hardware: zero bit errors at 1–75 MHz, and the
-  stream is word-aligned.
+  stream is word-aligned. (An ESP32-P4 clocks it at 31.25 MHz, or 40 MHz from
+  chip revision v3.0 on.)
 - **The clock runs continuously.** The Pico keeps BCLK and FS running and sends
   idle words (§4.4) when it has nothing to send. This is required: the RPi can
   only reply (REPLY, §9) while the Pico clocks, and a steady clock keeps the
@@ -87,15 +93,18 @@ clock and frame-sync **slave** for both directions.
 
 ### 3.1 READY (RPi → Pico): flow control
 
-- READY **high** means the RPi's command ring buffer has room for at least
-  **one maximum-size packet** (§4.3) plus margin. The Pico may start sending a packet.
+- READY **high** means the RPi has room for at least **one maximum-size
+  packet** (§4.3) plus margin. The Pico may start sending a packet.
 - READY **low** means the Pico must not **start** a new packet. A packet already
   started is always completed; the READY rule guarantees there's room for it.
 - The Pico samples READY **before sending each packet header**.
-- Hysteresis (*informative*, v1 implementation): the RPi drops READY when free
-  more than 512 KB of packets wait to be executed and raises it again under 256 KB,
+- Hysteresis (*informative*, v1 implementation): the RPi drops READY when more
+  than 512 KB of packets wait to be executed and raises it again under 256 KB,
   of a 4 MB queue. (The link's clock never stops: the idle words between packets
   are dropped as they come, 100 times a second at least, so they take no room.)
+- READY is also **low while the RPi keeps the screen to itself**: its
+  Settings, which a long press on the panel opens. The host waits as for a
+  full queue, and goes on where it was when READY comes back.
 - **Reset safety:** while the RPi boots or reboots, GPIO16 is an input with a
   pull-down. READY then reads **low**, so the Pico never streams into an RPi that
   isn't running. The external 10 kΩ pull-down covers an RP2350 GPIO pull-down
@@ -104,8 +113,9 @@ clock and frame-sync **slave** for both directions.
 
 ### 3.2 FRAME (RPi → Pico): frame pacing
 
-The RPi drives FRAME high for at least 10 µs when a frame starts its transfer to
-the panel (the moment `FRAME_END`'s image is handed to the panel DMA). The Pico
+The RPi drives FRAME high for at least 10 µs when a frame is handed to the
+screen (the moment `FRAME_END`'s image starts its transfer to the panel, in
+step with the panel's own scan; on HDMI, when its page is shown). The Pico
 can use a GPIO edge interrupt to pace its main loop without decoding REPLY.
 FRAME is optional for the Pico to use; the RPi always drives it.
 
@@ -189,11 +199,11 @@ Coordinates follow OpenGL:
 
 - Commands between two `FRAME_END` packets form a **frame**. The RPi executes
   commands in stream order. It collects the frame's draws, bins and renders them
-  when `FRAME_END` arrives, and hands the image to the panel.
+  when `FRAME_END` arrives, and hands the image to the screen (§6.4).
 - **State persists across frames**: matrices, enables, bound textures, arrays and
   objects stay as set until changed.
-- The Pico may start sending the next frame immediately; the ring buffer absorbs
-  it. Back-pressure comes only from READY.
+- The Pico may start sending the next frame immediately; the RPi's queue
+  absorbs it. Back-pressure comes only from READY.
 
 ### 6.2 Render targets, jobs and clearing
 
@@ -254,11 +264,11 @@ Payload fields are listed word by word. `[n]` means n words.
 
 | Op | Name | Payload | Meaning |
 |---|---|---|---|
-| `0x01` | RESET | — | Delete all objects and reset all state to the defaults (§7.11). Discard the current frame. Replies `INFO`. |
+| `0x01` | RESET | — | Delete all objects (the media streams closed, the sound effects gone) and reset all state to the defaults (§7.11). Discard the current frame. Replies `INFO`. |
 | `0x02` | GET_INFO | — | Replies `INFO` (§9). |
 | `0x03` | PING | `u32 cookie` | Replies `PONG` with the same cookie, once all earlier commands have been **parsed**. |
 | `0x04` | GET_STATUS | — | Replies `STATUS` (§9). |
-| `0x05` | STREAM_END | — | The host's session is over (§13): the RPi resets (as `RESET`: the video and audio streams closed, every object gone), and the link is idle again: over the USB serial port the RPi answers `#STREAM END` and takes text again (its log, the installer); the GL interface is inactive until the host sends on it again. What the host sent after it is dropped. On I2S: the reset alone (no `INFO`). |
+| `0x05` | STREAM_END | — | The host's session is over (§13): the RPi resets (as `RESET`: the video and audio streams closed, every object and sound gone), and the link is idle again: over the USB serial port the RPi answers `#STREAM END` and takes text again (its log, the installer); the GL interface is inactive until the host sends on it again. What the host sent after it is dropped. On I2S: the reset alone (no `INFO`). |
 
 ### 7.2 Frame
 
@@ -499,10 +509,12 @@ the GL frame rate.
 ### 7.13 Audio
 
 One **audio stream**, stream 3: AAC access units, MPEG audio frames (MP3) or
-Ogg Vorbis pages, decoded by the RPi and played on HDMI (when the monitor takes audio), mixed
-down to stereo. It can
-be the clock of a video stream: that stream then shows the frame due at the
-time being heard, so picture and sound stay together.
+Ogg Vorbis pages, decoded by the RPi, mixed down to stereo, and played on a
+Bluetooth speaker while one is connected to the RPi, else on HDMI (when the
+monitor takes audio); which, is the RPi's business (its Settings), decided
+when the stream opens. It can be the clock of a video stream: that stream
+then shows the frame due at the time being heard, so picture and sound stay
+together.
 
 | Op | Name | Payload | Meaning |
 |---|---|---|---|
@@ -527,8 +539,9 @@ The stream's other commands and its reply are a video stream's, with stream
 - `MEDIA_CONTROL`: `PLAY` (after a pause: the sound goes on; `arg` is
   ignored), `PAUSE` (silence; the sound, and so the video that follows it,
   stops), `CLOSE`, and op 5 `VOLUME`: `arg` the volume in percent, 0 … 100
-  (heard within about 0.1 s: it's applied as the sound goes to the
-  VideoCore, after the sound decoded and waiting).
+  (heard within about 0.1 s on HDMI: it's applied as the sound goes to the
+  output, after the sound decoded and waiting). The RPi's own mute (its
+  Settings) silences the output whatever the volume.
 - `MEDIA_STATUS` (every 100 ms while it's open, and on `MEDIA_GET_STATUS`):
   flags as a video stream's, and bits 15–8 the volume (percent); `bytes_done`, `ring_bytes`, `samples_done`,
   `max_samples` for flow control as there (an Ogg page is done once all its
@@ -603,11 +616,12 @@ A reply to a request uses the request's opcode (`GET_INFO` → `INFO`, `PING` �
 
 | Op | Name | Payload | Sent when |
 |---|---|---|---|
-| `0x02` | INFO | `u32 version`, `u16 width, u16 height` (the screen's, §6.4), `u32 max_texture_size`, `u32 max_buffers`, `u32 max_textures`, `u32 max_lights`, `u32 ring_bytes` | After `RESET`, `GET_INFO`, and once after the RPi boots. version = `0x00010000` for 1.0. |
+| `0x02` | INFO | `u32 version`, `u16 width, u16 height` (the screen's, §6.4), `u32 max_texture_size`, `u32 max_buffers`, `u32 max_textures`, `u32 max_lights`, `u32 ring_bytes` (the room for commands waiting: the I2S queue's 4 MB) | After `RESET`, `GET_INFO`, and once after the RPi boots. version = `0x00010000` for 1.0. |
 | `0x03` | PONG | `u32 cookie` | `PING` |
-| `0x04` | STATUS | `u32 frames`, `u32 crc_errors`, `u32 command_errors`, `u32 ring_free_bytes`, `u32 last_frame_us`, then the last measuring window (about a second): `u32 window_us`, `u32 window_frames`, `u32 v3d_busy_us` (binning and rendering), `u32 arm_busy_us` (receiving and executing commands, without the waits for the V3D and the panel), `u32 panel_wait_us` (for the panel DMA of the previous frame). Older Zeros send the first 5 words | `GET_STATUS` |
+| `0x04` | STATUS | `u32 frames`, `u32 crc_errors`, `u32 command_errors`, `u32 ring_free_bytes`, `u32 last_frame_us`, then the last measuring window (about a second): `u32 window_us`, `u32 window_frames`, `u32 v3d_busy_us` (binning and rendering), `u32 arm_busy_us` (receiving and executing commands, without the waits for the V3D and the panel), `u32 panel_wait_us` (for the panel DMA of the previous frame). Early firmware sent the first 5 words | `GET_STATUS` |
 | `0x05` | DISPLAY | `u32 output_flags`, `u16 width, u16 height`, `u16 monitor_width, u16 monitor_height`, `u32 monitor_refresh_mhz`, `u16 signal_width, u16 signal_height`, `u8 monitor_name[16]` (see below) | After each `INFO`, and whenever the screen or the HDMI monitor changes (§6.4) |
 | `0x06` | MEDIA_STATUS | `u32 stream`, `u32 flags` (bit 0 open, bit 1 playing, bit 2 ended: the EOS came out of the decoder, bit 3 error: a VideoCore component reported one), `u32 bytes_done`, `u32 ring_bytes`, `u32 decoded`, `u32 shown`, `u32 dropped` (frames), `s64 shown_pts` (2 words; `0x8000000000000000`: none), `u32 waiting` (decoded frames before their time), `u32 samples_done`, `u32 max_samples` | Every 100 ms while a stream is open, and `MEDIA_GET_STATUS`. `bytes_done` and `samples_done` count what the decoder has taken since the open (`VIDEO_OPEN`, `AUDIO_OPEN`; mod 2^32): the host may have `ring_bytes` and `max_samples` more in flight (§7.12) |
+| `0x07` | TOUCH | `u32 flags` (bit 0: touched now; bits 31–16: presses since the RPi started, mod 65536), `u16 x, u16 y` (the panel's pixels, 320 × 240 as it's shown; while not touched, the last place), `u16 raw_x, u16 raw_y` (the controller's readings there, 0 … 4095: to calibrate by), `u32 pressure` (0 … 4095; touched from about 300) | Whenever the panel's touch screen changes (pressed, moved, let go), and after each `INFO`. None from an RPi without a touch screen |
 | `0x11` | FRAME_DONE | `u32 frame_number`, `u32 render_us`, `u32 draws`, `u32 triangles` | After a frame whose `FRAME_END` had flag bit 0 set is handed to the panel |
 | `0x16` | PIXELS | `u32 offset`, `color pixels[1 … 61]` | `READ_PIXELS`: the pixels from `offset` (in pixels, rows bottom up), in as many replies as needed |
 | `0x7E` | CREDIT | `u32 bytes` | USB stream only (§13): the stream bytes the RPi has taken so far, since the session started |
@@ -622,6 +636,13 @@ for length errors, the header word for CRC errors, otherwise 0.
 
 The Pico can recognise a reboot of the RPi by an `INFO` reply it didn't ask
 for; all objects and state are gone then.
+
+`TOUCH`: a press and its release between two looks of the host show in the
+count of presses. The position is steadied by the RPi (a held finger gives a
+still one) and mapped to the panel's pixels by its calibration; the raw
+readings are for a host that calibrates. While the RPi's own Settings is open
+(a long press of 2 s opens it) the host gets no touches: it's told the touch
+was let go, and READY is low (§3.1).
 
 `DISPLAY` fields:
 
@@ -730,9 +751,10 @@ In the fixed-function pipeline SRC_ALPHA_SATURATE is approximated by SRC_ALPHA.
 | lights | 4 |
 | vertices per draw | 65536 |
 | packet payload | 16384 words (64 KB) |
-| command ring on the RPi | 1 MB |
+| programs | 64 ids; a blob at most 65536 words, uniform storage 4096 words |
+| commands waiting on the RPi (I2S) | 4 MB; READY low over 512 KB |
 | video streams | 2; a stream: 4 MB and 256 samples not yet decoded, 8 decoded frames waiting |
-| audio stream | 1 (stream 3); 512 KB and 1024 samples not yet decoded, 2 s of decoded sound; an access unit at most 16 KB |
+| audio stream | 1 (stream 3); 512 KB and 1024 samples not yet decoded, 2 s of decoded sound; an access unit at most 64 KB |
 | sound effects | 64 sounds, 4 M frames in all (8 MB); 16 channels |
 | video textures | width a power of two, 32 … 2048; height a multiple of 16, … 2048 |
 
@@ -798,7 +820,7 @@ On the serial port:
 
 - **The stream:** the PC sends `piegpu-stream` (a new session each time);
   the RPi answers `#STREAM`, takes all following bytes as command packets
-  (§4, byte aligned) and ignores the I2S input from then on. Replies come back
+  (§4, byte aligned) and ignores the I2S input until the session ends. Replies come back
   on the same link; the log goes on as text, which the PC skips (packets are
   found by their header and CRC).
 - **The end:** `STREAM_END` (§7.1) ends the session: the RPi answers
@@ -811,11 +833,20 @@ On the serial port:
   fit, so the RPi sends `CREDIT` replies (§9) with the number of stream bytes
   taken; the PC keeps at most 6 KB unacknowledged (`PGPU_WINDOW` sets it).
 
+With `host=auto` (the RPi's default) a USB session takes the RPi over from an
+I2S host and gives it back at its end. Its start and its end each reset the
+RPi's state (`RESET`'s), and the I2S host isn't told (§14).
+
 ## 14. Open points
 
-- The exact READY thresholds and ring size, to be tuned against real workloads.
+- A host isn't told that its objects are gone when something else reset the
+  RPi: another host's session over USB (no `INFO` goes out on I2S for it),
+  or a restart the host didn't see (the `INFO` after the boot is there, §9,
+  but the host library doesn't act on it yet). Its draws then name objects
+  that aren't there (`ERROR` 6) till it starts over.
 - Whether `DRAW_INLINE` should get 16-bit formats (half the bandwidth for
   screen-space 2D).
 - The generic blend ending costs about 75 instructions per fragment; common
   blend states could get cheaper specialised endings.
-- A GL ES API wrapper on the Pico (`gl*` names, state queries, `glGetError`).
+- A Bluetooth speaker's delay isn't known to the RPi: a video that follows
+  the sound's clock assumes 0.2 s for it.
