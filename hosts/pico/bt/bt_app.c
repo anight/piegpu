@@ -17,7 +17,9 @@
  * directly instead of searching again.
  *
  * From picosdl (backend/pico/bt). Added in piegpu: what a screen needs
- * (bt_app_get_status, bt_app_show_passkey), and the name it goes by.
+ * (bt_app_get_status, bt_app_show_passkey), the name it goes by, and a mouse
+ * instead of a keyboard (bt_app_look_for: what the search takes, and which of
+ * the two remembered devices is meant).
  */
 #include "../psdl_pico_log.h"
 #include "bt_app.h"
@@ -32,6 +34,7 @@
 #include "debug.h"
 #include "hid_report.h"
 #include "kbd_decode.h"
+#include "mouse_decode.h"
 
 #define LE_SCAN_WINDOW_MS 6000
 
@@ -45,6 +48,16 @@
 
 #define TLV_TAG_KEYBOARD ((((uint32_t) 'P') << 24) | (((uint32_t) 'K') << 16) | \
                           (((uint32_t) 'B') << 8)  | ((uint32_t) '1'))
+#define TLV_TAG_MOUSE    ((((uint32_t) 'P') << 24) | (((uint32_t) 'M') << 16) | \
+                          (((uint32_t) 'S') << 8)  | ((uint32_t) '1'))
+
+// What the search takes, and the tag its device is remembered under.
+static bt_device_t wanted = BT_DEVICE_KEYBOARD;
+
+void bt_app_look_for(bt_device_t device) { wanted = device; }
+bt_device_t bt_app_looking_for(void) { return wanted; }
+const char *bt_app_device_name(void) { return wanted == BT_DEVICE_MOUSE ? "mouse" : "keyboard"; }
+static uint32_t stored_tag(void) { return wanted == BT_DEVICE_MOUSE ? TLV_TAG_MOUSE : TLV_TAG_KEYBOARD; }
 
 typedef struct {
     uint8_t   kind;        // bt_link_kind_t
@@ -75,9 +88,13 @@ static bt_link_kind_t pending_kind = BT_LINK_NONE;
 static bd_addr_t      pending_addr;
 static bd_addr_type_t pending_addr_type;
 
-// For a screen (piegpu): the name the search reported, the digits pairing wants.
+// For a screen (piegpu): the name the search reported, the digits pairing wants,
+// and a device seen lately that is not in its pairing mode.
 static char pending_name[32];
 static char passkey[8];
+static char unpairable_name[32];
+static uint32_t unpairable_seen_ms;
+#define UNPAIRABLE_SHOWN_MS 10000
 
 static uint32_t key_events_seen;
 static int  reconnect_attempts;
@@ -131,7 +148,7 @@ static void load_stored_keyboard(void) {
     have_stored_keyboard = false;
     if (tlv_impl == NULL) return;
 
-    int len = tlv_impl->get_tag(tlv_context, TLV_TAG_KEYBOARD,
+    int len = tlv_impl->get_tag(tlv_context, stored_tag(),
                                 (uint8_t *) &stored_keyboard, sizeof(stored_keyboard));
     if (len != sizeof(stored_keyboard)) return;
     if (stored_keyboard.kind != BT_LINK_LE && stored_keyboard.kind != BT_LINK_CLASSIC) return;
@@ -146,7 +163,7 @@ static void save_stored_keyboard(bt_link_kind_t kind, const bd_addr_t addr, bd_a
     have_stored_keyboard = true;
 
     if (tlv_impl == NULL) return;
-    tlv_impl->store_tag(tlv_context, TLV_TAG_KEYBOARD,
+    tlv_impl->store_tag(tlv_context, stored_tag(),
                         (const uint8_t *) &stored_keyboard, sizeof(stored_keyboard));
 }
 
@@ -154,7 +171,7 @@ void bt_app_forget_pairing(void) {
     have_stored_keyboard = false;
     reconnect_attempts = 0;
     if (tlv_impl != NULL) {
-        tlv_impl->delete_tag(tlv_context, TLV_TAG_KEYBOARD);
+        tlv_impl->delete_tag(tlv_context, stored_tag());
     }
     // Drop the security material too, otherwise the keyboard stays bonded even
     // though we have forgotten which device it was. Classic link keys and the
@@ -163,7 +180,7 @@ void bt_app_forget_pairing(void) {
     if (stored_keyboard.kind == BT_LINK_LE) {
         gap_delete_bonding((bd_addr_type_t) stored_keyboard.addr_type, stored_keyboard.addr);
     }
-    psdl_log("[app] forgot the paired keyboard\n");
+    psdl_log("[app] forgot the paired %s\n", bt_app_device_name());
 }
 
 // --------------------------------------------------------- search phases --
@@ -220,7 +237,7 @@ static void set_phase_timer(uint32_t ms) {
 
 static void start_le_search(void) {
     app_state = APP_SEARCH_LE;
-    psdl_log("[app] scanning for LE keyboards...\n");
+    psdl_log("[app] scanning for a %s (LE)...\n", bt_app_device_name());
     // LE scanning has no natural end, so we time-box it ourselves.
     set_phase_timer(LE_SCAN_WINDOW_MS);
     bt_le_start_search();
@@ -228,7 +245,7 @@ static void start_le_search(void) {
 
 static void start_classic_search(void) {
     app_state = APP_SEARCH_CLASSIC;
-    psdl_log("[app] scanning for Classic keyboards...\n");
+    psdl_log("[app] scanning for a %s (Classic)...\n", bt_app_device_name());
     // The inquiry ends on its own and reports GAP_EVENT_INQUIRY_COMPLETE,
     // which comes back as bt_app_search_finished; this is only a backstop.
     set_phase_timer(CLASSIC_INQUIRY_BACKSTOP_MS);
@@ -260,8 +277,8 @@ static void start_connecting(void) {
     reconnect_attempts = 0;
 
     if (have_stored_keyboard) {
-        psdl_log("[app] remembered a %s keyboard at %s, connecting...\n",
-               bt_link_kind_name((bt_link_kind_t) stored_keyboard.kind),
+        psdl_log("[app] remembered a %s %s at %s, connecting...\n",
+               bt_link_kind_name((bt_link_kind_t) stored_keyboard.kind), bt_app_device_name(),
                bd_addr_to_str(stored_keyboard.addr));
         reconnect_attempts = 1;
         app_state = APP_CONNECTING;
@@ -290,8 +307,8 @@ void bt_app_device_found(bt_link_kind_t kind, const bd_addr_t addr,
     bt_le_stop_search();
     bt_classic_stop_search();
 
-    psdl_log("[app] found %s keyboard %s%s%s, connecting...\n",
-           bt_link_kind_name(kind), bd_addr_to_str(addr),
+    psdl_log("[app] found %s %s %s%s%s, connecting...\n",
+           bt_link_kind_name(kind), bt_app_device_name(), bd_addr_to_str(addr),
            (name != NULL && name[0] != 0) ? " " : "",
            (name != NULL && name[0] != 0) ? name : "");
 
@@ -305,6 +322,19 @@ void bt_app_device_found(bt_link_kind_t kind, const bd_addr_t addr,
         bt_le_connect(addr, addr_type);
     } else {
         bt_classic_connect(addr);
+    }
+}
+
+void bt_app_seen_unpairable(const bd_addr_t addr, const char *name) {
+    if (app_state != APP_SEARCH_LE && app_state != APP_SEARCH_CLASSIC) return;
+
+    uint32_t now = btstack_run_loop_get_time_ms();
+    bool again = unpairable_name[0] != 0 && now - unpairable_seen_ms < UNPAIRABLE_SHOWN_MS;
+    snprintf(unpairable_name, sizeof(unpairable_name), "%s",
+             (name != NULL && name[0] != 0) ? name : bd_addr_to_str(addr));
+    unpairable_seen_ms = now;
+    if (!again) {
+        psdl_log("[app] %s %s is there, but not in its pairing mode\n", bt_app_device_name(), unpairable_name);
     }
 }
 
@@ -352,6 +382,7 @@ void bt_app_link_up(bt_link_kind_t kind) {
     key_events_seen = 0;
     passkey[0] = 0;
     kbd_decode_reset();
+    mouse_decode_reset();
 
     if (pending_kind == kind) {
         save_stored_keyboard(kind, pending_addr, pending_addr_type);
@@ -360,7 +391,7 @@ void bt_app_link_up(bt_link_kind_t kind) {
     // Our lock state starts clear; push it so the keyboard's LEDs agree.
     bt_app_set_keyboard_leds(kbd_decode_led_mask());
 
-    psdl_log("\n=== keyboard connected over %s - start typing ===\n", bt_link_kind_name(kind));
+    psdl_log("\n=== %s connected over %s ===\n", bt_app_device_name(), bt_link_kind_name(kind));
 }
 
 void bt_app_link_down(bt_link_kind_t kind, const char *reason) {
@@ -374,6 +405,7 @@ void bt_app_link_down(bt_link_kind_t kind, const char *reason) {
     active_link = BT_LINK_NONE;
     passkey[0] = 0;
     kbd_decode_reset();
+    mouse_decode_reset();
 
     // A drop from a working link is usually the keyboard idling out, so retry
     // the same device quickly before falling back to a full search.
@@ -392,8 +424,15 @@ void bt_app_get_status(bt_app_status_t *out) {
     memset(out, 0, sizeof(*out));
     out->remembered = have_stored_keyboard;
     switch (app_state) {
-        case APP_SEARCH_LE:      out->phase = BT_APP_SEARCHING; out->kind = BT_LINK_LE; return;
-        case APP_SEARCH_CLASSIC: out->phase = BT_APP_SEARCHING; out->kind = BT_LINK_CLASSIC; return;
+        case APP_SEARCH_LE:
+        case APP_SEARCH_CLASSIC:
+            out->phase = BT_APP_SEARCHING;
+            out->kind = app_state == APP_SEARCH_LE ? BT_LINK_LE : BT_LINK_CLASSIC;
+            if (unpairable_name[0] != 0 &&
+                btstack_run_loop_get_time_ms() - unpairable_seen_ms < UNPAIRABLE_SHOWN_MS) {
+                snprintf(out->unpairable, sizeof(out->unpairable), "%s", unpairable_name);
+            }
+            return;
         case APP_CONNECTING:     out->phase = BT_APP_CONNECTING; out->kind = pending_kind; break;
         case APP_CONNECTED:      out->phase = BT_APP_CONNECTED; out->kind = active_link; break;
         case APP_RETRY_WAIT:     out->phase = BT_APP_WAITING; out->kind = pending_kind; break;
@@ -416,11 +455,11 @@ void bt_app_print_status(void) {
     }
     psdl_log(", %lu key events decoded", (unsigned long) key_events_seen);
     if (have_stored_keyboard) {
-        psdl_log(", paired with %s keyboard %s",
-               bt_link_kind_name((bt_link_kind_t) stored_keyboard.kind),
+        psdl_log(", paired with %s %s %s",
+               bt_link_kind_name((bt_link_kind_t) stored_keyboard.kind), bt_app_device_name(),
                bd_addr_to_str(stored_keyboard.addr));
     } else {
-        psdl_log(", no keyboard paired");
+        psdl_log(", no %s paired", bt_app_device_name());
     }
     psdl_log("\n");
 }

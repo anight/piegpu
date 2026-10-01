@@ -409,7 +409,7 @@ Every host builds them (`demos/demos.cmake`):
 | `jet-NAME` | the Jet demos (`demos/jet`): a model viewer and CubeCoders' example scenes |
 | `selftest`, `linktest` | the link, the protocol and pgl tested; the link at full speed both ways |
 | `wifi` | the Pico 2 W only (`hosts/pico/wifi`): Wi-Fi asked of a phone (below) |
-| `keyboard` | the Pico 2 W only (`hosts/pico/keyboard`): a Bluetooth keyboard found, paired with and typed on (below) |
+| `keyboard`, `mouse` | the Pico 2 W only (`hosts/pico/keyboard`, `mouse`): a Bluetooth keyboard, or a mouse, found, paired with and used (below) |
 
 `walk`, `keep` and `isles` are played with the console's keys (w s a d, the
 arrows, q e, space) and, on the Pico, with an analog stick and an Adafruit
@@ -440,7 +440,7 @@ the start, or `s` on the console, sets it up again. The QR codes are Project
 Nayuki's generator (MIT, `qrcodegen.c`, as LVGL carries it).
 
 `keyboard` connects a Bluetooth keyboard to the Pico W, Classic or LE: picosdl's
-keyboard host on BTstack (`hosts/pico/keyboard/bt`). It looks for one, LE and
+keyboard host on BTstack (`hosts/pico/bt`). It looks for one, LE and
 Classic in turn (the keyboard in its pairing mode), connects to the first it
 finds, shows the digits to type on it if pairing wants them, and then what's
 typed and each key as it goes down and up. The keyboard is remembered
@@ -448,6 +448,12 @@ typed and each key as it goes down and up. The keyboard is remembered
 start. On the console: `s` the state, `r` forget it and look again, `n` look
 again, `d` the Bluetooth log; the stick's button held at the start forgets
 it too.
+
+`mouse` does the same for a Bluetooth mouse (the same host, looking for a
+mouse: a device's reports are read for a keyboard's fields and for a mouse's):
+a pointer follows it, with its three buttons, its wheels and a mark where it
+was clicked. The mouse and the keyboard are each remembered on their own; one
+device at a time.
 
 ## Host boards (`hosts/pico`, `hosts/esp32p4`)
 

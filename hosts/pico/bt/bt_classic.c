@@ -25,6 +25,7 @@
 #include "debug.h"
 #include "hid_report.h"
 #include "kbd_decode.h"
+#include "mouse_decode.h"
 
 // Report map fetched over SDP.
 static uint8_t hid_descriptor_storage[512];
@@ -48,12 +49,14 @@ static void classic_packet_handler(uint8_t packet_type, uint16_t channel, uint8_
 // Class of Device layout: bits 8..12 are the major device class, bits 2..7 the
 // minor. For the Peripheral major class, minor bits 6..7 say what kind:
 // 1 = keyboard, 2 = pointing device, 3 = combo.
+// (In piegpu: or a pointing device, when that is what the search takes.)
 static bool cod_is_keyboard(uint32_t cod) {
     uint8_t major = (uint8_t) ((cod >> 8) & 0x1f);
     if (major != 0x05) return false;
 
     uint8_t peripheral_kind = (uint8_t) ((cod >> 6) & 0x03);
-    return peripheral_kind == 0x01 || peripheral_kind == 0x03;
+    uint8_t wanted_kind = bt_app_looking_for() == BT_DEVICE_MOUSE ? 0x02 : 0x01;
+    return peripheral_kind == wanted_kind || peripheral_kind == 0x03;
 }
 
 // -------------------------------------------------------------------- LEDs --
@@ -169,6 +172,11 @@ static void classic_handle_report(const uint8_t *report, uint16_t report_len) {
      * silence as "all released". */
     if (media.describes_keyboard) kbd_decode_report(&kbd);
     kbd_decode_media(&media);
+
+    mouse_report_t mouse;
+    if (hid_report_to_mouse(descriptor, descriptor_len, report, report_len, &mouse)) {
+        mouse_decode_report(&mouse);
+    }
 }
 
 // Announce the link once we can actually interpret what the keyboard sends.
@@ -255,7 +263,7 @@ static void handle_hid_event(uint8_t *packet) {
             hid_cid = 0;
             descriptor_available = false;
             link_reported = false;
-            bt_app_link_down(BT_LINK_CLASSIC, "keyboard disconnected");
+            bt_app_link_down(BT_LINK_CLASSIC, "device disconnected");
             break;
 
         default:

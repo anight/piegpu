@@ -1,6 +1,6 @@
 /*
  * keyboard - a Bluetooth keyboard for the Pico 2 W, Classic or LE (picosdl's
- * host for them, bt/), shown on the RPi's screen:
+ * host for them, ../bt), shown on the RPi's screen:
  *
  * - it looks for a keyboard, LE and Classic in turn: put the keyboard in its
  *   pairing mode. The first one found is connected to;
@@ -215,7 +215,13 @@ int main (void)
 			y = line (vp, y, hs, WHITE, "LOOKING FOR A KEYBOARD");
 			y = line (vp, y, hs, GREY, st.kind == BT_LINK_LE ? "LE" : "CLASSIC");
 			y += 10 * hs;
-			line (vp, y, hs * 0.5f, GREY, "PUT THE KEYBOARD IN ITS PAIRING MODE");
+			y = line (vp, y, hs * 0.5f, GREY, "PUT THE KEYBOARD IN ITS PAIRING MODE");
+			if (st.unpairable[0])			/* one is there, calling the host it's paired with */
+			{
+				y += 10 * hs;
+				y = line (vp, y, hs, YELLOW, st.unpairable);
+				line (vp, y, hs * 0.5f, YELLOW, "IS THERE, BUT NOT IN ITS PAIRING MODE");
+			}
 			break;
 		case BT_APP_CONNECTING:
 		case BT_APP_WAITING:

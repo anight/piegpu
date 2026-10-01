@@ -1,10 +1,14 @@
-A Bluetooth HID keyboard host on BTstack, Classic and LE: picosdl's
-(backend/pico/bt, with ../psdl_pico_log.[ch], its interrupt-safe console
-output), BSD-2-Clause as piegpu is, by the same author.
+A Bluetooth HID host on BTstack, Classic and LE, for a keyboard or a mouse:
+picosdl's keyboard host (backend/pico/bt, with ../psdl_pico_log.[ch], its
+interrupt-safe console output), BSD-2-Clause as piegpu is, by the same author.
 
 Changed here: the device is called "piegpu"; bt_app tells a screen what it's
 doing and which digits pairing wants typed (bt_app_get_status,
-bt_app_show_passkey: the two transports call the latter).
+bt_app_show_passkey: the two transports call the latter); and a mouse:
+bt_app_look_for says which of the two the search takes (the Classic class of
+device, the LE appearance) and each is remembered on its own; every report is
+also read for a mouse's fields (hid_report_to_mouse) and passed on
+(mouse_decode.[ch]).
 
 btstack_config.h is derived from the pico-examples Pico W Bluetooth
 configuration, and kbd_host.gatt follows BTstack's own example, so this

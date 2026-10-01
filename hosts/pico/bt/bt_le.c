@@ -21,6 +21,7 @@
 #include "debug.h"
 #include "hid_report.h"
 #include "kbd_decode.h"
+#include "mouse_decode.h"
 
 // Report map storage. Plain keyboards sit well under 200 bytes, but anything
 // with media keys, a vendor page or several HID service instances runs much
@@ -73,6 +74,7 @@ static uint8_t post_connect_attempts;
 // Appearance values that mean "this is a keyboard".
 #define APPEARANCE_GENERIC_HID 0x03c0
 #define APPEARANCE_KEYBOARD    0x03c1
+#define APPEARANCE_MOUSE       0x03c2
 
 static void le_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size);
 static void post_connect_run(btstack_timer_source_t *ts);
@@ -108,10 +110,13 @@ static void ad_extract_name(const uint8_t *ad_data, uint8_t ad_len, char *out, s
 
 // Does this advertisement look like a keyboard? The HID service UUID is the
 // reliable signal; appearance catches devices that only list it there.
+//
+// (In piegpu: or like a mouse, when that is what the search takes. Keyboards and
+// mice both list the HID service, so an advertisement that says by its appearance
+// that it is the other kind is left alone; one that does not say is taken.)
 static bool ad_looks_like_keyboard(const uint8_t *ad_data, uint8_t ad_len) {
-    if (ad_data_contains_uuid16(ad_len, ad_data, ORG_BLUETOOTH_SERVICE_HUMAN_INTERFACE_DEVICE)) {
-        return true;
-    }
+    uint16_t wanted_appearance = bt_app_looking_for() == BT_DEVICE_MOUSE ? APPEARANCE_MOUSE : APPEARANCE_KEYBOARD;
+    uint16_t other_appearance  = bt_app_looking_for() == BT_DEVICE_MOUSE ? APPEARANCE_KEYBOARD : APPEARANCE_MOUSE;
 
     ad_context_t context;
     for (ad_iterator_init(&context, ad_len, ad_data);
@@ -120,14 +125,42 @@ static bool ad_looks_like_keyboard(const uint8_t *ad_data, uint8_t ad_len) {
 
         if (ad_iterator_get_data_type(&context) != BLUETOOTH_DATA_TYPE_APPEARANCE) continue;
         if (ad_iterator_get_data_len(&context) < 2) continue;
+        if (little_endian_read_16(ad_iterator_get_data(&context), 0) == other_appearance) return false;
+    }
+
+    if (ad_data_contains_uuid16(ad_len, ad_data, ORG_BLUETOOTH_SERVICE_HUMAN_INTERFACE_DEVICE)) {
+        return true;
+    }
+
+    for (ad_iterator_init(&context, ad_len, ad_data);
+         ad_iterator_has_more(&context);
+         ad_iterator_next(&context)) {
+
+        if (ad_iterator_get_data_type(&context) != BLUETOOTH_DATA_TYPE_APPEARANCE) continue;
+        if (ad_iterator_get_data_len(&context) < 2) continue;
 
         uint16_t appearance = little_endian_read_16(ad_iterator_get_data(&context), 0);
-        if (appearance == APPEARANCE_KEYBOARD || appearance == APPEARANCE_GENERIC_HID) {
+        if (appearance == wanted_appearance || appearance == APPEARANCE_GENERIC_HID) {
             return true;
         }
     }
 
     return false;
+}
+
+// The Flags field's two discoverable bits (limited, general). An advertisement
+// without the field is taken as discoverable: nothing says it is not.
+static bool ad_is_discoverable(const uint8_t *ad_data, uint8_t ad_len) {
+    ad_context_t context;
+    for (ad_iterator_init(&context, ad_len, ad_data);
+         ad_iterator_has_more(&context);
+         ad_iterator_next(&context)) {
+
+        if (ad_iterator_get_data_type(&context) != BLUETOOTH_DATA_TYPE_FLAGS) continue;
+        if (ad_iterator_get_data_len(&context) < 1) continue;
+        return (ad_iterator_get_data(&context)[0] & 0x03) != 0;
+    }
+    return true;
 }
 
 // -------------------------------------------------------------------- LEDs --
@@ -260,6 +293,16 @@ static void le_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *pa
             char name[32];
             ad_extract_name(ad_data, ad_len, name, sizeof(name));
 
+            // (In piegpu.) A device that advertises without being discoverable is
+            // calling the host it is already paired with, not offering itself: it
+            // takes our connection and then drops it when we ask to pair (seen with
+            // a Logitech mouse: status 0x13, over and over). Leave it alone, and
+            // say so: its pairing mode is what is wanted.
+            if (!ad_is_discoverable(ad_data, ad_len)) {
+                bt_app_seen_unpairable(addr, name);
+                break;
+            }
+
             bt_app_device_found(BT_LINK_LE, addr, addr_type, name);
             break;
         }
@@ -285,13 +328,14 @@ static void le_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *pa
         case HCI_EVENT_DISCONNECTION_COMPLETE: {
             if (connection_handle == HCI_CON_HANDLE_INVALID) break;
             if (hci_event_disconnection_complete_get_connection_handle(packet) != connection_handle) break;
+            psdl_log("[le] disconnected, reason 0x%02x\n", hci_event_disconnection_complete_get_reason(packet));
 
             btstack_run_loop_remove_timer(&post_connect_timer);
             connection_handle = HCI_CON_HANDLE_INVALID;
             hids_cid = 0;
             bool was_ready = (le_state == LE_READY);
             le_state = LE_IDLE;
-            bt_app_link_down(BT_LINK_LE, was_ready ? "keyboard disconnected" : "link lost during setup");
+            bt_app_link_down(BT_LINK_LE, was_ready ? "device disconnected" : "link lost during setup");
             break;
         }
 
@@ -328,7 +372,12 @@ static void sm_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *pa
             break;
         }
 
+        case SM_EVENT_PAIRING_STARTED:
+            psdl_log("[le] pairing started\n");
+            break;
+
         case SM_EVENT_JUST_WORKS_REQUEST:
+            psdl_log("[le] pairing without digits (just works)\n");
             sm_just_works_confirm(sm_event_just_works_request_get_handle(packet));
             break;
 
@@ -426,6 +475,11 @@ static void le_handle_report(uint8_t service_index, const uint8_t *report, uint1
      * silence as "all released". */
     if (media.describes_keyboard) kbd_decode_report(&kbd);
     kbd_decode_media(&media);
+
+    mouse_report_t mouse;
+    if (hid_report_to_mouse(descriptor, descriptor_len, report, report_len, &mouse)) {
+        mouse_decode_report(&mouse);
+    }
 }
 
 // Ask hids_client for a specific protocol mode.

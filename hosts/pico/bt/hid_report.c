@@ -97,6 +97,52 @@ void hid_report_to_kbd(const uint8_t *descriptor, uint16_t descriptor_len,
     }
 }
 
+#define USAGE_PAGE_DESKTOP  0x01
+#define USAGE_PAGE_BUTTON   0x09
+#define USAGE_DESKTOP_X     0x30
+#define USAGE_DESKTOP_Y     0x31
+#define USAGE_DESKTOP_WHEEL 0x38
+#define USAGE_CONSUMER_PAN  0x0238
+
+bool hid_report_to_mouse(const uint8_t *descriptor, uint16_t descriptor_len,
+                         const uint8_t *report, uint16_t report_len,
+                         mouse_report_t *out) {
+    memset(out, 0, sizeof(*out));
+    if (descriptor == NULL || descriptor_len == 0) return false;
+
+    btstack_hid_parser_t parser;
+    btstack_hid_parser_init(&parser, descriptor, descriptor_len,
+                            HID_REPORT_TYPE_INPUT, report, report_len);
+
+    // A report is a mouse's when it carries X or Y. Buttons alone are not
+    // enough: other devices have Button-page fields too.
+    bool moves = false;
+    while (btstack_hid_parser_has_more(&parser)) {
+        uint16_t usage_page;
+        uint16_t usage;
+        int32_t  value;
+        btstack_hid_parser_get_field(&parser, &usage_page, &usage, &value);
+
+        if (usage_page == USAGE_PAGE_DESKTOP) {
+            switch (usage) {
+                case USAGE_DESKTOP_X:     out->dx = (int16_t) value; moves = true; break;
+                case USAGE_DESKTOP_Y:     out->dy = (int16_t) value; moves = true; break;
+                case USAGE_DESKTOP_WHEEL: out->wheel = (int8_t) value; break;
+                default: break;
+            }
+        } else if (usage_page == USAGE_PAGE_BUTTON) {
+            if (value != 0 && usage >= 1 && usage <= 16) {
+                out->buttons |= (uint16_t) (1u << (usage - 1));
+            }
+        } else if (usage_page == USAGE_PAGE_CONSUMER && usage == USAGE_CONSUMER_PAN) {
+            out->pan = (int8_t) value;
+        }
+    }
+
+    if (!moves) memset(out, 0, sizeof(*out));
+    return moves;
+}
+
 void hid_led_layout_find(hid_led_layout_t *layout,
                          const uint8_t *descriptor, uint16_t descriptor_len) {
     memset(layout, 0, sizeof(*layout));

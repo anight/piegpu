@@ -21,11 +21,28 @@ typedef enum {
 
 const char *bt_link_kind_name(bt_link_kind_t kind);
 
+// What the search takes (added in piegpu): a keyboard, as picosdl's does, or a
+// mouse. One device at a time; each kind is remembered on its own. Set before
+// bt_app_setup. The reports of whatever is connected are decoded both ways (a
+// keyboard with a trackpad gives both): kbd_decode.h, mouse_decode.h.
+typedef enum {
+    BT_DEVICE_KEYBOARD = 0,
+    BT_DEVICE_MOUSE,
+} bt_device_t;
+
+void bt_app_look_for(bt_device_t device);
+bt_device_t bt_app_looking_for(void);
+const char *bt_app_device_name(void);     // "keyboard", "mouse"
+
 // -- called by the transports, implemented by bt_app.c ---------------------
 
 // A plausible keyboard turned up during a search. First one wins.
 void bt_app_device_found(bt_link_kind_t kind, const bd_addr_t addr,
                          bd_addr_type_t addr_type, const char *name);
+
+// A device of the kind looked for was seen, but it is not in its pairing mode
+// (LE: it advertises without being discoverable). Added in piegpu.
+void bt_app_seen_unpairable(const bd_addr_t addr, const char *name);
 
 // A search phase ran to completion without finding anything.
 void bt_app_search_finished(bt_link_kind_t kind);
@@ -92,6 +109,7 @@ typedef struct {
     char name[32];          // "" when it is not known (a remembered keyboard)
     char address[18];       // "" while searching
     char passkey[8];        // digits to type on the keyboard, "" when none are wanted
+    char unpairable[32];    // while searching: a device seen lately that is not in its pairing mode ("": none)
     bool remembered;        // a keyboard is stored for the next start
 } bt_app_status_t;
 

@@ -39,6 +39,21 @@ void hid_report_to_kbd(const uint8_t *descriptor, uint16_t descriptor_len,
                        const uint8_t *report, uint16_t report_len,
                        kbd_report_t *out, kbd_media_t *media);
 
+// A mouse's report (added in piegpu): what moved since the last one, and the
+// buttons held now (bit 0 the left one, 1 the right, 2 the middle, ...).
+typedef struct {
+    int16_t  dx, dy;        // right and down positive
+    int8_t   wheel;         // away from the user positive
+    int8_t   pan;           // the horizontal wheel, right positive
+    uint16_t buttons;
+} mouse_report_t;
+
+// Reduce a HID Input report to a mouse's fields. False if it has none (a
+// keyboard's report, a media report): `out` is then all zero.
+bool hid_report_to_mouse(const uint8_t *descriptor, uint16_t descriptor_len,
+                         const uint8_t *report, uint16_t report_len,
+                         mouse_report_t *out);
+
 // Where a keyboard keeps its lock LEDs inside its Output report.
 typedef struct {
     bool     found;
