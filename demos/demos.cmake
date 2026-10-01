@@ -7,6 +7,8 @@
 #   linktest            the link at full speed both ways, checked word by word
 #   gears breakout flight
 #   antigrav            anti-gravity racing, after WipEout: six craft, a circuit
+#   walk                the BSP engine (engine/): a Quake-format level walked
+#                       through; PGPU_LEVEL (default engine/levels/base.bsp)
 #   toy-NAME            Shadertoy-style: shaders/toy_NAME.frag; a game has
 #                       NAME.c (pong, snake, asteroids)
 #   media               an MP4 or an MP3 played by the RPi: the video decoded
@@ -20,7 +22,7 @@ include(${CMAKE_CURRENT_LIST_DIR}/../libpgpu/pgpu_sources.cmake)
 
 set(PGPU_DEMOS ${CMAKE_CURRENT_LIST_DIR})
 set(PGPU_DEMO_SHADERS ${PGPU_DEMOS}/shaders)
-set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav
+set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav walk
 	toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids media)
 
 if(NOT COMMAND pgpu_demo)
@@ -69,6 +71,20 @@ function(pgpu_demo target app)
 		program(scenery -a a_pos:float:3 -a a_uv:float:2 -a a_shade:float:1 -v triangles)
 		program(craft -a a_pos:float:3 -a a_normal:float:3 -a a_uv:float:2 -v triangles)
 		program(nightsky -a a_pos:float:2 -a a_dir:float:3 -v triangles)
+
+	elseif(app STREQUAL "walk")		# the BSP engine: a level walked through
+		set(engine ${PGPU_DEMOS}/../engine)
+		if(NOT PGPU_LEVEL)
+			set(PGPU_LEVEL ${engine}/levels/base.bsp)
+		endif()
+		set(PGPU_LEVEL_INCBIN ${PGPU_LEVEL})
+		configure_file(${engine}/level_file.S.in ${CMAKE_CURRENT_BINARY_DIR}/level_file.S @ONLY)
+		set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/level_file.S PROPERTIES OBJECT_DEPENDS ${PGPU_LEVEL})
+		target_sources(${target} PRIVATE ${PGPU_DEMOS}/walk.c ${engine}/bsp.c ${engine}/render.c ${engine}/collide.c
+			${engine}/game.c ${engine}/palette.c ${CMAKE_CURRENT_BINARY_DIR}/level_file.S)
+		target_include_directories(${target} PRIVATE ${engine})
+		pgpu_glsl_program(TARGET ${target} NAME world DIR ${engine}/shaders
+			ARGS -a a_pos:float:3 -a a_uv:float:2 -a a_luv:float:2 -v triangles)
 
 	elseif(app MATCHES "^toy-(.+)$")	# toy.c: one full-screen quad, the picture is the shader
 		set(name ${CMAKE_MATCH_1})

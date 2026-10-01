@@ -1,0 +1,9 @@
+// the level the walk demo plays (demos.cmake: PGPU_LEVEL, default
+// engine/levels/base.bsp), linked in; BSP files are read in place: 4-byte aligned
+	.section .rodata
+	.balign	16
+	.global	level_file
+level_file:
+	.incbin	"@PGPU_LEVEL_INCBIN@"
+	.global	level_file_end
+level_file_end:
