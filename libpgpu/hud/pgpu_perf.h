@@ -26,8 +26,13 @@ typedef struct
 bool perf_frame (uint32_t wait_us, perf_t *m);
 
 /* the perf panel into the HUD being built (hud_begin .. hud_end): at x, y,
-   scale 1 (as glxgears' HUD) or 0.5 */
+   scale 1 (as glxgears' HUD) or 0.5: the frame rate, the loads, the render
+   and panel times, the host's link */
 void hud_perf (float x, float y, float scale, const perf_t *m);
 float hud_perf_width (float scale);
+
+/* the link's numbers (bytes a second each way, its use, the host's time held
+   back by it) as a line of the log: "who: link: ..." */
+void perf_log_link (const char *who, const perf_t *m);
 
 #endif

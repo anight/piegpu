@@ -743,13 +743,7 @@ int main (void)
 				printf ("media: the RPi's last error: code %u, opcode 0x%02x, detail %u\n", (unsigned) r[0],
 					(unsigned) r[1], (unsigned) r[2]);
 			}
-			printf ("media: link: to the RPi %.2f MB/s", m.link_tx / 1e6f);
-			if (m.link_use >= 0.0f)
-			{
-				printf (" (%.0f%% of its capacity)", m.link_use * 100.0f);
-			}
-			printf (", back %.3f MB/s; the host held back by it %.0f%% of the time\n", m.link_rx / 1e6f,
-				m.link_wait * 100.0f);
+			perf_log_link ("media", &m);
 			if (audio)
 			{
 				pgpu_media_status_t as;

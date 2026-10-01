@@ -2351,6 +2351,7 @@ int main (void)
 		frame++;
 		if (new_perf && ++windows % 5 == 0)
 		{
+			perf_log_link ("antigrav", &perf);
 			GLenum e = glGetError ();
 			printf ("antigrav: %.1f fps, load GPU %.0f%% CPU-G %.0f%% CPU-H %.0f%%, render %.2f ms; %s lap %d, "
 				"%.0f km/h, leader %s; GL error 0x%x\n", perf.fps, perf.gpu * 100, perf.cpu_g * 100,

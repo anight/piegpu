@@ -225,6 +225,7 @@ int main (void)
 		frame++;
 		if (new_perf && ++windows % 5 == 0)
 		{
+			perf_log_link ("isles", &perf);
 			printf ("isles: %.1f fps, GPU %.0f%% CPU-H %.0f%%, render %.2f ms; %u faces in %u draws, %u leaves; "
 				"%s at %.0f %.0f %.0f, %d/%d coins, %d rounds, %d falls; GL error 0x%x\n", perf.fps, perf.gpu * 100,
 				perf.cpu_h * 100, perf.render_ms, r.stats.faces, r.stats.draws, r.stats.leaves, pilot_on ? "auto" : "keys",

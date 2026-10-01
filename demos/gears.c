@@ -254,6 +254,7 @@ int main (void)
 			hud_end ();
 			if (++windows % 5 == 0)
 			{
+				perf_log_link ("gears", &m);
 				GLenum e = glGetError ();
 				printf ("gears: %.1f fps, load GPU %.0f%% CPU-G %.0f%% CPU-H %.0f%%, "
 					"render %.2f ms, panel wait %.2f ms, GL error 0x%x\n",

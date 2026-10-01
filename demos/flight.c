@@ -547,6 +547,7 @@ int main (void)
 		frame++;
 		if (new_perf && ++windows % 5 == 0)
 		{
+			perf_log_link ("flight", &perf);
 			GLenum e = glGetError ();
 			printf ("flight: %.1f fps, load GPU %.0f%% CPU-G %.0f%% CPU-H %.0f%%, render %.2f ms, "
 				"heading %.0f, bank %.0f, GL error 0x%x\n", perf.fps, perf.gpu * 100,

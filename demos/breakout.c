@@ -744,6 +744,7 @@ int main (void)
 
 		if (new_perf && ++windows % 5 == 0)
 		{
+			perf_log_link ("breakout", &perf);
 			GLenum e = glGetError ();
 			printf ("breakout: %.1f fps, load GPU %.0f%% CPU-G %.0f%% CPU-H %.0f%%, render %.2f ms, "
 				"level %d, score %d, lives %d, %d bricks, %u particles, GL error 0x%x\n",
