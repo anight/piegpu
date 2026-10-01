@@ -1,11 +1,11 @@
 # piegpu
 
-A toy GPU for OpenGL rendering and media. A Raspberry Pi (RPi) runs bare
-metal (Circle) as the graphics card of a microcontroller (like a Raspberry Pi
-Pico or an ESP32): the microcontroller sends OpenGL ES 2.0 commands (and 1.1's
-fixed function), and the RPi renders them with its VideoCore IV V3D, to an
-ST7789 panel or to HDMI. Video (H.264, e.g. from an MP4) is decoded by the
-VideoCore into textures that any draw can use, and sound (AAC, e.g. the
+A toy GPU for OpenGL rendering and media. A Raspberry Pi Zero runs bare
+metal as the graphics card of a microcontroller (like a Raspberry Pi
+Pico or an ESP32): the microcontroller sends OpenGL ES 2.0 commands
+and the RPi renders them with its VideoCore IV V3D, to an ST7789 panel
+or to HDMI. Video (H.264, e.g. from an MP4) is decoded by the VideoCore
+into textures that any draw can use, and sound (AAC, e.g. the
 MP4's, MP3 or Ogg Vorbis) is decoded by the RPi and played on HDMI, with the picture
 following it.
 
@@ -135,16 +135,13 @@ four); the Zero not yet. How it works:
                   I2S link + READY/FRAME            SPI0
    ┌────────────┐  (6 signals + GND)   ┌────────────┐   ┌────────────────┐
    │  host MCU  │ ───────────────────► │    RPi     │──►│ ST7789 320x240 │
-   │ (Pico 2 W, │ ◄─────────────────── │   (GPU)    │   └────────────────┘
+   │ (Pi Pico,  │ ◄─────────────────── │   (GPU)    │   └────────────────┘
    │  ESP32-P4) │                      │            │ mini-HDMI ┌─────────┐
    └────────────┘                      │            │──────────►│ monitor │
                                        └─────┬──────┘           └─────────┘
-                                             │ "USB" port, one cable:
+                                             │  USB port, one cable:
                                              │  power; its log; USB boot
                                              │  GL commands and media from a PC
-                                             │    or a page (instead of I2S)
-                                             │  the installer (web/installer)
-                                             │  a monitor for the PC's desktop (gud=on)
                                              ▼
                                             PC
 ```
