@@ -240,8 +240,9 @@ there. Without the SDO wire it can't tell: set `panel=yes` (see below).
   its SPI clock), so each reading takes eight of X and of Y and keeps the
   middle four, and the position is smoothed over the readings and reported
   only once it has moved 1.25 pixels: a held finger gives a still position. The
-  host gets it as a TOUCH reply (`pgpu_get_touch`; the `touch` demo is a
-  drawing board with a calibration).
+  host gets it as a TOUCH reply (`pgpu_get_touch` for how it is now,
+  `pgpu_poll_touch` for what happened in order: put down, moved, let go;
+  the `touch` demo is a drawing board with a calibration).
 
 ### Settings on the panel
 

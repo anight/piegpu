@@ -219,6 +219,71 @@ uint32_t pgpu_get_display (pgpu_display_t *display)
 	return seq / 2;
 }
 
+/* the touches as events: made by the parser, taken with it kept out */
+static pgpu_touch_event_t touch_events[PGPU_TOUCH_EVENTS];
+static uint32_t touch_first, touch_count;	/* the oldest, how many wait */
+static bool touch_known, touch_was_down;	/* the last TOUCH reply's */
+static uint32_t touch_presses;
+
+static void touch_event (uint8_t type, const uint32_t *w, uint64_t now)
+{
+	if (touch_count == PGPU_TOUCH_EVENTS)		/* (nobody looks: the oldest goes) */
+	{
+		touch_first = (touch_first + 1) % PGPU_TOUCH_EVENTS;
+		touch_count--;
+	}
+	pgpu_touch_event_t *e = &touch_events[(touch_first + touch_count++) % PGPU_TOUCH_EVENTS];
+	e->type = type;
+	e->x = w[1] & 0xFFFF;
+	e->y = w[1] >> 16;
+	e->raw_x = w[2] & 0xFFFF;
+	e->raw_y = w[2] >> 16;
+	e->pressure = w[3] & 0xFFFF;
+	e->time_us = now;
+}
+
+/* a TOUCH reply: what happened since the one before (a press it doesn't show
+   any more, let go between two replies, is in its count of presses) */
+static void touch_reply (const uint32_t *w)
+{
+	bool down = (w[0] & PGPU_TOUCH_DOWN) != 0;
+	uint32_t presses = PGPU_TOUCH_PRESSES (w[0]);
+	uint64_t now = pgpu_link_time_us ();
+	bool pressed = touch_known && presses != touch_presses;
+	if (touch_was_down && (!down || pressed))
+	{
+		touch_event (PGPU_TOUCH_EVENT_UP, w, now);
+		touch_was_down = false;
+	}
+	if (down)
+	{
+		touch_event (touch_was_down ? PGPU_TOUCH_EVENT_MOVE : PGPU_TOUCH_EVENT_DOWN, w, now);
+	}
+	else if (pressed)
+	{
+		touch_event (PGPU_TOUCH_EVENT_DOWN, w, now);
+		touch_event (PGPU_TOUCH_EVENT_UP, w, now);
+	}
+	touch_known = true;
+	touch_was_down = down;
+	touch_presses = presses;
+}
+
+bool pgpu_poll_touch (pgpu_touch_event_t *event)
+{
+	bool any = false;
+	pgpu_link_lock ();
+	if (touch_count)
+	{
+		*event = touch_events[touch_first];
+		touch_first = (touch_first + 1) % PGPU_TOUCH_EVENTS;
+		touch_count--;
+		any = true;
+	}
+	pgpu_link_unlock ();
+	return any;
+}
+
 uint32_t pgpu_get_touch (pgpu_touch_t *touch)
 {
 	uint32_t w[PGPU_TOUCH_WORDS], seq;
@@ -455,6 +520,7 @@ void pgpu_deliver_reply (uint8_t opcode, const uint32_t *payload, uint32_t lengt
 			__atomic_store_n (&touch_words[i], payload[i], __ATOMIC_RELAXED);
 		}
 		STORE (touch_seq, seq + 2);
+		touch_reply (payload);
 		return;
 	}
 	if (opcode == PGPU_REPLY_DISPLAY && length >= PGPU_DISPLAY_WORDS)

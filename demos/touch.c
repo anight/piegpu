@@ -1,6 +1,7 @@
 /*
- * touch - the panel's touch screen (the TOUCH reply, pgpu_get_touch) as a
- * drawing board: a finger draws round dabs along its way into a canvas (a
+ * touch - the panel's touch screen (the TOUCH reply; its events in order,
+ * pgpu_poll_touch: every place the RPi reported, however long a frame took) as
+ * a drawing board: a finger draws round dabs along its way into a canvas (a
  * texture the RPi renders into, kept between frames), shown over the whole
  * screen. Along the bottom the colours (the last one white: a rubber), CAL
  * and CLEAR. Top left where it's touched, the controller's readings and the
@@ -54,16 +55,16 @@ typedef struct
 	float raw[TARGETS][2];			/* the targets' readings */
 } cal_t;
 
-static void cal_map (const cal_t *c, const pgpu_touch_t *t, float *x, float *y)
+static void cal_map (const cal_t *c, unsigned px, unsigned py, unsigned raw_x, unsigned raw_y, float *x, float *y)
 {
 	if (!c->valid)
 	{
-		*x = t->x;
-		*y = t->y;
+		*x = px;
+		*y = py;
 		return;
 	}
-	*x = c->m[0][0] * t->raw_x + c->m[0][1] * t->raw_y + c->m[0][2];
-	*y = c->m[1][0] * t->raw_x + c->m[1][1] * t->raw_y + c->m[1][2];
+	*x = c->m[0][0] * raw_x + c->m[0][1] * raw_y + c->m[0][2];
+	*y = c->m[1][0] * raw_x + c->m[1][1] * raw_y + c->m[1][2];
 }
 
 /* the affine map from the targets' readings: least squares (the normal
@@ -268,12 +269,12 @@ int main (void)
 	glDisable (GL_CULL_FACE);
 
 	GLint vp[4] = {0};
-	unsigned last_count = 0, last_presses = 0;
+	unsigned presses = 0;
 	pgpu_touch_t t;
 	memset (&t, 0, sizeof t);
 	perf_t m;
 	memset (&m, 0, sizeof m);
-	bool dirty = true, announced = false, was_down = false, drawing = false, calibrating = false;
+	bool dirty = true, announced = false, drawing = false, calibrating = false;
 	static cal_t cal;
 	float lx = 0, ly = 0;
 	int color = 0;
@@ -285,33 +286,33 @@ int main (void)
 			dirty = true;
 		}
 
-		uint32_t count = pgpu_get_touch (&t);
-		if (count != last_count)
+		uint32_t count = pgpu_get_touch (&t);		/* (the last state: the line at the top) */
+		if (count && !announced)
 		{
-			if (!announced)
-			{
-				printf ("touch: the RPi has a touch screen\n");
-				announced = true;
-			}
-			bool pressed = t.presses != last_presses;	/* (a tap between two looks: down shows only here) */
+			printf ("touch: the RPi has a touch screen\n");
+			announced = true;
+		}
+		pgpu_touch_event_t e;
+		while (pgpu_poll_touch (&e))
+		{
+			bool pressed = e.type == PGPU_TOUCH_EVENT_DOWN, down = e.type != PGPU_TOUCH_EVENT_UP;
 			if (pressed)
 			{
-				printf ("touch: pressed at %u,%u (readings %u,%u, pressure %u), %u presses\n", t.x, t.y,
-					t.raw_x, t.raw_y, t.pressure, t.presses);
-				last_presses = t.presses;
+				printf ("touch: pressed at %u,%u (readings %u,%u, pressure %u), %u presses\n", e.x, e.y,
+					e.raw_x, e.raw_y, e.pressure, ++presses);
 			}
 			float x, y;
-			cal_map (&cal, &t, &x, &y);
+			cal_map (&cal, e.x, e.y, e.raw_x, e.raw_y, &x, &y);
 			if (calibrating)
 			{
 				/* the target's readings: while pressed; taken on the let go */
-				if (t.down || pressed)
+				if (down)
 				{
-					cal.sum[0] += t.raw_x;
-					cal.sum[1] += t.raw_y;
+					cal.sum[0] += e.raw_x;
+					cal.sum[1] += e.raw_y;
 					cal.samples++;
 				}
-				if (!t.down && cal.samples)
+				if (!down && cal.samples)
 				{
 					cal.raw[cal.target][0] = cal.sum[0] / cal.samples;
 					cal.raw[cal.target][1] = cal.sum[1] / cal.samples;
@@ -325,7 +326,7 @@ int main (void)
 					}
 				}
 			}
-			else if ((t.down || pressed) && y >= PANEL_H - BAR_H)
+			else if (down && y >= PANEL_H - BAR_H)
 			{
 				/* the bar: a colour, CAL or CLEAR (on the press) */
 				if (pressed && x >= PANEL_W - CLEAR_W)
@@ -345,19 +346,17 @@ int main (void)
 				}
 				drawing = false;
 			}
-			else if (t.down || pressed)
+			else if (down)
 			{
 				stroke (&b, drawing ? lx : x, drawing ? ly : y, x, y, color);
 				lx = x;
 				ly = y;
-				drawing = t.down;
+				drawing = true;
 			}
 			else
 			{
 				drawing = false;
 			}
-			was_down = t.down;
-			last_count = count;
 			dirty = true;
 		}
 
@@ -418,7 +417,7 @@ int main (void)
 			else
 			{
 				float x, y;
-				cal_map (&cal, &t, &x, &y);
+				cal_map (&cal, t.x, t.y, t.raw_x, t.raw_y, &x, &y);
 				snprintf (line, sizeof line, "%s %3.0f %3.0f  RAW %4u %4u  P %4u", t.down ? "DOWN" : "UP", x, y,
 					  t.raw_x, t.raw_y, t.pressure);
 				hud_rect (2, 2, strlen (line) * HUD_CHAR_W * hs + 4, HUD_CHAR_H * hs + 2, HUD_RGBA (0, 0, 0, 120));

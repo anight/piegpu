@@ -110,6 +110,24 @@ typedef struct
    screen: the RPi sends one after each INFO when it has one) */
 uint32_t pgpu_get_touch (pgpu_touch_t *touch);
 
+/* The touches as events, in the order they came: a finger put down, moved
+   (each place the RPi reported: a drawing's every point), let go. Made of the
+   TOUCH replies as they arrive, so nothing between two looks is lost while
+   PGPU_TOUCH_EVENTS of them fit (the oldest go first then). The place is the
+   RPi's, steadied (its noise filter) and in the panel's pixels */
+#define PGPU_TOUCH_EVENTS	32
+enum { PGPU_TOUCH_EVENT_DOWN = 1, PGPU_TOUCH_EVENT_MOVE, PGPU_TOUCH_EVENT_UP };
+typedef struct
+{
+	uint8_t type;			/* PGPU_TOUCH_EVENT_* */
+	uint16_t x, y;			/* as pgpu_touch_t's (an UP's: where it was let go) */
+	uint16_t raw_x, raw_y;
+	uint16_t pressure;
+	uint64_t time_us;		/* when its reply came (pgpu_time_us) */
+} pgpu_touch_event_t;
+/* the next one; false: none waiting */
+bool pgpu_poll_touch (pgpu_touch_event_t *event);
+
 /* media streams (docs/protocol.md 7.12): video decoded by the RPi into
    textures, sound played on HDMI (7.13). A stream's MEDIA_STATUS (for the
    audio stream: frames are access units, shown_pts the time heard) */

@@ -639,7 +639,8 @@ The Pico can recognise a reboot of the RPi by an `INFO` reply it didn't ask
 for; all objects and state are gone then.
 
 `TOUCH`: a press and its release between two looks of the host show in the
-count of presses. The position is steadied by the RPi (a held finger gives a
+count of presses (*informative:* the host library also keeps the replies as
+events in their order, put down, moved, let go: `pgpu_poll_touch`). The position is steadied by the RPi (a held finger gives a
 still one) and mapped to the panel's pixels by its calibration; the raw
 readings are for a host that calibrates. While the RPi's own Settings is open
 (a long press of 2 s opens it) the host gets no touches: it's told the touch
