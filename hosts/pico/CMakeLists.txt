@@ -75,3 +75,15 @@ foreach(scene ${JET_APPS})
 	pico_host_executable(jet-${scene})
 	jet_demo(jet-${scene} ${scene})
 endforeach()
+
+# ---- wifi: Wi-Fi for the Pico W, asked of a phone (wifi/) ---------------------------
+# The Pico as an access point shown as a QR code, a page for the network's name
+# and password, the network kept in the flash. The radio's driver and lwIP run
+# in the background (their own interrupts); core 1 isn't started, so the flash
+# is written without asking it.
+pico_host_executable(wifi wifi/wifi.c wifi/wifi_setup.c wifi/wifi_store.c wifi/net_servers.c wifi/portal.c
+	wifi/qrcodegen.c)
+demo_program(wifi texview -a a_pos:float:2 -v triangles)
+target_include_directories(wifi PRIVATE ${CMAKE_CURRENT_LIST_DIR}/wifi)
+target_link_libraries(wifi pico_cyw43_arch_lwip_threadsafe_background pico_lwip_sntp pico_rand pico_flash hardware_flash)
+target_compile_definitions(wifi PRIVATE PICO_FLASH_ASSUME_CORE1_SAFE=1)

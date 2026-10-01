@@ -408,6 +408,7 @@ Every host builds them (`demos/demos.cmake`):
 | `media` | an MP4, an MP3 or an Ogg Vorbis file played by the RPi: the video into a texture, the sound with it |
 | `jet-NAME` | the Jet demos (`demos/jet`): a model viewer and CubeCoders' example scenes |
 | `selftest`, `linktest` | the link, the protocol and pgl tested; the link at full speed both ways |
+| `wifi` | the Pico 2 W only (`hosts/pico/wifi`): Wi-Fi asked of a phone (below) |
 
 `walk`, `keep` and `isles` are played with the console's keys (w s a d, the
 arrows, q e, space) and, on the Pico, with an analog stick and an Adafruit
@@ -421,6 +422,21 @@ landings, lifts and doors with their motors, jump pads and teleporters,
 pickups, the wind, lava. The sounds are made from nothing by
 `engine/tools/make_sounds.py` (no samples from anywhere: 250 KB in the host's
 flash); the levels by `engine/tools/make_*.py` and ericw-tools' compilers.
+
+`wifi` gives the Pico W its Wi-Fi network without a keyboard. With none kept
+it's an access point with a name and a password made up at the start, shown
+on the screen as a QR code ("SCAN TO SETUP WIFI": a phone's camera offers to
+join it). A phone on it gets an address and every name answered with the
+Pico's (`net_servers.c`), and any page it asks for sent on to the Pico's
+(`portal.c`), which is how phones find a network's sign-in page: they offer
+it by themselves; the screen shows its address (192.168.4.1) as a second QR
+code for one that doesn't. The page asks for the network's name (the ones
+found around are offered) and its password; the Pico leaves the access
+point and joins it. Joined, the network is kept in the flash (as it is:
+readable there) and joined at every start; not joined, the access point is
+back and both the screen and the page say why. The stick's button held at
+the start, or `s` on the console, sets it up again. The QR codes are Project
+Nayuki's generator (MIT, `qrcodegen.c`, as LVGL carries it).
 
 ## Host boards (`hosts/pico`, `hosts/esp32p4`)
 
