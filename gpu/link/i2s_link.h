@@ -16,6 +16,7 @@
 
 #include "link.h"
 #include <circle/gpiopin.h>
+#include <circle/spinlock.h>
 #include <circle/types.h>
 
 struct TI2SLinkStats
@@ -36,8 +37,16 @@ class CI2SLink : public CLink	/// the Pico's I2S link (docs/protocol.md 2-4)
 {
 public:
 	static const unsigned RingWords = 256 * 1024;		// 1 MB
-	static const unsigned ReadyLowWords = 32 * 1024;	// drop READY below 128 KB free
-	static const unsigned ReadyHighWords = 64 * 1024;	// raise it again at 256 KB free
+	// The link's clock never stops: the DMA's ring takes 2.3 million words a
+	// second at 75 MHz, idle ones mostly, whatever the host sends. So the
+	// packets are taken out of it into a queue (Drain: with every packet
+	// asked for, and 100 times a second from the timer's interrupt, while a
+	// command keeps the main loop), the idle words between them dropped: the
+	// queue holds what's waiting to be executed, and nothing else fills it.
+	// READY is the queue's: dropped over 512 KB waiting, raised under 256 KB
+	static const unsigned QueueWords = 1024 * 1024;		// 4 MB
+	static const unsigned QueueHighWords = 128 * 1024;
+	static const unsigned QueueLowWords = 64 * 1024;
 
 	static const unsigned TxRingWords = 256 * 1024;		// 1 MB: 112 ms per lap at 75 MHz
 	static const unsigned TxMarginWords = 1024;		// write replies this far ahead of the DMA
@@ -58,8 +67,10 @@ public:
 	/// \return Payload (LENGTH words), valid until the next call
 	const u32 *GetPacket (u32 *pHeader);
 
-	/// \brief Update READY from the ring fill level (called by GetPacket too)
-	void UpdateReady (void);
+	/// \brief The packets arrived since into the queue, READY from its fill
+	///	   (called by GetPacket too, and from the timer's interrupt)
+	void Drain (void);
+	static void PeriodicHandler (void);		// (the timer's interrupt)
 
 	/// \brief Queue a reply packet (header and CRC are added)
 	/// \return FALSE if it was dropped
@@ -72,14 +83,14 @@ public:
 
 	u32 GetCRCErrors (void) const		{ return m_nTotalCRCErrors; }
 	unsigned GetFreeBytes (void) const;
-	unsigned GetBufferBytes (void) const	{ return RingWords * 4; }
+	unsigned GetBufferBytes (void) const	{ return QueueWords * 4; }
 
 	/// \return Statistics since the last call, then reset them
 	TI2SLinkStats GetStats (void);
 
 private:
 	unsigned GetWriteIndex (void) const;
-	unsigned Available (void) const;
+	unsigned QueueFill (void) const;
 	void InvalidateNew (void);
 
 	void SetupPCM (void);
@@ -99,14 +110,21 @@ private:
 
 	u32 *m_pRing;
 	u32 m_nRingBus;
-	unsigned m_nRead;		// word index into the ring
+	unsigned m_nDrain;		// the ring's words up to here are taken (Drain)
+	unsigned m_nPacketLeft;		// of the packet being taken: words to come
 	unsigned m_nInvalidated;	// ring words up to here are fresh in the cache
+
+	u32 *m_pQueue;			// the packets, as they came (and what looked like some)
+	volatile unsigned m_nQueueWrite;	// (Drain's)
+	unsigned m_nQueueRead;		// (GetPacket's)
 
 	unsigned m_nDMAChannel;
 	u32 *m_pControlBlock;
 
 	boolean m_bReady;
 	boolean m_bHold;				// READY kept low (SetHold)
+	CSpinLock m_Lock;				// Drain: the main loop and the timer's interrupt
+	static CI2SLink *s_pThis;
 
 	u32 *m_pTxRing;
 	u32 m_nTxRingBus;

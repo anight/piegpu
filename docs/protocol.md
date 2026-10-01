@@ -93,7 +93,9 @@ clock and frame-sync **slave** for both directions.
   started is always completed; the READY rule guarantees there's room for it.
 - The Pico samples READY **before sending each packet header**.
 - Hysteresis (*informative*, v1 implementation): the RPi drops READY when free
-  space falls below 128 KB and raises it again at 256 KB free, out of a 1 MB ring.
+  more than 512 KB of packets wait to be executed and raises it again under 256 KB,
+  of a 4 MB queue. (The link's clock never stops: the idle words between packets
+  are dropped as they come, 100 times a second at least, so they take no room.)
 - **Reset safety:** while the RPi boots or reboots, GPIO16 is an input with a
   pull-down. READY then reads **low**, so the Pico never streams into an RPi that
   isn't running. The external 10 kΩ pull-down covers an RP2350 GPIO pull-down

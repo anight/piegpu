@@ -45,8 +45,12 @@ CI2SLink::CI2SLink (void)
 	m_PinDOUT (21, GPIOModeAlternateFunction0),
 	m_PinReady (PIN_READY, GPIOModeOutput),
 	m_pRing (nullptr),
-	m_nRead (0),
+	m_nDrain (0),
+	m_nPacketLeft (0),
 	m_nInvalidated (0),
+	m_pQueue (nullptr),
+	m_nQueueWrite (0),
+	m_nQueueRead (0),
 	m_bReady (FALSE),
 	m_bHold (FALSE),
 	m_pTxRing (nullptr),
@@ -83,6 +87,7 @@ boolean CI2SLink::Initialize (void)
 	memset (m_pRing, 0, RingWords * 4);
 	CleanAndInvalidateDataCacheRange ((uintptr) m_pRing, RingWords * 4);
 	m_nRingBus = BUS_ADDRESS ((uintptr) m_pRing);
+	m_pQueue = new u32[QueueWords];
 
 	p = new u8[TxRingWords * 4 + 64];
 	m_pTxRing = (u32 *) (((uintptr) p + 63) & ~(uintptr) 63);
@@ -98,6 +103,8 @@ boolean CI2SLink::Initialize (void)
 
 	m_bReady = TRUE;
 	m_PinReady.Write (HIGH);
+	s_pThis = this;
+	CTimer::Get ()->RegisterPeriodicHandler (PeriodicHandler);
 
 	return TRUE;
 }
@@ -308,7 +315,7 @@ boolean CI2SLink::SendReply (u8 uchOpcode, const u32 *pPayload, unsigned nLength
 
 unsigned CI2SLink::GetFreeBytes (void) const
 {
-	return (RingWords - Available ()) * 4;
+	return (QueueWords - QueueFill ()) * 4;
 }
 
 unsigned CI2SLink::GetWriteIndex (void) const
@@ -319,9 +326,9 @@ unsigned CI2SLink::GetWriteIndex (void) const
 	return nIndex >= RingWords ? 0 : nIndex;	// at the wrap the CB is reloaded
 }
 
-unsigned CI2SLink::Available (void) const
+unsigned CI2SLink::QueueFill (void) const
 {
-	return (GetWriteIndex () + RingWords - m_nRead) % RingWords;
+	return (m_nQueueWrite + QueueWords - m_nQueueRead) % QueueWords;
 }
 
 // The DMA writes the ring behind the ARM's cache: invalidate the lines that
@@ -354,15 +361,82 @@ u32 CI2SLink::CRC (u32 nCRC, u32 nWord) const
 	return nCRC;
 }
 
+// The ring's new words: a packet's (a command header's, and as many words
+// as it says, with its CRC) into the queue, idle ones between packets
+// dropped, anything else counted as garbage. Not checked here (GetPacket
+// does: a word that only looked like a header takes what follows it into
+// the queue, where the search goes on a word later)
+void CI2SLink::Drain (void)
+{
+	m_Lock.Acquire ();
+
+	InvalidateNew ();
+	unsigned nNew = (m_nInvalidated + RingWords - m_nDrain) % RingWords;
+	unsigned nRoom = QueueWords - 1 - QueueFill ();
+	unsigned nWrite = m_nQueueWrite;
+	for (; nNew && nRoom; nNew--, m_nDrain = (m_nDrain + 1) % RingWords)
+	{
+		u32 nWord = m_pRing[m_nDrain];
+		m_Stats.nWords++;
+		if (m_nPacketLeft)
+		{
+			m_nPacketLeft--;
+		}
+		else if (nWord == PGPU_IDLE_WORD)
+		{
+			m_Stats.nIdleWords++;
+			continue;
+		}
+		else if (PGPU_HEADER_SYNC (nWord) == PGPU_SYNC_COMMAND && PGPU_HEADER_LEN (nWord) <= PGPU_MAX_PAYLOAD)
+		{
+			m_nPacketLeft = PGPU_HEADER_LEN (nWord) + 1;
+		}
+		else
+		{
+			m_Stats.nGarbageWords++;
+			continue;
+		}
+		m_pQueue[nWrite] = nWord;
+		nWrite = (nWrite + 1) % QueueWords;
+		nRoom--;
+	}
+	m_nQueueWrite = nWrite;
+
+	// READY: the queue's fill
+	unsigned nFill = QueueFill ();
+	if (nFill > m_Stats.nMaxFill)
+	{
+		m_Stats.nMaxFill = nFill;
+	}
+	if (m_bHold)				// (held: not ready, whatever room there is)
+	{
+		if (m_bReady)
+		{
+			m_bReady = FALSE;
+			m_PinReady.Write (LOW);
+		}
+	}
+	else if (m_bReady && nFill > QueueHighWords)
+	{
+		m_bReady = FALSE;
+		m_PinReady.Write (LOW);
+		m_Stats.nReadyLow++;
+	}
+	else if (!m_bReady && nFill < QueueLowWords)
+	{
+		m_bReady = TRUE;
+		m_PinReady.Write (HIGH);
+	}
+
+	m_Lock.Release ();
+}
+
 const u32 *CI2SLink::GetPacket (u32 *pHeader)
 {
-	UpdateReady ();
+	Drain ();
 	UpdateTx ();
-	InvalidateNew ();
 
-	// words that are in the ring and fresh in the cache (read the DMA position
-	// once: a peripheral register read per word would be far too slow)
-	unsigned nAvailable = (m_nInvalidated + RingWords - m_nRead) % RingWords;
+	unsigned nAvailable = (m_nQueueWrite + QueueWords - m_nQueueRead) % QueueWords;
 
 	while (1)
 	{
@@ -371,24 +445,18 @@ const u32 *CI2SLink::GetPacket (u32 *pHeader)
 			return nullptr;
 		}
 
-		u32 nHeader = m_pRing[m_nRead];
-		if (nHeader == PGPU_IDLE_WORD)
-		{
-			m_nRead = (m_nRead + 1) % RingWords;
-			nAvailable--;
-			m_Stats.nWords++;
-			m_Stats.nIdleWords++;
-			continue;
-		}
-
+		u32 nHeader = m_pQueue[m_nQueueRead];
 		unsigned nLength = PGPU_HEADER_LEN (nHeader);
 		if (   PGPU_HEADER_SYNC (nHeader) != PGPU_SYNC_COMMAND
 		    || nLength > PGPU_MAX_PAYLOAD)
 		{
-			m_nRead = (m_nRead + 1) % RingWords;
+			// (after a word that only looked like a header: what it took with it)
+			m_nQueueRead = (m_nQueueRead + 1) % QueueWords;
 			nAvailable--;
-			m_Stats.nWords++;
-			m_Stats.nGarbageWords++;
+			if (nHeader != PGPU_IDLE_WORD)
+			{
+				m_Stats.nGarbageWords++;
+			}
 			continue;
 		}
 
@@ -399,22 +467,21 @@ const u32 *CI2SLink::GetPacket (u32 *pHeader)
 
 		// copy the payload and check the CRC
 		u32 nCRC = CRC (PGPU_CRC_INIT, nHeader);
-		unsigned nIndex = (m_nRead + 1) % RingWords;
+		unsigned nIndex = (m_nQueueRead + 1) % QueueWords;
 		for (unsigned i = 0; i < nLength; i++)
 		{
-			u32 nWord = m_pRing[nIndex];
+			u32 nWord = m_pQueue[nIndex];
 			m_pPacket[i] = nWord;
 			nCRC = CRC (nCRC, nWord);
-			nIndex = (nIndex + 1) % RingWords;
+			nIndex = (nIndex + 1) % QueueWords;
 		}
 		nCRC ^= 0xFFFFFFFF;
 
-		if (nCRC != m_pRing[nIndex])
+		if (nCRC != m_pQueue[nIndex])
 		{
 			// drop the header word only and search again (resynchronisation)
-			m_nRead = (m_nRead + 1) % RingWords;
+			m_nQueueRead = (m_nQueueRead + 1) % QueueWords;
 			nAvailable--;
-			m_Stats.nWords++;
 			m_Stats.nCRCErrors++;
 			m_nTotalCRCErrors++;
 
@@ -423,8 +490,7 @@ const u32 *CI2SLink::GetPacket (u32 *pHeader)
 			continue;
 		}
 
-		m_nRead = (nIndex + 1) % RingWords;
-		m_Stats.nWords += nLength + 2;
+		m_nQueueRead = (nIndex + 1) % QueueWords;
 		m_Stats.nPackets++;
 
 		*pHeader = nHeader;
@@ -435,44 +501,25 @@ const u32 *CI2SLink::GetPacket (u32 *pHeader)
 void CI2SLink::SetHold (boolean bHold)
 {
 	m_bHold = bHold;
-	UpdateReady ();
+	Drain ();
 }
 
-void CI2SLink::UpdateReady (void)
-{
-	unsigned nFill = Available ();
-	if (nFill > m_Stats.nMaxFill)
-	{
-		m_Stats.nMaxFill = nFill;
-	}
+CI2SLink *CI2SLink::s_pThis = nullptr;
 
-	unsigned nFree = RingWords - nFill;
-	if (m_bHold)				// (held: not ready, whatever room there is)
+void CI2SLink::PeriodicHandler (void)
+{
+	if (s_pThis)
 	{
-		if (m_bReady)
-		{
-			m_bReady = FALSE;
-			m_PinReady.Write (LOW);
-		}
-		return;
-	}
-	if (m_bReady && nFree < ReadyLowWords)
-	{
-		m_bReady = FALSE;
-		m_PinReady.Write (LOW);
-		m_Stats.nReadyLow++;
-	}
-	else if (!m_bReady && nFree >= ReadyHighWords)
-	{
-		m_bReady = TRUE;
-		m_PinReady.Write (HIGH);
+		s_pThis->Drain ();
 	}
 }
 
 TI2SLinkStats CI2SLink::GetStats (void)
 {
+	m_Lock.Acquire ();
 	TI2SLinkStats Stats = m_Stats;
 	memset (&m_Stats, 0, sizeof m_Stats);
+	m_Lock.Release ();
 
 	return Stats;
 }

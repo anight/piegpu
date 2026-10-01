@@ -35,7 +35,7 @@
  *
  * Flow control: READY promises room for one maximum-size batch (16 KB). What
  * the TX ring and DMA still hold (at most 32 + 4 KB) is on its way on top of
- * that; the RPi drops READY while 128 KB are still free, so that is covered.
+ * that; the RPi drops READY with megabytes of its queue still free, so that is covered.
  */
 #include "pgpu_link.h"
 #include <string.h>

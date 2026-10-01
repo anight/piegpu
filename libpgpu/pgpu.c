@@ -482,7 +482,27 @@ void pgpu_rx_parse (pgpu_rx_t *rx)
 		uint32_t v = rx_word (rx, rx->bit >> 5) << (rx->bit & 31);
 		if (v == 0)
 		{
-			rx->bit = (rx->bit | 31) + 1;		/* rest of this word is idle */
+			/* the rest of this word is idle, and so is nearly all of the
+			   stream (the link's clock never stops: over two million words
+			   a second at 75 MHz): on to the first word that isn't, eight at
+			   a time where the ring doesn't wrap */
+			uint64_t word = (rx->bit >> 5) + 1;
+			uint32_t left = (uint32_t) (rx->written - 1 - word);	/* (two words are needed to go on) */
+			uint32_t i = (uint32_t) word & (rx->words - 1), start = left;
+			const uint32_t *ring = rx->ring;
+			while (   left >= 8 && i + 8 <= rx->words
+			       && (  ring[i] | ring[i + 1] | ring[i + 2] | ring[i + 3]
+				   | ring[i + 4] | ring[i + 5] | ring[i + 6] | ring[i + 7]) == 0)
+			{
+				i = (i + 8) & (rx->words - 1);
+				left -= 8;
+			}
+			while (left && ring[i] == 0)
+			{
+				i = (i + 1) & (rx->words - 1);
+				left--;
+			}
+			rx->bit = (word + (start - left)) * 32;
 			continue;
 		}
 
