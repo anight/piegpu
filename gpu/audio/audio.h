@@ -27,6 +27,15 @@ struct aac_s;
 struct mp3_s;
 struct vorbis_s;
 
+class CAudioSinkOther : public CAudioSink		/// an output that's there only at times
+{
+public:
+	CAudioSinkOther (unsigned nSampleRate) : CAudioSink (nSampleRate) {}
+	/// \brief Sound of this rate is to come
+	/// \return FALSE if it can't be played here now
+	virtual boolean SetSource (unsigned nRate) = 0;
+};
+
 class CAudio : public CMediaClock
 {
 public:
@@ -65,12 +74,19 @@ public:
 	/// \brief The decoder's core: never returns
 	void DecodeLoop (void);
 
-	/// \return The output the last stream played on (its capture), or nullptr
+	/// \return The HDMI output the last stream played on (its capture), or nullptr
 	CAudioOut *GetLastOut (void) const	{ return m_pLastOut; }
 
-	/// \return The output for this rate (set up the first time), or nullptr;
-	///	    it becomes the last output
-	CAudioOut *GetOutput (unsigned nRate);
+	/// \return The HDMI output for this rate (set up the first time), or
+	///	    nullptr; it becomes the last output
+	CAudioOut *GetHDMIOutput (unsigned nRate);
+
+	/// \brief Another output (a Bluetooth speaker's): the sound goes there
+	///	   while it takes it (its SetSource says so), else to HDMI
+	void SetOther (class CAudioSinkOther *pOther)	{ m_pOther = pOther; }
+
+	/// \return Where a stream of this rate goes now, or nullptr
+	CAudioSink *GetOutput (unsigned nRate);
 
 	/// \brief The MEDIA_STATUS reply of the audio stream
 	boolean GetStatus (u32 *pPayload, boolean bDue);
@@ -121,9 +137,11 @@ private:
 	struct mp3_s *m_pMP3;
 	struct vorbis_s *m_pVorbis;
 	unsigned m_nMaxFrames;			// frames a unit decodes to, at most (Vorbis: a step)
-	CAudioOut *m_pOut;			// the stream's (one of m_pOuts)
-	CAudioOut *m_pOuts[MaxRates];		// set up once each (the VideoCore's service)
+	CAudioSink *m_pOut;			// the stream's
+	CAudioOut *m_pOuts[MaxRates];		// HDMI's: set up once each (the VideoCore's service)
 	CAudioOut *m_pLastOut;
+	CAudioSink *m_pLastSink;		// the last used (the test sound's, with no stream)
+	CAudioSinkOther *m_pOther;
 	unsigned m_nRate;
 	boolean m_bPaused;
 	unsigned m_nVolume;			// percent

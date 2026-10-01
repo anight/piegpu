@@ -177,6 +177,22 @@ boolean CSettingsApp::Update (const u32 *pTouch)
 	}
 	m_bDown = bDown;
 
+	// the Audio page: speakers looked for while it shows; what Bluetooth is
+	// doing, and the list, as they change
+	m_pHost->SetSpeakerSearch (m_Screen == ScreenAudio);
+	if (m_Screen == ScreenAudio && m_pSpeakers)
+	{
+		const char *pNote = m_pHost->GetBluetoothNote ();
+		if (strcmp (lv_label_get_text (m_pBluetoothNote), pNote) != 0)
+		{
+			lv_label_set_text (m_pBluetoothNote, pNote);
+		}
+		if (m_pHost->GetSpeakersGeneration () != m_nSpeakersGeneration)
+		{
+			ShowSpeakers ();
+		}
+	}
+
 	lv_timer_handler ();
 	return m_bOpen;
 }
@@ -248,6 +264,9 @@ void CSettingsApp::Forget (void)
 	m_pMenu[0] = m_pMenu[1] = m_pMenu[2] = nullptr;
 	m_pBrightness = m_pCalibrate = m_pTest = m_pVolume = m_pMute = m_pSoundTest = m_pBluetooth = nullptr;
 	m_pRestart = m_pLater = m_pWarning = m_pYes = m_pNo = nullptr;
+	m_pBluetoothNote = m_pSpeakers = m_pHeld = nullptr;
+	m_nSpeakers = 0;
+	m_ForgetAddress[0] = '\0';
 	for (unsigned i = 0; i < KernelOptions; i++)
 	{
 		m_pOption[i] = nullptr;
@@ -319,9 +338,19 @@ void CSettingsApp::ShowAudio (void)
 {
 	lv_obj_t *pScreen = Page (ScreenAudio, "Audio");
 
-	m_pVolumeLabel = Label (pScreen, "Volume", LV_ALIGN_TOP_LEFT, 12, 60);
-	m_pVolume = Slider (pScreen, 64, 0, 100, m_pAudio->GetDefaultVolume ());
-	m_pVolumeValue = Label (pScreen, "", LV_ALIGN_TOP_RIGHT, -12, 60);
+	// under the title: what scrolls (the speakers' list grows it)
+	lv_obj_t *pBody = lv_obj_create (pScreen);
+	lv_obj_set_size (pBody, WIDTH, HEIGHT - 50);
+	lv_obj_align (pBody, LV_ALIGN_TOP_LEFT, 0, 50);
+	lv_obj_set_style_border_width (pBody, 0, 0);
+	lv_obj_set_style_radius (pBody, 0, 0);
+	lv_obj_set_style_pad_all (pBody, 0, 0);
+	lv_obj_set_style_bg_opa (pBody, LV_OPA_TRANSP, 0);
+	lv_obj_set_scroll_dir (pBody, LV_DIR_VER);
+
+	m_pVolumeLabel = Label (pBody, "Volume", LV_ALIGN_TOP_LEFT, 12, 10);
+	m_pVolume = Slider (pBody, 14, 0, 100, m_pAudio->GetDefaultVolume ());
+	m_pVolumeValue = Label (pBody, "", LV_ALIGN_TOP_RIGHT, -12, 10);
 	Percent (m_pVolumeValue, m_pAudio->GetDefaultVolume ());
 	lv_obj_add_event_cb (m_pVolume, OnEvent, LV_EVENT_VALUE_CHANGED, this);
 	lv_color_t Grey = lv_palette_darken (LV_PALETTE_GREY, 2);		// (as it looks while muted)
@@ -330,26 +359,27 @@ void CSettingsApp::ShowAudio (void)
 	lv_obj_set_style_bg_color (m_pVolume, lv_palette_darken (LV_PALETTE_GREY, 4), LV_PART_MAIN | LV_STATE_DISABLED);
 	lv_obj_set_style_bg_opa (m_pVolume, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DISABLED);
 
-	Label (pScreen, LV_SYMBOL_MUTE "  Mute", LV_ALIGN_TOP_LEFT, 12, 104);
-	m_pMute = lv_switch_create (pScreen);
+	Label (pBody, LV_SYMBOL_MUTE "  Mute", LV_ALIGN_TOP_LEFT, 12, 52);
+	m_pMute = lv_switch_create (pBody);
 	lv_obj_set_size (m_pMute, 56, 30);
-	lv_obj_align (m_pMute, LV_ALIGN_TOP_LEFT, 112, 97);
+	lv_obj_align (m_pMute, LV_ALIGN_TOP_LEFT, 112, 45);
 	if (m_pAudio->IsMuted ())
 	{
 		lv_obj_add_state (m_pMute, LV_STATE_CHECKED);
 	}
 	lv_obj_add_event_cb (m_pMute, OnEvent, LV_EVENT_VALUE_CHANGED, this);
 	ShowMuted ();
-	m_pSoundTest = Button (pScreen, LV_SYMBOL_PLAY "  Test", LV_ALIGN_TOP_RIGHT, -12, 94, 100, 36);
+	m_pSoundTest = Button (pBody, LV_SYMBOL_PLAY "  Test", LV_ALIGN_TOP_RIGHT, -12, 42, 100, 36);
 	lv_obj_add_event_cb (m_pSoundTest, OnEvent, LV_EVENT_CLICKED, this);
-	m_pNote = Note (pScreen, "", LV_ALIGN_TOP_LEFT, 12, 136);
+	m_pNote = Note (pBody, "", LV_ALIGN_TOP_LEFT, 12, 84);
 
-	// Bluetooth: for speakers, to come; a board without it can't have it on
+	// Bluetooth: a board without it can't have it on. On: what it's doing,
+	// and the speakers (ShowSpeakers, as they come and go)
 	boolean bHas = m_pHost->HasBluetooth ();
-	lv_obj_t *pLabel = Label (pScreen, LV_SYMBOL_BLUETOOTH "  Bluetooth", LV_ALIGN_TOP_LEFT, 12, 172);
-	m_pBluetooth = lv_switch_create (pScreen);
+	lv_obj_t *pLabel = Label (pBody, LV_SYMBOL_BLUETOOTH "  Bluetooth", LV_ALIGN_TOP_LEFT, 12, 116);
+	m_pBluetooth = lv_switch_create (pBody);
 	lv_obj_set_size (m_pBluetooth, 56, 30);
-	lv_obj_align (m_pBluetooth, LV_ALIGN_TOP_RIGHT, -12, 165);
+	lv_obj_align (m_pBluetooth, LV_ALIGN_TOP_RIGHT, -12, 109);
 	if (bHas && m_pHost->GetBluetooth ())
 	{
 		lv_obj_add_state (m_pBluetooth, LV_STATE_CHECKED);
@@ -360,7 +390,44 @@ void CSettingsApp::ShowAudio (void)
 		lv_obj_set_style_text_color (pLabel, lv_palette_darken (LV_PALETTE_GREY, 1), 0);
 	}
 	lv_obj_add_event_cb (m_pBluetooth, OnEvent, LV_EVENT_VALUE_CHANGED, this);
-	Note (pScreen, m_pHost->GetBluetoothNote (), LV_ALIGN_TOP_LEFT, 12, 204);
+	m_pBluetoothNote = Note (pBody, m_pHost->GetBluetoothNote (), LV_ALIGN_TOP_LEFT, 12, 146);
+
+	m_pSpeakers = lv_obj_create (pBody);
+	lv_obj_set_size (m_pSpeakers, WIDTH - 20, LV_SIZE_CONTENT);
+	lv_obj_align (m_pSpeakers, LV_ALIGN_TOP_LEFT, 10, 168);
+	lv_obj_set_style_border_width (m_pSpeakers, 0, 0);
+	lv_obj_set_style_pad_all (m_pSpeakers, 0, 0);
+	lv_obj_set_style_pad_row (m_pSpeakers, 6, 0);
+	lv_obj_set_style_pad_bottom (m_pSpeakers, 8, 0);
+	lv_obj_set_style_bg_opa (m_pSpeakers, LV_OPA_TRANSP, 0);
+	lv_obj_set_flex_flow (m_pSpeakers, LV_FLEX_FLOW_COLUMN);
+	lv_obj_remove_flag (m_pSpeakers, LV_OBJ_FLAG_SCROLLABLE);
+	ShowSpeakers ();
+}
+
+// the speakers' rows, as the list is now: its name, what it's doing; the connected one lit
+void CSettingsApp::ShowSpeakers (void)
+{
+	CSettingsHost::TSpeaker Speakers[MaxSpeakers];
+	m_nSpeakersGeneration = m_pHost->GetSpeakersGeneration ();
+	m_nSpeakers = m_pHost->GetSpeakers (Speakers, MaxSpeakers);
+	lv_obj_clean (m_pSpeakers);
+	for (unsigned i = 0; i < m_nSpeakers; i++)
+	{
+		strcpy (m_SpeakerAddress[i], Speakers[i].Address);
+		m_bSpeakerPaired[i] = Speakers[i].bPaired;
+		lv_obj_t *pRow = m_pSpeaker[i] = lv_button_create (m_pSpeakers);
+		lv_obj_set_size (pRow, WIDTH - 20, 38);
+		lv_obj_set_style_bg_color (pRow, Speakers[i].bConnected ? lv_palette_main (LV_PALETTE_BLUE)
+					   : lv_palette_darken (LV_PALETTE_GREY, 3), 0);
+		lv_obj_t *pName = Label (pRow, Speakers[i].Name, LV_ALIGN_LEFT_MID, 0, 0);
+		lv_obj_set_width (pName, 180);
+		lv_label_set_long_mode (pName, LV_LABEL_LONG_DOT);
+		lv_obj_t *pState = Label (pRow, Speakers[i].pState, LV_ALIGN_RIGHT_MID, 0, 0);
+		lv_obj_set_style_text_font (pState, &lv_font_montserrat_12, 0);
+		lv_obj_add_event_cb (pRow, OnEvent, LV_EVENT_CLICKED, this);
+		lv_obj_add_event_cb (pRow, OnEvent, LV_EVENT_LONG_PRESSED, this);
+	}
 }
 
 // muted: the volume greyed, and not to be moved
@@ -500,12 +567,20 @@ void CSettingsApp::Warn (unsigned i, unsigned nChoice)
 {
 	m_nWarnOption = i;
 	m_nWarnChoice = nChoice;
+	m_ForgetAddress[0] = '\0';
 	char Text[200];
 	lv_snprintf (Text, sizeof Text, "%s\nTo get it back: the installer page, or cmdline.txt on the card.\n\nSet it?",
 		     Options[i].pWarning);
+	Ask (LV_SYMBOL_WARNING "  Warning", Text);
+}
+
+// a question to answer with Yes or No (OnEvent: m_pYes, m_pNo)
+void CSettingsApp::Ask (const char *pTitle, const char *pText)
+{
+	const char *Text = pText;
 	m_pWarning = lv_msgbox_create (nullptr);
 	lv_obj_set_width (m_pWarning, 290);
-	lv_msgbox_add_title (m_pWarning, LV_SYMBOL_WARNING "  Warning");
+	lv_msgbox_add_title (m_pWarning, pTitle);
 	lv_msgbox_add_text (m_pWarning, Text);
 	m_pYes = lv_msgbox_add_footer_button (m_pWarning, "Yes");
 	m_pNo = lv_msgbox_add_footer_button (m_pWarning, "No");
@@ -721,9 +796,39 @@ void CSettingsApp::OnEvent (lv_event_t *pEvent)
 		}
 		return;
 	}
+	if (Code == LV_EVENT_LONG_PRESSED)		// on a speaker paired with: forget it?
+	{
+		for (unsigned i = 0; i < pThis->m_nSpeakers; i++)
+		{
+			if (pTarget == pThis->m_pSpeaker[i] && pThis->m_bSpeakerPaired[i] && !pThis->m_pWarning)
+			{
+				pThis->m_pHeld = pTarget;
+				strcpy (pThis->m_ForgetAddress, pThis->m_SpeakerAddress[i]);
+				char Text[120];
+				lv_snprintf (Text, sizeof Text, "Forget this speaker?\nIt has to be paired with again to be used.");
+				pThis->Ask (LV_SYMBOL_BLUETOOTH "  Paired speaker", Text);
+			}
+		}
+		return;
+	}
 	if (Code != LV_EVENT_CLICKED)
 	{
 		return;
+	}
+	for (unsigned i = 0; i < pThis->m_nSpeakers; i++)
+	{
+		if (pTarget == pThis->m_pSpeaker[i])
+		{
+			if (pTarget == pThis->m_pHeld)		// (the long press's end)
+			{
+				pThis->m_pHeld = nullptr;
+			}
+			else
+			{
+				pThis->m_pHost->PickSpeaker (pThis->m_SpeakerAddress[i]);
+			}
+			return;
+		}
 	}
 	if (pTarget == pThis->m_pDone)
 	{
@@ -732,6 +837,7 @@ void CSettingsApp::OnEvent (lv_event_t *pEvent)
 			pThis->m_pHost->SaveSettings ();
 		}
 		pThis->m_bOpen = FALSE;
+		pThis->m_pHost->SetSpeakerSearch (FALSE);
 		LOGNOTE ("Settings closed%s", pThis->m_bChanged ? " (saved)" : "");
 	}
 	else if (pTarget == pThis->m_pBack)
@@ -760,7 +866,15 @@ void CSettingsApp::OnEvent (lv_event_t *pEvent)
 	}
 	else if (pTarget == pThis->m_pYes || pTarget == pThis->m_pNo)
 	{
-		if (pTarget == pThis->m_pYes)
+		if (pThis->m_ForgetAddress[0])			// (the question was about a speaker)
+		{
+			if (pTarget == pThis->m_pYes)
+			{
+				pThis->m_pHost->ForgetSpeaker (pThis->m_ForgetAddress);
+			}
+			pThis->m_ForgetAddress[0] = '\0';
+		}
+		else if (pTarget == pThis->m_pYes)
 		{
 			pThis->SetOption (pThis->m_nWarnOption, pThis->m_nWarnChoice);
 		}

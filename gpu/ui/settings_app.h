@@ -11,8 +11,14 @@
 //		pixels), Test (a finger draws)
 //   Audio	Volume: the sound's on HDMI; Mute; Test (a note on the left,
 //		one on the right, one on both)
-//		Bluetooth: on or off (for speakers, to come); greyed on a
-//		board without it, and with the Zero's kernel (built without)
+//		Bluetooth: on or off; greyed on a board without it, and with
+//		the Zero's kernel (built without). On: the speakers found
+//		nearby listed under the switch, the one paired with first; a
+//		tap on one connects to it (pairing, if it's new) and the sound
+//		goes there; a tap on the connected one lets it go. Those
+//		paired with are remembered (and called, and their calls
+//		taken, when no Settings is open); a long press on one asks
+//		whether to forget it
 //   Kernel	the kernel command line's options (cmdline.txt), each a list
 //		to choose from; the clocks' are the rates the firmware has
 //		for this board, in MHz (the ARM's: its two ends; the V3D's:
@@ -47,8 +53,27 @@ public:
 
 	/// \return FALSE on a board without it, or with a kernel built without
 	virtual boolean HasBluetooth (void) const = 0;
-	/// \return What to say under its switch (why it's greyed, or what it does)
-	virtual const char *GetBluetoothNote (void) const = 0;
+	/// \return What to say under its switch (why it's greyed, what it's doing)
+	virtual const char *GetBluetoothNote (void) = 0;
+
+	struct TSpeaker
+	{
+		char Address[18];
+		char Name[48];			// (its address, while its name isn't known)
+		const char *pState;		// "connected", "pairing...", "paired", "" ...
+		boolean bConnected;
+		boolean bPaired;
+	};
+	/// \brief Look for speakers (while the Audio page shows them)
+	virtual void SetSpeakerSearch (boolean bOn) = 0;
+	/// \return The speakers to list: the one paired with, then those found, the nearest first
+	virtual unsigned GetSpeakers (TSpeaker *pSpeakers, unsigned nMax) = 0;
+	/// \return A number that changes when the list does
+	virtual unsigned GetSpeakersGeneration (void) = 0;
+	/// \brief A tap on one: connect to it (the connected one: let it go)
+	virtual void PickSpeaker (const char *pAddress) = 0;
+	/// \brief A paired one is paired with no more
+	virtual void ForgetSpeaker (const char *pAddress) = 0;
 	virtual boolean GetBluetooth (void) const = 0;
 	virtual void SetBluetooth (boolean bOn) = 0;
 
@@ -99,10 +124,12 @@ private:
 	void ShowDisplay (const char *pNote = nullptr);
 	void ShowAudio (void);
 	void ShowMuted (void);
+	void ShowSpeakers (void);
 	void ShowKernel (void);
 	void FillOption (unsigned nOption);
 	void SetOption (unsigned nOption, unsigned nChoice);
 	void Warn (unsigned nOption, unsigned nChoice);
+	void Ask (const char *pTitle, const char *pText);
 	void ShowRestart (boolean bWritten);
 	void ShowCalibrate (const char *pNote = nullptr);
 	void ShowTest (void);
@@ -145,6 +172,13 @@ private:
 	lv_obj_t *m_pOption[KernelOptions];
 	char m_Value[KernelOptions][MaxChoices][16];	// a list's choices as the option's values ("": left out)
 	unsigned m_nValues[KernelOptions];
+	static const unsigned MaxSpeakers = 12;
+	lv_obj_t *m_pBluetoothNote, *m_pSpeakers, *m_pSpeaker[MaxSpeakers];
+	char m_SpeakerAddress[MaxSpeakers][18];
+	boolean m_bSpeakerPaired[MaxSpeakers];
+	lv_obj_t *m_pHeld;			// the row a long press was on (its click isn't one)
+	char m_ForgetAddress[18];		// the speaker the question is about ("": a kernel option's)
+	unsigned m_nSpeakers, m_nSpeakersGeneration;
 	lv_obj_t *m_pRestart, *m_pLater;
 	lv_obj_t *m_pWarning, *m_pYes, *m_pNo;	// a choice to confirm: the option, the choice
 	unsigned m_nWarnOption, m_nWarnChoice;

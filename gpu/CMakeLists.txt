@@ -30,11 +30,24 @@ add_executable(gpu
 	main.cpp build_info.cpp kernel.cpp settings.cpp commands.cpp geometry.cpp textures.cpp programs.cpp renderer.cpp
 	link/i2s_link.cpp link/byte_stream_link.cpp link/usb_link.cpp link/usb_bulk_link.cpp
 	display/panel_output.cpp display/touch.cpp display/backlight.cpp display/hdmi_output.cpp display/hdmi_monitor.cpp display/gud_display.cpp
-	video/video.cpp audio/audio.cpp audio/audio_out.cpp install/installer.cpp ui/settings_app.cpp
+	video/video.cpp audio/audio.cpp audio/audio_sink.cpp audio/audio_out.cpp install/installer.cpp ui/settings_app.cpp
 	${ROOT}/drivers/v3d.cpp ${ROOT}/drivers/v3dcheck.cpp ${ROOT}/drivers/st7789dma.cpp
 	${ROOT}/devtools/devlink.cpp ${ROOT}/devtools/runlog.cpp ${ROOT}/devtools/pgpugadget.cpp
 	video/compat/circle_vcos.c video/compat/circle_micros.cpp ${mmal}
 	${CMAKE_CURRENT_BINARY_DIR}/shaders.h ${CMAKE_CURRENT_BINARY_DIR}/build_info_values.h)
+# Bluetooth (bt/): only in the kernels of the boards with the chip
+# (PGPU_WIRELESS in CIRCLE_DEFINES: devtools/build-gpu.sh)
+if("PGPU_WIRELESS" IN_LIST CIRCLE_DEFINES)
+	# the SBC encoder: Bluedroid's (bt/sbc_encoder, Apache 2.0), no warnings
+	file(GLOB sbc_encoder bt/sbc_encoder/srce/*.c)
+	add_library(sbc_encoder STATIC ${sbc_encoder})
+	target_link_libraries(sbc_encoder PUBLIC circle_flags)
+	target_include_directories(sbc_encoder PRIVATE bt/sbc_encoder/include ${CIRCLE_INCLUDE_DIRS})
+	target_compile_options(sbc_encoder PRIVATE -w -fmacro-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}/bt/=)
+	target_sources(gpu PRIVATE bt/bt_uart.cpp bt/bt_hci.cpp bt/bt_l2cap.cpp bt/bt_sdp.cpp bt/bt_avdtp.cpp
+		bt/bt_audio.cpp bt/bluetooth.cpp)
+	target_link_libraries(gpu PRIVATE sbc_encoder)
+endif()
 target_include_directories(gpu PRIVATE ${CIRCLE_INCLUDE_DIRS}	# (Circle's first, as Rules.mk)
 	${ROOT}/drivers ${ROOT}/devtools ${ROOT}/protocol ${ROOT}/third_party/circle/addon audio
 	video/compat video/userland video/userland/interface/mmal

@@ -170,7 +170,7 @@ unsigned CSettings::Format (char *pBuffer, unsigned nSize) const
 		{"touchcal", "# the touch screen's calibration: the readings at the left, right, top and\n"
 			     "# bottom edges, and 1: x from the controller's Y (Settings: Calibrate)\n"},
 		{"mute", "# the sound muted: on, off\n"},
-		{"bluetooth", "# Bluetooth (for speakers, to come): on, off\n"},
+		{"bluetooth", "# Bluetooth: on, off (the speakers paired with: speakers.txt)\n"},
 	};
 	CString Text ("# piegpu: the user's settings (the installer page leaves this file alone);\n"
 		      "# a key here wins over cmdline.txt's. Settings (a long press on the panel)\n"

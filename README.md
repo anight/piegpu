@@ -96,7 +96,7 @@ picks the one for the board.
 
 The Zero's and the Zero W's builds differ by one option, `PGPU_WIRELESS`: the
 Zero has no wireless chip, so its kernel is built without the Bluetooth code
-(for speakers, to come: for now the Bluetooth switch in Settings); the Zero
+(`gpu/bt`: a speaker for the sound, below); the Zero
 W's and the Zero 2 W's are built with it. A build's line in the log says
 which it is (`fwconfig=RASPPI=1,AArch32,wireless,...`). Either 32-bit kernel
 starts on either board: a Zero W with the Zero's kernel has no Bluetooth
@@ -235,9 +235,13 @@ A long press on the panel (2 s, anywhere, any time) opens **Settings** (LVGL,
 `gpu/ui`):
 
 - **Display:** the brightness; the touch's calibration and a test.
-- **Audio:** the volume, mute (the volume greyed), a test sound (a note on the left, one on the
-  right, one on both); Bluetooth on or off (for speakers, to come; greyed on
-  a Zero, which has none).
+- **Audio:** the volume, mute (the volume greyed), a test sound (a note on
+  the left, one on the right, one on both); Bluetooth on or off (greyed on a
+  Zero, which has none). On: the speakers nearby are listed under the switch
+  (a new one has to be in its pairing mode); a tap on one connects to it,
+  pairing with it if it's new, and the sound goes there: the test sound, and
+  a host's MP3, Ogg or AAC. A tap on the connected one lets it go; a long
+  press on a paired one asks whether to forget it.
 - **Kernel:** the options of the kernel command line below, each a list to
   choose from; the clocks' lists are the rates the firmware has for the board,
   in MHz. They take effect at the next start: leaving the page with one
@@ -297,7 +301,8 @@ closes it and writes what changed of the first two pages to `settings.txt`.
 | `v3d=N` | the V3D's clock, MHz, within the firmware's range (the Zero: 250-300; the default: its maximum). It holds with `cpu=low` only: with the ARM at its maximum the firmware keeps the V3D at its maximum too (measured on a Zero) |
 | `volume=N` | the sound's volume on HDMI, percent (default: 10) |
 | `mute=on`, `mute=off` | the sound muted, whatever the volume (default: off) |
-| `bluetooth=on`, `bluetooth=off` | Bluetooth (for speakers, to come; kept by Settings, not used yet) |
+| `bluetooth=on`, `bluetooth=off` | Bluetooth, for a speaker (default: off; the Zero W's and the Zero 2 W's kernels) |
+| `btlog=on` | log every Bluetooth packet (its first bytes): debugging |
 | `brightness=N` | the panel's backlight, percent (default: 100; its LED pin on GPIO12) |
 | `touch=auto`, `touch=off` | the panel's touch screen: used if its controller answers (the default), or not |
 | `touchcal=x0,x1,y0,y1,swap` | the touch's calibration: the readings at the panel's left and right edges, top and bottom; swap 1: its x from the controller's Y (Settings finds it) |
@@ -312,6 +317,31 @@ line, `#` for comments. The RPi reads it at boot and a key there wins over
 it has no control for) and never `settings.txt`, so an upgrade keeps them;
 Settings on the panel writes both: `settings.txt` from its Display and Audio
 pages, `cmdline.txt` from its Kernel page.
+
+### Sound on a Bluetooth speaker
+
+The Zero W's and the Zero 2 W's kernels (`PGPU_WIRELESS`) have piegpu's own
+small Bluetooth stack (`gpu/bt`, BSD like the rest: just what a speaker
+takes): the board's controller on its inner UART (GPIO30-33, nothing on the
+header), devices found and named, pairing (Secure Simple Pairing without a
+PIN; an old device's PIN 0000), L2CAP, the service record a speaker may ask
+for, AVDTP, and A2DP's SBC (Bluedroid's encoder, `gpu/bt/sbc_encoder`,
+Apache 2.0). The controller runs as it comes, without Broadcom's patch file.
+
+- **The speakers paired with** are remembered in `speakers.txt` on the card
+  (address, key, name; the last used first; up to 8). While none is connected
+  they are called in turn every 20 s, and a call from one of them is taken:
+  a speaker switched on is back by itself. Settings pairs and forgets.
+- **Where the sound goes:** to the speaker while its stream is there, else
+  to HDMI; decided when a host's stream (or the test sound) starts. The
+  stream is SBC at the sound's rate when the speaker changes to it (44.1 or
+  48 kHz, joint stereo, bitpool up to 53), else the sound is resampled; it's
+  started when there's sound and suspended after 5 s without.
+- **Verified** on a Zero W: a JBL GO found, paired with and streamed to
+  (835 packets, none dropped); this PC as the speaker (BlueZ, PipeWire), what
+  it received recorded: the test sound's three notes on the right channels at
+  the right level, an MP3 from a host playing 18 s through. The Zero 2 W's
+  build compiles; not run yet.
 
 ## Host boards (`hosts/pico`, `hosts/esp32p4`)
 
@@ -596,6 +626,7 @@ source.
 | [FAAD2](https://github.com/knik0/faad2) 2.11.3 | `gpu/audio/faad2` | GPL-2.0-or-later | AAC decoding | the firmware |
 | [minimp3](https://github.com/lieff/minimp3) | `gpu/audio/minimp3` | CC0-1.0 | MP3 decoding | the firmware |
 | [Tremor](https://gitlab.xiph.org/xiph/tremor) (libvorbisidec) and [libogg](https://gitlab.xiph.org/xiph/ogg) | `gpu/audio/tremor` | BSD-3-Clause | Ogg Vorbis decoding | the firmware |
+| Bluedroid's SBC encoder (Broadcom, from Android; the copy in [BTstack](https://github.com/bluekitchen/btstack)'s `3rd-party/bluedroid/encoder`, with its marked changes) | `gpu/bt/sbc_encoder` | Apache-2.0 | the sound's encoding for a Bluetooth speaker | the firmware (the Zero W's, the Zero 2 W's) |
 | [LVGL](https://github.com/lvgl/lvgl) 9.4 | `third_party/circle/addon/lvgl/lvgl` (Circle's submodule, fetched by `devtools/build-gpu.sh`) | MIT | the Settings app on the panel (`gpu/ui`) | the firmware |
 | [Raspberry Pi userland](https://github.com/raspberrypi/userland) (its MMAL client) | `gpu/video/userland` (a copy), `third_party/userland` | BSD-3-Clause | talking to the VideoCore's video components | the firmware |
 | GCC runtime (`libgcc`), newlib's `libm` (Arm GNU Toolchain 15.2) | the toolchain | GPL-3.0 with the GCC Runtime Library Exception; newlib: BSD-style | runtime support linked into the firmware | the firmware |

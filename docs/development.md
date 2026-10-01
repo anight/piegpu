@@ -246,7 +246,10 @@ model is named below, the fact was measured on that one.
 ## Audio
 
 The audio stream (protocol §7.13, `gpu/audio/`): AAC, MP3 or Ogg Vorbis
-decoded on the ARM, played on HDMI through the VideoCore's audio service.
+decoded on the ARM, played on HDMI through the VideoCore's audio service, or
+on a Bluetooth speaker (below). The outputs are audio sinks (`CAudioSink`:
+the ring, the volume, the pause): HDMI's (`CAudioOut`) and the speaker's
+(`CBTAudioOut`).
 
 - **Output** (`CAudioOut`): Circle's VCHIQ sound device
   (`addon/vc4/sound`), destination HDMI, 16-bit stereo in chunks of 2048
@@ -367,6 +370,55 @@ decoded on the ARM, played on HDMI through the VideoCore's audio service.
   0 broken, 30 ms of silence at the start; decoded on core 1. With the
   decoder in the main loop: the same sound (8 s of recording = 7.996 s of
   trailer). The Zero: builds, not run.
+
+## Bluetooth: a speaker
+
+`gpu/bt/`, in the kernels built with `PGPU_WIRELESS`. Everything runs in the
+main loop (`CBluetooth::Update`); only the UART's bytes move in an interrupt.
+
+| File | What |
+|---|---|
+| `bt_uart` | the PL011 on GPIO32/33, RTS/CTS on GPIO30/31 (ALT3), two rings filled and emptied by its interrupt |
+| `bt_hci` | H4 packets: commands one at a time, events, L2CAP frames cut into the controller's packets and put together again, as many under way as it has buffers (8 of 1021 bytes) |
+| `bluetooth` | the controller's set-up, the inquiry and the names, the connection, pairing, the bonds, which channel is what |
+| `bt_l2cap` | channels and their signalling, basic mode |
+| `bt_sdp` | one service record (an A2DP source), the three requests answered from it |
+| `bt_avdtp` | the stream: discovered, configured, opened, started, suspended, reconfigured; the speaker's own commands answered |
+| `bt_audio` | the audio sink: the ring's frames paced by the clock, resampled if need be, encoded, packed as media packets |
+
+- **The controller** (a Zero W's BCM43438) answers its reset at 115200 baud
+  with flow control, with no patch file loaded: HCI 4.1, manufacturer 15. It
+  comes with the address AA:AA:AA:AA:AA:AA: it's given B8:27:EB and the
+  board's serial number's low three bytes xor AA (Broadcom's command FC01).
+  Then 921600 baud (FC18: its answer at the old rate). It keeps that rate
+  through an HCI reset, so switching Bluetooth on again tries both rates.
+- **A connection**, as it went with a JBL GO: called (1.3 s), authentication
+  asked, no key, pairing with no input or output on our side (the numeric
+  comparison confirmed by itself), the key kept, encryption on, the
+  signalling channel (PSM 0x19), the end points discovered (one SBC sink,
+  every option, bitpool 2-53, SCMS-T offered and not taken), configured,
+  opened, the transport channel: 1.6 s from the answer to a stream. The
+  speaker then asked for AVCTP (refused: no such service here) and searched
+  our record for an AVRCP target (none): it stayed connected.
+- **The sound's pace** is ours: an SBC frame (128 samples) for every 2.9 ms
+  that passed since the last call, five frames a media packet (608 bytes: one
+  baseband packet). After the main loop was away for longer than 250 ms that
+  sound is skipped. A media packet isn't queued behind 8 others: with the
+  controller's 8 that's 230 ms of a stalled link, and the packet is dropped.
+- **Measured** with this PC as the speaker (its adapter also serves a mouse
+  and a keyboard): of about 1500 packets of a 20 s stream 0 to 94 were
+  dropped from run to run, with the main loop never away for more than 36 ms:
+  the link, not the loop. With the JBL GO none of 835.
+- **BlueZ refuses AVDTP's reconfigure** (error 0x19): its stream stays at the
+  rate it was configured with, and sound of the other rate is resampled
+  (linear interpolation). The JBL GO takes it.
+- **Testing without a speaker in the room:** a PC with BlueZ is a sink too.
+  It has to be discoverable and pairable and needs an agent that says yes
+  (a few lines of Python on D-Bus); PipeWire then shows the stream as
+  `bluez_input.<address>`, and what it plays can be recorded from the monitor
+  of the sink it's linked to. The `BT` host line drives the stack by hand:
+  `ON`, `OFF`, `SCAN`, `STOP`, `LIST`, `CONNECT address`, `DISCONNECT`,
+  `FORGET address`, `TEST`.
 
 ## The run log: a restart explains itself
 

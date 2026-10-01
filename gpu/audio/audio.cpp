@@ -42,6 +42,8 @@ CAudio::CAudio (CVCHIQDevice *pVCHIQ, CVideo *pVideo)
 	m_nMaxFrames (AAC_MAX_FRAMES),
 	m_pOut (nullptr),
 	m_pLastOut (nullptr),
+	m_pLastSink (nullptr),
+	m_pOther (nullptr),
 	m_nRate (0),
 	m_bPaused (FALSE),
 	m_nVolume (10),
@@ -106,8 +108,8 @@ boolean CAudio::PlayTest (void)
 	{
 		return FALSE;
 	}
-	CAudioOut *pOut = GetOutput (Rate);
-	if (!pOut || (!pOut->IsActive () && !pOut->Start ()))
+	CAudioSink *pOut = GetOutput (Rate);
+	if (!pOut || !pOut->Open ())
 	{
 		return FALSE;
 	}
@@ -171,7 +173,7 @@ u32 CAudio::Open (u32 nCodec, unsigned nVideoStream, const u8 *pConfig, unsigned
 		return PGPU_ERR_ENUM;
 	}
 
-	CAudioOut *pOut = GetOutput (nRate);
+	CAudioSink *pOut = GetOutput (nRate);
 	if (!pOut)
 	{
 		CloseDecoder ();
@@ -179,7 +181,7 @@ u32 CAudio::Open (u32 nCodec, unsigned nVideoStream, const u8 *pConfig, unsigned
 	}
 	pOut->Flush ();
 	pOut->SetPaused (FALSE);
-	if (!pOut->IsActive () && !pOut->Start ())
+	if (!pOut->Open ())
 	{
 		LOGWARN ("No sound output at %u Hz", nRate);
 		CloseDecoder ();
@@ -225,7 +227,18 @@ u32 CAudio::Open (u32 nCodec, unsigned nVideoStream, const u8 *pConfig, unsigned
 
 // the output for this rate (the VideoCore's audio service is set up once a
 // device; a stopped one starts again)
-CAudioOut *CAudio::GetOutput (unsigned nRate)
+CAudioSink *CAudio::GetOutput (unsigned nRate)
+{
+	if (m_pOther && m_pOther->SetSource (nRate))
+	{
+		m_pLastSink = m_pOther;
+		return m_pOther;
+	}
+	m_pLastSink = GetHDMIOutput (nRate);
+	return m_pLastSink;
+}
+
+CAudioOut *CAudio::GetHDMIOutput (unsigned nRate)
 {
 	for (unsigned i = 0; i < MaxRates; i++)
 	{
@@ -272,7 +285,7 @@ void CAudio::Close (void)
 
 	m_bOpen = FALSE;
 	m_pOut->Flush ();
-	m_pOut->Cancel ();			// (waits for the VideoCore: silence from here)
+	m_pOut->Close ();			// (HDMI's waits for the VideoCore: silence from here)
 	CloseDecoder ();
 	m_pOut = nullptr;
 	LOGNOTE ("Stream closed: %u units decoded, %u broken", m_nDecoded, m_nErrors);
@@ -507,7 +520,7 @@ int CAudio::Decode (const u8 *pUnit, unsigned nBytes, s16 *pFrames)
 // so a change would be heard that much later
 void CAudio::SetOutputVolume (void)
 {
-	CAudioOut *pOut = m_pOut ? m_pOut : m_pLastOut;	// (no stream: the test sound's)
+	CAudioSink *pOut = m_pOut ? m_pOut : m_pLastSink;	// (no stream: the test sound's)
 	if (pOut)
 	{
 		pOut->SetVolume (m_bMute ? 0 : m_nVolume * 65536 / 100);
@@ -616,7 +629,7 @@ boolean CAudio::GetTime (s64 *pUS)
 	}
 	while (nTime != m_pOut->GetChunkTime ());
 	u64 nSince = (u64) (CTimer::GetClockTicks () - nTime) * m_nRate / 1000000;
-	u32 nHeard = nRead - 2 * nChunk + (nSince < nChunk ? (u32) nSince : nChunk);
+	u32 nHeard = nRead - m_pOut->GetLatencyFrames () + (nSince < nChunk ? (u32) nSince : nChunk);
 	u32 nOldest = nMarks > MaxMarks - 8 ? nMarks - (MaxMarks - 8) : 0;
 	for (u32 k = nMarks; k-- > nOldest; )
 	{

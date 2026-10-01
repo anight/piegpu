@@ -70,6 +70,9 @@ CKernel::CKernel (void)
 	m_Renderer (&m_V3D),
 	m_Commands (&m_Renderer, &m_I2SLink),
 	m_Audio (&m_VCHIQ, m_Commands.GetVideo ()),
+#ifdef PGPU_WIRELESS
+	m_Bluetooth (&m_Interrupt),
+#endif
 	m_SettingsApp (&m_Touch, &m_Backlight, &m_Audio),
 	m_bPressing (FALSE),
 	m_nPressStart (0),
@@ -246,6 +249,12 @@ const char *CKernel::TestSound (void)
 	{
 		return "Not now: a stream is playing";
 	}
+#ifdef PGPU_WIRELESS
+	if (m_Bluetooth.GetLink () == CBluetooth::LinkReady)
+	{
+		return m_Audio.IsMuted () ? "Played on the speaker, muted" : "On the speaker: left, right, both";
+	}
+#endif
 	return   !m_Monitor.GetState ().bConnected ? "Played, but no monitor is on HDMI to hear it"
 	       : m_Audio.IsMuted () ? "Played, muted" : "Left, right, both";
 }
@@ -268,12 +277,226 @@ boolean CKernel::HasBluetooth (void) const
 #endif
 }
 
-// what Settings says under its Bluetooth switch
-const char *CKernel::GetBluetoothNote (void) const
+void CKernel::SetBluetooth (boolean bOn)
 {
-	return   HasBluetooth () ? "Bluetooth speakers: not yet (the switch is kept)"
-	       : IsWirelessBoard () ? "The Zero's kernel: no Bluetooth in it"
-	       : "This board has no Bluetooth";
+	m_bBluetooth = bOn;
+#ifdef PGPU_WIRELESS
+	if (HasBluetooth ())
+	{
+		m_Bluetooth.SetEnabled (bOn);
+	}
+#endif
+}
+
+// what Settings says under its Bluetooth switch: why it's greyed, what it's doing
+const char *CKernel::GetBluetoothNote (void)
+{
+#ifdef PGPU_WIRELESS
+	if (HasBluetooth ())
+	{
+		switch (m_Bluetooth.GetState ())
+		{
+		case CBluetooth::StateOff:	return "Off. On: it looks for speakers nearby";
+		case CBluetooth::StateStarting:	return "Starting...";
+		case CBluetooth::StateFailed:	return "The Bluetooth chip doesn't answer";
+		default:			break;
+		}
+		switch (m_Bluetooth.GetLink ())
+		{
+		case CBluetooth::LinkConnecting:	m_BluetoothNote.Format ("Calling %s...", m_Bluetooth.GetName (m_Bluetooth.GetLinkAddress ()));
+							return m_BluetoothNote;
+		case CBluetooth::LinkPairing:		return "Pairing...";
+		case CBluetooth::LinkSetup:		return "Setting up the sound...";
+		case CBluetooth::LinkReady:		m_BluetoothNote.Format ("The sound goes to %s", m_Bluetooth.GetName (m_Bluetooth.GetLinkAddress ()));
+							return m_BluetoothNote;
+		case CBluetooth::LinkClosing:		return "Letting it go...";
+		default:				break;
+		}
+		if (m_Bluetooth.GetLinkError ()[0])
+		{
+			m_BluetoothNote.Format ("%s. Looking for speakers...", m_Bluetooth.GetLinkError ());
+			return m_BluetoothNote;
+		}
+		return "Looking for speakers nearby...";
+	}
+#endif
+	return IsWirelessBoard () ? "The Zero's kernel: no Bluetooth in it" : "This board has no Bluetooth";
+}
+
+void CKernel::SetSpeakerSearch (boolean bOn)
+{
+#ifdef PGPU_WIRELESS
+	m_Bluetooth.SetScanning (bOn);
+#endif
+}
+
+unsigned CKernel::GetSpeakersGeneration (void)
+{
+#ifdef PGPU_WIRELESS
+	return m_Bluetooth.GetGeneration ();
+#else
+	return 0;
+#endif
+}
+
+// the speakers paired with first, the last used at the top (one isn't found
+// while it's connected, or switched off), then the others found
+unsigned CKernel::GetSpeakers (TSpeaker *pSpeakers, unsigned nMax)
+{
+	unsigned n = 0;
+#ifdef PGPU_WIRELESS
+	if (m_Bluetooth.GetState () != CBluetooth::StateReady)
+	{
+		return 0;
+	}
+	const CBluetooth::TBond *pBonds;
+	unsigned nBonds = m_Bluetooth.GetBonds (&pBonds);
+	const CBluetooth::TDevice *pDevices;
+	unsigned nDevices = m_Bluetooth.GetDevices (&pDevices);
+	for (unsigned i = 0; i < nBonds + nDevices && n < nMax; i++)
+	{
+		const u8 *pAddress = i < nBonds ? pBonds[i].Address : pDevices[i - nBonds].Address;
+		boolean bPaired = i < nBonds;
+		if (!bPaired && m_Bluetooth.FindBond (pAddress))
+		{
+			continue;
+		}
+		TSpeaker &S = pSpeakers[n++];
+		CBluetooth::FormatAddress (pAddress, S.Address);
+		strncpy (S.Name, m_Bluetooth.GetName (pAddress), sizeof S.Name - 1);
+		S.Name[sizeof S.Name - 1] = '\0';
+		CBluetooth::TLink Link = memcmp (pAddress, m_Bluetooth.GetLinkAddress (), 6) == 0 ? m_Bluetooth.GetLink ()
+					 : CBluetooth::LinkNone;
+		S.bConnected = Link == CBluetooth::LinkReady;
+		S.bPaired = bPaired;
+		S.pState =   Link == CBluetooth::LinkReady ? LV_SYMBOL_OK "  connected"
+			   : Link == CBluetooth::LinkConnecting ? "calling..."
+			   : Link == CBluetooth::LinkPairing ? "pairing..."
+			   : Link == CBluetooth::LinkSetup ? "setting up..."
+			   : bPaired ? "paired" : "";
+	}
+#endif
+	return n;
+}
+
+void CKernel::ForgetSpeaker (const char *pAddress)
+{
+#ifdef PGPU_WIRELESS
+	u8 Address[6];
+	if (CBluetooth::ParseAddress (pAddress, Address))
+	{
+		m_Bluetooth.Forget (Address);
+	}
+#endif
+}
+
+#ifdef PGPU_WIRELESS
+// The speakers paired with, in speakers.txt on the card (Settings pairs and
+// forgets; nothing else writes it): a line each, the last used first: its
+// address, the key the two share and its kind, its name
+#define SPEAKERS_FILE	"speakers.txt"
+
+void CKernel::LoadSpeakers (void)
+{
+	char *pText = new char[CSettings::MaxBytes];
+	int nBytes = m_Installer.ReadFile (SPEAKERS_FILE, pText, CSettings::MaxBytes - 1);
+	CBluetooth::TBond Bonds[CBluetooth::MaxBonds];
+	unsigned nBonds = 0;
+	pText[nBytes > 0 ? nBytes : 0] = '\0';
+	for (char *pLine = pText; *pLine && nBonds < CBluetooth::MaxBonds; )
+	{
+		char *pEnd = pLine;
+		while (*pEnd && *pEnd != '\n')
+		{
+			pEnd++;
+		}
+		char *pNext = *pEnd ? pEnd + 1 : pEnd;
+		while (pEnd > pLine && (pEnd[-1] == '\r' || pEnd[-1] == ' '))
+		{
+			pEnd--;
+		}
+		*pEnd = '\0';
+		// "AA:BB:CC:DD:EE:FF 32 hex digits:kind name"
+		CBluetooth::TBond &Bond = Bonds[nBonds];
+		memset (&Bond, 0, sizeof Bond);
+		if (pEnd - pLine >= 17 + 1 + 32 + 2 && pLine[0] != '#' && CBluetooth::ParseAddress (pLine, Bond.Address)
+		    && pLine[17] == ' ' && pLine[50] == ':')
+		{
+			boolean bKey = TRUE;
+			for (unsigned i = 0; i < 16; i++)
+			{
+				char Hex[3] = {pLine[18 + 2 * i], pLine[19 + 2 * i], '\0'}, *pStop;
+				Bond.Key[i] = (u8) strtoul (Hex, &pStop, 16);
+				bKey = bKey && pStop == Hex + 2;
+			}
+			char *pName;
+			Bond.nKeyType = (u8) strtoul (pLine + 51, &pName, 10);
+			while (*pName == ' ')
+			{
+				pName++;
+			}
+			strncpy (Bond.Name, pName, sizeof Bond.Name - 1);
+			if (bKey)
+			{
+				nBonds++;
+			}
+		}
+		pLine = pNext;
+	}
+	delete [] pText;
+	m_Bluetooth.SetBonds (Bonds, nBonds);
+	if (nBonds)
+	{
+		LOGNOTE ("Bluetooth: %u speaker%s paired with (" SPEAKERS_FILE "), the last used \"%s\"", nBonds, nBonds == 1 ? "" : "s",
+			 Bonds[0].Name);
+	}
+}
+
+void CKernel::SaveSpeakers (void)
+{
+	const CBluetooth::TBond *pBonds;
+	unsigned nBonds = m_Bluetooth.GetBonds (&pBonds);
+	CString Text ("# piegpu: the Bluetooth speakers paired with (Settings: Audio), the last used\n"
+		      "# first: address, the key the two share and its kind, name\n"), Line, Byte;
+	for (unsigned i = 0; i < nBonds; i++)
+	{
+		char Address[18];
+		CBluetooth::FormatAddress (pBonds[i].Address, Address);
+		Line.Format ("%s ", Address);
+		for (unsigned k = 0; k < 16; k++)
+		{
+			Byte.Format ("%02X", pBonds[i].Key[k]);
+			Line.Append (Byte);
+		}
+		Byte.Format (":%u %s\n", pBonds[i].nKeyType, pBonds[i].Name);
+		Line.Append (Byte);
+		Text.Append (Line);
+	}
+	if (!m_Installer.WriteFile (SPEAKERS_FILE, (const char *) Text, Text.GetLength ()))
+	{
+		LOGWARN ("Bluetooth: " SPEAKERS_FILE " can't be written (no card?): the pairing lasts till the restart");
+	}
+}
+#endif
+
+// a tap on a speaker: connect to it (pairing, if it's new); the connected one: let go
+void CKernel::PickSpeaker (const char *pAddress)
+{
+#ifdef PGPU_WIRELESS
+	u8 Address[6];
+	if (!CBluetooth::ParseAddress (pAddress, Address))
+	{
+		return;
+	}
+	if (m_Bluetooth.GetLink () != CBluetooth::LinkNone && memcmp (Address, m_Bluetooth.GetLinkAddress (), 6) == 0)
+	{
+		m_Bluetooth.Disconnect ();
+	}
+	else
+	{
+		m_Bluetooth.Connect (Address);
+	}
+#endif
 }
 
 // The kernel's options, for Settings to change: cmdline.txt as the card has
@@ -410,6 +633,59 @@ const char *CKernel::Setting (const char *pKey, const char *pDefault)
 	return pValue ? pValue : m_Options.GetAppOptionString (pKey, pDefault);
 }
 
+#ifdef PGPU_WIRELESS
+// the BT host line (debugging): ON, OFF, SCAN, STOP, LIST, CONNECT address, DISCONNECT, FORGET, TEST
+void CKernel::BluetoothLine (const char *pLine)
+{
+	if (strcmp (pLine, "ON") == 0 || strcmp (pLine, "OFF") == 0)
+	{
+		m_Bluetooth.SetEnabled (pLine[1] == 'N');
+	}
+	else if (strcmp (pLine, "SCAN") == 0 || strcmp (pLine, "STOP") == 0)
+	{
+		m_Bluetooth.SetScanning (pLine[1] == 'C');
+	}
+	else if (strncmp (pLine, "CONNECT ", 8) == 0)
+	{
+		u8 Address[6];
+		if (CBluetooth::ParseAddress (pLine + 8, Address))
+		{
+			m_Bluetooth.Connect (Address);
+		}
+	}
+	else if (strcmp (pLine, "DISCONNECT") == 0)
+	{
+		m_Bluetooth.Disconnect ();
+	}
+	else if (strncmp (pLine, "FORGET ", 7) == 0)
+	{
+		ForgetSpeaker (pLine + 7);
+	}
+	else if (strcmp (pLine, "TEST") == 0)
+	{
+		LOGNOTE ("BT: test sound: %s", TestSound ());
+	}
+	else if (strcmp (pLine, "LIST") == 0)
+	{
+		char Link[18];
+		CBluetooth::FormatAddress (m_Bluetooth.GetLinkAddress (), Link);
+		LOGNOTE ("BT: link %u to %s%s%s; media packets %u sent, %u dropped; the main loop away %u ms at most, %u skips",
+			 m_Bluetooth.GetLink (), Link, m_Bluetooth.GetLinkError ()[0] ? ", last: " : "", m_Bluetooth.GetLinkError (),
+			 m_Bluetooth.GetAudioOut ()->GetSent (), m_Bluetooth.GetAudioOut ()->GetDropped (),
+			 m_Bluetooth.GetAudioOut ()->GetLongestGap () / 1000, m_Bluetooth.GetAudioOut ()->GetSkips ());
+		const CBluetooth::TDevice *pDevices;
+		unsigned n = m_Bluetooth.GetDevices (&pDevices);
+		LOGNOTE ("BT: state %u, %u audio devices%s", m_Bluetooth.GetState (), n, m_Bluetooth.IsScanning () ? ", scanning" : "");
+		for (unsigned i = 0; i < n; i++)
+		{
+			char Address[18];
+			CBluetooth::FormatAddress (pDevices[i].Address, Address);
+			LOGNOTE ("BT:   %s  class %06X  %d dBm  \"%s\"", Address, pDevices[i].nClass, pDevices[i].nRSSI, pDevices[i].Name);
+		}
+	}
+}
+#endif
+
 // text from the host (the USB serial link): "s" alone asks for a screenshot,
 // lines that start with "PGI " go to the installer (gpu/install)
 void CKernel::HostInput (void)
@@ -432,6 +708,12 @@ void CKernel::HostInput (void)
 			{
 				SoundTest ();
 			}
+#ifdef PGPU_WIRELESS
+			else if (strncmp (m_HostLine, "BT ", 3) == 0)	// debugging: Bluetooth by hand
+			{
+				BluetoothLine (m_HostLine + 3);
+			}
+#endif
 			else if (strncmp (m_HostLine, "TOUCH ", 6) == 0)	// debugging: "TOUCH x y ms", a finger there
 			{								// (the panel's pixels) for so long
 				char *pEnd;
@@ -713,6 +995,15 @@ TShutdownMode CKernel::Run (void)
 		 m_CPUThrottle.GetMaxClockRate () / 1000000,
 		 GetClock (CLOCK_ID_V3D, PROPTAG_GET_CLOCK_RATE_MEASURED), m_nV3DMin, m_nV3DMax,
 		 m_CPUThrottle.GetTemperature (), m_CPUThrottle.GetMaxTemperature ());
+#ifdef PGPU_WIRELESS
+	m_Bluetooth.SetTrace (strcmp (m_Options.GetAppOptionString ("btlog", "off"), "on") == 0);
+	LoadSpeakers ();
+	m_Audio.SetOther (m_Bluetooth.GetAudioOut ());
+	if (m_bBluetooth && HasBluetooth ())
+	{
+		m_Bluetooth.SetEnabled (TRUE);
+	}
+#endif
 	// the firmware's throttle flags (under-voltage and so on, since boot)
 	LOGNOTE ("Throttled %05X", GetThrottled ());
 	m_RunLog.Report ();		// how the previous run ended
@@ -848,6 +1139,13 @@ TShutdownMode CKernel::Run (void)
 		}
 
 		m_Commands.UpdateVideo ();
+#ifdef PGPU_WIRELESS
+		m_Bluetooth.Update ();
+		if (m_Bluetooth.BondChanged ())		// paired (or no more; or another one used): kept
+		{
+			SaveSpeakers ();
+		}
+#endif
 
 		// the touch screen: read after each panel frame (or here, without
 		// them); a change goes to the host, unless Settings is open (a long
@@ -1055,8 +1353,8 @@ void CKernel::DumpScreenshot (void)
 // timing and the VideoCore's completion flags.
 void CKernel::SoundTest (void)
 {
-	CAudioOut *pOut = m_Audio.GetOutput (48000);
-	if (!pOut || (!pOut->IsActive () && !pOut->Start ()))
+	CAudioOut *pOut = m_Audio.GetHDMIOutput (48000);
+	if (!pOut || !pOut->Open ())
 	{
 		LOGWARN ("SOUNDTEST: no sound output");
 		return;

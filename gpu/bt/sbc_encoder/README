@@ -1,0 +1,11 @@
+The SBC encoder of Bluedroid (Android's Bluetooth stack; Broadcom
+Corporation, 1999-2012), under the Apache License 2.0 (LICENSE).
+
+This copy is the one BTstack carries in 3rd-party/bluedroid/encoder
+(github.com/bluekitchen/btstack, commit 501e6d2b, as the Raspberry Pi Pico
+SDK 2.2.0 ships it), with BlueKitchen's changes to it, marked in the
+sources (BK4BTSTACK_CHANGE): the encoder's state in its parameter block,
+the bit pool given instead of a bit rate, mSBC. Nothing changed here.
+
+gpu/bt/bt_audio.cpp uses it; gpu/CMakeLists.txt builds it for the kernels
+with Bluetooth (PGPU_WIRELESS).

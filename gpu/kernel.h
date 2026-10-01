@@ -71,6 +71,10 @@ private:
 };
 #endif
 
+#ifdef PGPU_WIRELESS
+	#include "bt/bluetooth.h"
+#endif
+
 class CKernel : public CSettingsHost
 {
 public:
@@ -89,9 +93,18 @@ private:
 	// Settings' (CSettingsHost)
 	void SaveSettings (void);
 	boolean HasBluetooth (void) const;
-	const char *GetBluetoothNote (void) const;
+	const char *GetBluetoothNote (void);
+	void SetSpeakerSearch (boolean bOn);
+	unsigned GetSpeakers (TSpeaker *pSpeakers, unsigned nMax);
+	unsigned GetSpeakersGeneration (void);
+	void PickSpeaker (const char *pAddress);
+	void ForgetSpeaker (const char *pAddress);
+#ifdef PGPU_WIRELESS
+	void LoadSpeakers (void);
+	void SaveSpeakers (void);
+#endif
 	boolean GetBluetooth (void) const	{ return m_bBluetooth; }
-	void SetBluetooth (boolean bOn)		{ m_bBluetooth = bOn; }
+	void SetBluetooth (boolean bOn);
 	void LoadKernelOptions (void);
 	const char *GetKernelOption (const char *pKey);
 	void SetKernelOption (const char *pKey, const char *pValue);
@@ -100,6 +113,9 @@ private:
 	const char *TestSound (void);
 	void Restart (void);
 
+#ifdef PGPU_WIRELESS
+	void BluetoothLine (const char *pLine);
+#endif
 	void SetV3DClock (void);
 	static unsigned GetClock (u32 nClockId, u32 nTag);	// MHz
 
@@ -182,6 +198,10 @@ private:
 	CRenderer		m_Renderer;
 	CCommands		m_Commands;
 	CAudio			m_Audio;		// the audio stream, on HDMI (volume= option)
+#ifdef PGPU_WIRELESS
+	CBluetooth		m_Bluetooth;		// for a speaker (bt/)
+	CString			m_BluetoothNote;
+#endif
 	CSettingsApp		m_SettingsApp;		// on the panel, a long press opens it (gpu/ui)
 	boolean			m_bPressing;		// the long press: held since, where
 	unsigned		m_nPressStart;
