@@ -19,6 +19,7 @@
 #define _gpu_audio_audio_h
 
 #include "audio_out.h"
+#include "sounds.h"
 #include "../video/video.h"
 #include <vc4/vchiq/vchiqdevice.h>
 #include <circle/types.h>
@@ -88,6 +89,17 @@ public:
 	/// \return Where a stream of this rate goes now, or nullptr
 	CAudioSink *GetOutput (unsigned nRate);
 
+	// the sound effects' commands (docs/protocol.md 7.14: sounds.h): 0 or a PGPU_ERR_* code
+	u32 SoundData (unsigned nId, unsigned nRate, unsigned nFrames, unsigned nOffset, u32 nFormat,
+		       const u8 *pData, unsigned nBytes);
+	u32 SoundDelete (unsigned nId);
+	u32 SoundPlay (unsigned nChannel, unsigned nId, unsigned nLeft, unsigned nRight, u32 nFlags);
+	u32 SoundVolume (unsigned nChannel, unsigned nLeft, unsigned nRight)	{ return m_Sounds.Volume (nChannel, nLeft, nRight); }
+	/// \brief Every sound gone (a new session)
+	void SoundReset (void);
+	/// \brief Call often (core 0): the output for the effects, as there's a stream, a speaker, or neither
+	void UpdateSounds (void);
+
 	/// \brief The MEDIA_STATUS reply of the audio stream
 	boolean GetStatus (u32 *pPayload, boolean bDue);
 
@@ -142,6 +154,8 @@ private:
 	CAudioOut *m_pLastOut;
 	CAudioSink *m_pLastSink;		// the last used (the test sound's, with no stream)
 	CAudioSinkOther *m_pOther;
+	CSounds m_Sounds;			// the sound effects
+	CAudioSink *m_pSoundSink;		// the output running for them, with no stream
 	unsigned m_nRate;
 	boolean m_bPaused;
 	unsigned m_nVolume;			// percent

@@ -8,7 +8,10 @@
 #   gears breakout flight
 #   antigrav            anti-gravity racing, after WipEout: six craft, a circuit
 #   walk                the BSP engine (engine/): a Quake-format level walked
-#                       through; PGPU_LEVEL (default engine/levels/base.bsp)
+#                       through; PGPU_LEVEL (default engine/levels/base.bsp).
+#                       It and the next two with sound effects, mixed by the
+#                       RPi (engine/sound.c; engine/sounds, made by
+#                       engine/tools/make_sounds.py)
 #   keep                the BSP engine outdoors: a castle at dusk, gems to
 #                       find (default engine/levels/keep.bsp)
 #   isles               the BSP engine in the sky: floating islands, a moving
@@ -89,7 +92,8 @@ function(pgpu_demo target app)
 		configure_file(${engine}/level_file.S.in ${CMAKE_CURRENT_BINARY_DIR}/level_file_${app}.S @ONLY)
 		set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/level_file_${app}.S PROPERTIES OBJECT_DEPENDS ${PGPU_LEVEL})
 		target_sources(${target} PRIVATE ${PGPU_DEMOS}/${app}.c ${engine}/bsp.c ${engine}/render.c ${engine}/collide.c
-			${engine}/game.c ${engine}/keys.c ${engine}/palette.c ${CMAKE_CURRENT_BINARY_DIR}/level_file_${app}.S)
+			${engine}/game.c ${engine}/keys.c ${engine}/palette.c ${engine}/sound.c ${engine}/sounds/sound_data.c
+			${CMAKE_CURRENT_BINARY_DIR}/level_file_${app}.S)
 		target_include_directories(${target} PRIVATE ${engine})
 		pgpu_glsl_program(TARGET ${target} NAME world DIR ${engine}/shaders
 			ARGS -a a_pos:float:3 -a a_uv:float:2 -a a_luv:float:2 -v triangles)

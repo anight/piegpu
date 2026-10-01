@@ -29,6 +29,17 @@ The host library (`libpgpu/`, board independent) has two layers:
   the last `MEDIA_STATUS`, which the library keeps per stream like `DISPLAY`,
   and what it has sent since); `pgpu_media_control` and
   `pgpu_media_get_status` the rest.
+- **Sound effects** ([protocol](protocol.md) §7.14): `pgpu_sound_data (id,
+  rate, format, samples, frames)` sends a short mono sound once
+  (`PGPU_SOUND_U8` or `PGPU_SOUND_S16`, ids 1 … 64, in as many packets as it
+  takes); `pgpu_sound_play (channel, id, left, right, flags)` plays it on one
+  of 16 channels, with its volume left and right (0 … `PGPU_SOUND_FULL`),
+  `PGPU_SOUND_LOOP` to go round; `pgpu_sound_volume` changes what plays
+  there, `pgpu_sound_stop` stops it, `pgpu_sound_delete` drops a sound. The
+  RPi mixes the channels into what it plays. Where a sound is in a scene is
+  the host's: `engine/sound.c` places the BSP engine's in Quake's manner
+  (quieter with the distance, louder on its side), one-shot channels for
+  events and loops for movers and ambience.
 - **Audio** ([protocol](protocol.md) §7.13): `pgpu_audio_open (codec,
   video_stream, config, config_bytes)` opens the audio stream (stream
   `PGPU_AUDIO_STREAM`, 3) for AAC (`PGPU_AUDIO_AAC`, config the

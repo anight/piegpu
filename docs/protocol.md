@@ -542,6 +542,30 @@ The stream's other commands and its reply are a video stream's, with stream
   decoded (MP3 at 44.1 kHz: 26 s). The host sends both streams' samples in time order, as far ahead
   as both allow.
 
+### 7.14 Sound effects
+
+Short sounds the host sends once and plays as often as it likes, mixed by the
+RPi into what it plays (the audio stream's sound, or silence): on HDMI, or on
+the Bluetooth speaker. A **sound** is mono, 8 bits unsigned or 16 bits signed,
+at its own rate (4000 … 48000 Hz); the RPi resamples as it mixes. A
+**channel** (16 of them) plays one sound at a time with a volume left and
+right; where a sound is, and how loud, is the host's to say. A sound is heard
+as soon as the output's own delay allows (HDMI: under 0.1 s; a Bluetooth
+speaker: about 0.2 s), not after what waits of the stream.
+
+| Op | Name | Payload | Meaning |
+|---|---|---|---|
+| `0xC5` | SOUND_DATA | `u32 id` (1 … 64), `u32 rate`, `u32 frames` (the whole sound's), `u32 offset` (frames), `u32 format` (0 = 8 bits unsigned, 1 = 16 bits signed little-endian), the samples (padded to words) | A part of a sound. The part at offset 0 makes the sound (one of this id is replaced, and what plays it stops), `frames` long, silent where no part has come; the others fill it (`OBJECT` if there is no such sound, or the part doesn't fit). `ENUM` for another format or rate; `LIMIT` over 4 M frames in all. |
+| `0xC6` | SOUND_DELETE | `u32 id` (0: all) | The sound is gone; the channels playing it stop. |
+| `0xC7` | SOUND_PLAY | `u32 channel` (0 … 15), `u32 id` (0: stop), `u32 volumes` (left in bits 15–0, right in 31–16; 0 … 256, 256 as recorded), `u32 flags` (bit 0 `LOOP`) | The channel plays the sound from its start, in place of what it played. With `LOOP` it goes round (and is faded in over 43 ms: a loop starts anywhere in its wave) till the channel is stopped (faded out) or given another sound. `OBJECT` if the sound isn't there. |
+| `0xC8` | SOUND_VOLUME | `u32 channel`, `u32 volumes` | The volumes of what the channel plays, eased to over 43 ms (a source that moves, or its listener). |
+
+The sounds are the session's: `RESET` (and the session's end) stops the
+channels and drops them. The RPi's volume and mute (its settings, and the
+audio stream's `VOLUME`) apply to the mix. While a host has sounds, an output
+runs for them: the audio stream's while there is one, else the speaker's or
+HDMI's at 48 kHz.
+
 ---
 
 ## 8. Opcode map
@@ -559,8 +583,9 @@ The stream's other commands and its reply are a video stream's, with stream
 | `0x60`–`0x7F` | reserved for fixed-function additions |
 | `0x80`–`0x8F` | programs (§7.10) |
 | `0x90`–`0xBF` | reserved for program additions |
-| `0xC0`–`0xC7` | media streams: video (§7.12) and audio (§7.13) |
-| `0xC8`–`0xEF` | reserved |
+| `0xC0`–`0xC4` | media streams: video (§7.12) and audio (§7.13) |
+| `0xC5`–`0xC8` | sound effects (§7.14) |
+| `0xC9`–`0xEF` | reserved |
 | `0xF0`–`0xFF` | debug and vendor |
 
 Debug commands (v1 RPi implementation, not needed by applications):
@@ -708,6 +733,7 @@ In the fixed-function pipeline SRC_ALPHA_SATURATE is approximated by SRC_ALPHA.
 | command ring on the RPi | 1 MB |
 | video streams | 2; a stream: 4 MB and 256 samples not yet decoded, 8 decoded frames waiting |
 | audio stream | 1 (stream 3); 512 KB and 1024 samples not yet decoded, 2 s of decoded sound; an access unit at most 16 KB |
+| sound effects | 64 sounds, 4 M frames in all (8 MB); 16 channels |
 | video textures | width a power of two, 32 … 2048; height a multiple of 16, … 2048 |
 
 The Pico should read the actual values from `INFO` rather than hard-code them.

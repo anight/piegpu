@@ -3,7 +3,8 @@
  * ericw-tools; engine/levels/base.bsp by default, PGPU_LEVEL) linked in, drawn
  * by the RPi (textures, lightmaps, the visible set from the PVS) and walked
  * through: Quake's movement against the level's clipping hulls, doors that
- * open, a lift (engine/game.c).
+ * open, a lift (engine/game.c), with their sounds and the player's
+ * (engine/sound.c: steps, the lift's motor, the doors, a base's hum).
  *
  * The keys (engine/keys.h): w s a d, the arrows or q e, space. Without keys
  * for PILOT_S the autopilot walks the level (engine/levels/base_path.h).
@@ -23,6 +24,7 @@
 #include "render.h"
 #include "game.h"
 #include "keys.h"
+#include "sound.h"
 #include "levels/base_path.h"
 
 extern const uint8_t level_file[], level_file_end[];
@@ -65,6 +67,8 @@ int main (void)
 	{
 		printf ("walk: the HUD program didn't link\n");
 	}
+	static sound_t snd;
+	sound_init (&snd, &bsp, SND_AMB_HUM);
 	printf ("walk: keys: w s a d, the arrows, q e, space; the autopilot after %.0f s without\n", PILOT_S);
 	glClearColor (0.0f, 0.0f, 0.0f, 1.0f);
 	glDisable (GL_CULL_FACE);
@@ -100,6 +104,7 @@ int main (void)
 			game_pilot (&pilot, &g, &in, dt);
 		}
 		game_update (&g, &in, dt);
+		sound_game (&snd, &g, dt);
 
 		/* the view */
 		float eye[3], view[16], vpm[16];

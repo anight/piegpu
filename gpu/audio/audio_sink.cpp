@@ -2,10 +2,25 @@
 // audio_sink.cpp
 //
 #include "audio_sink.h"
+#include "sounds.h"
 #include <circle/synchronize.h>
 #include <circle/util.h>
 #include <circle/timer.h>
 #include <assert.h>
+
+CSounds *CAudioSink::s_pSounds = nullptr;
+CAudioSink *volatile CAudioSink::s_pSoundsSink = nullptr;
+
+void CAudioSink::SetSounds (CSounds *pSounds, CAudioSink *pSink)
+{
+	s_pSounds = pSounds;
+	s_pSoundsSink = pSink;
+}
+
+boolean CAudioSink::HasSounds (void) const
+{
+	return s_pSoundsSink == this && s_pSounds && s_pSounds->IsLoaded ();
+}
 
 CAudioSink::CAudioSink (unsigned nSampleRate)
 :	m_nSampleRate (nSampleRate),
@@ -72,17 +87,7 @@ void CAudioSink::Take (s16 *pBuffer, unsigned nFrames, unsigned *pFromRing, unsi
 	{
 		*pQueued = nAvail;
 	}
-	if (m_bPaused)
-	{
-		memset (pBuffer, 0, nFrames * 2 * sizeof (s16));
-		m_nFramesOut += nFrames;
-		if (pFromRing)
-		{
-			*pFromRing = 0;
-		}
-		return;
-	}
-	unsigned nCopy = nAvail < nFrames ? nAvail : nFrames;
+	unsigned nCopy = m_bPaused ? 0 : nAvail < nFrames ? nAvail : nFrames;
 
 	unsigned nOut = m_nOut;
 	for (unsigned i = 0; i < nCopy; i++, nOut++)
@@ -94,10 +99,20 @@ void CAudioSink::Take (s16 *pBuffer, unsigned nFrames, unsigned *pFromRing, unsi
 	DataMemBarrier ();			// the frames read before the room is given back
 	m_nOut = nOut;
 
-	if (nCopy < nFrames)			// the ring ran dry: silence, and go on
+	if (nCopy < nFrames)			// paused, or the ring ran dry: silence, and go on
 	{
 		memset (pBuffer + 2 * nCopy, 0, (nFrames - nCopy) * 2 * sizeof (s16));
-		m_nUnderrun += nFrames - nCopy;
+		if (!m_bPaused)
+		{
+			m_nUnderrun += nFrames - nCopy;
+		}
+	}
+
+	// the sound effects, over the stream's sound (or the silence)
+	unsigned nSound = nCopy;
+	if (s_pSoundsSink == this && s_pSounds && s_pSounds->Mix (pBuffer, nFrames, m_nSampleRate))
+	{
+		nSound = nFrames;
 	}
 
 	// the volume: from the last chunk's to the one asked for across this
@@ -106,7 +121,7 @@ void CAudioSink::Take (s16 *pBuffer, unsigned nFrames, unsigned *pFromRing, unsi
 	if (nVolume != 65536 || m_nGain != 65536)
 	{
 		s32 nFrom = (s32) m_nGain, nStep = (s32) nVolume - nFrom;
-		for (unsigned i = 0; i < nCopy; i++)
+		for (unsigned i = 0; i < nSound; i++)
 		{
 			s32 nGain = nFrom + (s32) ((s64) nStep * (s32) (i + 1) / (s32) nFrames);
 			pBuffer[2 * i] = (s16) (((s64) pBuffer[2 * i] * nGain) >> 16);

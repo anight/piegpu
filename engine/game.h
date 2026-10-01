@@ -29,6 +29,8 @@ enum { GAME_DOOR, GAME_PLAT, GAME_TRAIN };
 enum { GAME_PUSH, GAME_TELEPORT };
 #define GAME_PUSHED		1		/* game_t.events: in the last step */
 #define GAME_TELEPORTED		2
+#define GAME_JUMPED		4
+#define GAME_LANDED		8		/* (from the air onto the ground: land_speed) */
 #define GAME_EYE		22.0f		/* the eye above the player's origin */
 
 typedef struct
@@ -83,7 +85,8 @@ typedef struct
 	int n_items, n_taken;
 	game_trigger_t triggers[GAME_MAX_TRIGGERS];
 	int n_triggers;
-	unsigned events;			/* GAME_PUSHED, GAME_TELEPORTED: in the last step */
+	unsigned events;			/* GAME_PUSHED, GAME_TELEPORTED, GAME_JUMPED, GAME_LANDED: in the last step */
+	float land_speed;			/* how fast it came down, with GAME_LANDED */
 	int picked;				/* the item picked up in the last step, else -1 */
 	int contents;				/* at the player's feet (BSP_CONTENTS_*) */
 	float start[3], start_yaw;		/* info_player_start */

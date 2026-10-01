@@ -116,6 +116,12 @@ enum pgpu_opcode
 	PGPU_OP_MEDIA_GET_STATUS = 0xC3,
 	PGPU_OP_AUDIO_OPEN	= 0xC4,		/* section 7.13 */
 
+	/* sound effects (section 7.14) */
+	PGPU_OP_SOUND_DATA	= 0xC5,
+	PGPU_OP_SOUND_DELETE	= 0xC6,
+	PGPU_OP_SOUND_PLAY	= 0xC7,
+	PGPU_OP_SOUND_VOLUME	= 0xC8,
+
 	/* debug */
 	PGPU_OP_DEBUG_SCREENSHOT = 0xF0		/* dump the last presented frame to the RPi's USB log */
 };
@@ -187,6 +193,14 @@ enum pgpu_reply
 #define PGPU_AUDIO_VORBIS		4	/* Ogg Vorbis: Ogg pages, config: the header pages (identification, comment, setup) */
 #define PGPU_AUDIO_OPEN_WORDS		4	/* before the config */
 #define PGPU_AUDIO_VOLUME		5	/* MEDIA_CONTROL on the audio stream: arg the volume, percent (0 .. 100) */
+/* sound effects (section 7.14) */
+#define PGPU_SOUNDS			64	/* sound ids 1 .. 64 */
+#define PGPU_SOUND_CHANNELS		16	/* channels 0 .. 15 */
+#define PGPU_SOUND_U8			0	/* SOUND_DATA format: 8 bits unsigned, mono */
+#define PGPU_SOUND_S16			1	/* 16 bits signed, little-endian, mono */
+#define PGPU_SOUND_DATA_WORDS		5	/* before the samples */
+#define PGPU_SOUND_LOOP			(1u << 0)	/* SOUND_PLAY flags: again from its start, till stopped */
+#define PGPU_SOUND_FULL			256	/* a channel's volume: as recorded */
 #define PGPU_AUDIO_STATUS_VOLUME(flags)	(((flags) >> 8) & 0xFFu)	/* its MEDIA_STATUS flags: the volume */
 
 enum pgpu_error

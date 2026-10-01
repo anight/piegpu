@@ -30,7 +30,7 @@ add_executable(gpu
 	main.cpp build_info.cpp kernel.cpp settings.cpp commands.cpp geometry.cpp textures.cpp programs.cpp renderer.cpp
 	link/i2s_link.cpp link/byte_stream_link.cpp link/usb_link.cpp link/usb_bulk_link.cpp
 	display/panel_output.cpp display/touch.cpp display/backlight.cpp display/hdmi_output.cpp display/hdmi_monitor.cpp display/gud_display.cpp
-	video/video.cpp audio/audio.cpp audio/audio_sink.cpp audio/audio_out.cpp install/installer.cpp ui/settings_app.cpp
+	video/video.cpp audio/audio.cpp audio/audio_sink.cpp audio/sounds.cpp audio/audio_out.cpp install/installer.cpp ui/settings_app.cpp
 	${ROOT}/drivers/v3d.cpp ${ROOT}/drivers/v3dcheck.cpp ${ROOT}/drivers/st7789dma.cpp
 	${ROOT}/devtools/devlink.cpp ${ROOT}/devtools/runlog.cpp ${ROOT}/devtools/pgpugadget.cpp
 	video/compat/circle_vcos.c video/compat/circle_micros.cpp ${mmal}

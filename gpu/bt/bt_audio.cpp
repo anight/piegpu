@@ -223,7 +223,11 @@ void CBTAudioOut::Update (void)
 	{
 		m_nLastSound = nNow;
 	}
-	boolean bWanted = m_pStream->IsReady () && (Queued () || (m_bWanted && nNow - m_nLastSound < IDLE_US));
+	if (HasSounds ())			// (sound effects: any moment)
+	{
+		m_nLastSound = nNow;
+	}
+	boolean bWanted = m_pStream->IsReady () && (Queued () || HasSounds () || (m_bWanted && nNow - m_nLastSound < IDLE_US));
 	if (bWanted != m_bWanted)
 	{
 		m_bWanted = bWanted;
@@ -235,7 +239,7 @@ void CBTAudioOut::Update (void)
 	// none. But not for long (and not for a speaker that's gone): then the
 	// sound is dropped at its pace, and what plays it goes on
 	boolean bStreaming = m_pStream->IsStreaming () && m_bEncoder;
-	if (!bStreaming && ((m_bWanted && nNow - m_nWanted < START_US) || !Queued ()))
+	if (!bStreaming && ((m_bWanted && nNow - m_nWanted < START_US) || !(Queued () || HasSounds ())))
 	{
 		m_nDue = 0;
 		return;

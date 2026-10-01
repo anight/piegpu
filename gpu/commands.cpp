@@ -213,6 +213,7 @@ void CCommands::Reset (void)
 	if (m_pAudio)
 	{
 		m_pAudio->Close ();
+		m_pAudio->SoundReset ();
 	}
 	m_Video.CloseAll ();
 	for (unsigned i = 1; i <= MaxBuffers; i++)
@@ -373,6 +374,7 @@ void CCommands::UpdateVideo (void)
 	}
 	if (m_pAudio)
 	{
+		m_pAudio->UpdateSounds ();
 		m_pAudio->Update ();
 		if (m_pAudio->GetStatus (Status, TRUE))
 		{
@@ -437,6 +439,8 @@ void CCommands::Execute (u32 nHeader, const u32 *pPayload)
 		{PGPU_OP_PROGRAM_DRAW_INLINE, VARIABLE},
 		{PGPU_OP_VIDEO_OPEN, VARIABLE}, {PGPU_OP_MEDIA_DATA, VARIABLE}, {PGPU_OP_MEDIA_CONTROL, 4},
 		{PGPU_OP_MEDIA_GET_STATUS, 1}, {PGPU_OP_AUDIO_OPEN, VARIABLE},
+		{PGPU_OP_SOUND_DATA, VARIABLE}, {PGPU_OP_SOUND_DELETE, 1}, {PGPU_OP_SOUND_PLAY, 4},
+		{PGPU_OP_SOUND_VOLUME, 2},
 	};
 
 	boolean bKnown = FALSE;
@@ -742,6 +746,37 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 			return PGPU_ERR_ID;
 		}
 		return m_pAudio->Open (p[1], p[2], (const u8 *) (p + PGPU_AUDIO_OPEN_WORDS), p[3]);
+
+	// sound effects (7.14)
+	case PGPU_OP_SOUND_DATA:			// id, rate, frames, offset, format; the samples
+		*pDetail = p[0];
+		if (nLength < PGPU_SOUND_DATA_WORDS)
+		{
+			return PGPU_ERR_LENGTH;
+		}
+		if (!m_pAudio)
+		{
+			return PGPU_ERR_OBJECT;
+		}
+		{
+			// (the payload's bytes: all of them samples but the last word's padding)
+			unsigned nBytes = (nLength - PGPU_SOUND_DATA_WORDS) * 4, nSample = p[4] == PGPU_SOUND_S16 ? 2 : 1;
+			unsigned nLeft = p[2] > p[3] ? (p[2] - p[3]) * nSample : 0;
+			return m_pAudio->SoundData (p[0], p[1], p[2], p[3], p[4], (const u8 *) (p + PGPU_SOUND_DATA_WORDS),
+						    nBytes < nLeft ? nBytes : nLeft);
+		}
+
+	case PGPU_OP_SOUND_DELETE:
+		*pDetail = p[0];
+		return m_pAudio ? m_pAudio->SoundDelete (p[0]) : PGPU_ERR_OBJECT;
+
+	case PGPU_OP_SOUND_PLAY:			// channel, id, volumes (left, right << 16), flags
+		*pDetail = p[0];
+		return m_pAudio ? m_pAudio->SoundPlay (p[0], p[1], p[2] & 0xFFFF, p[2] >> 16, p[3]) : PGPU_ERR_OBJECT;
+
+	case PGPU_OP_SOUND_VOLUME:			// channel, volumes
+		*pDetail = p[0];
+		return m_pAudio ? m_pAudio->SoundVolume (p[0], p[1] & 0xFFFF, p[1] >> 16) : PGPU_ERR_OBJECT;
 
 	case PGPU_OP_TEXTURE_DELETE:
 		*pDetail = p[0];

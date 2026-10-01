@@ -15,6 +15,8 @@
 
 #include <circle/types.h>
 
+class CSounds;
+
 class CAudioSink
 {
 public:
@@ -63,6 +65,12 @@ public:
 	/// \return Frames of silence handed out because the ring was empty
 	u64 GetUnderrunFrames (void) const	{ return m_nUnderrun; }
 
+	/// \brief The sound effects (sounds.h), and the one output that plays
+	///	   them: mixed into what it takes (the others play without)
+	static void SetSounds (CSounds *pSounds, CAudioSink *pSink);
+	/// \return TRUE if this output has effects to play (it's to keep running)
+	boolean HasSounds (void) const;
+
 protected:
 	/// \brief The reader's: the next frames, silence where the ring has none
 	/// \param pFromRing Frames of them that came from the ring
@@ -81,6 +89,9 @@ private:
 	volatile unsigned m_nVolume;		// asked for (SetVolume)
 	unsigned m_nGain;			// the last chunk's (Take's)
 	volatile unsigned m_nChunkTime;
+
+	static CSounds *s_pSounds;
+	static CAudioSink *volatile s_pSoundsSink;
 };
 
 #endif

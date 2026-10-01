@@ -251,6 +251,17 @@ on a Bluetooth speaker (below). The outputs are audio sinks (`CAudioSink`:
 the ring, the volume, the pause): HDMI's (`CAudioOut`) and the speaker's
 (`CBTAudioOut`).
 
+- **Sound effects** (protocol §7.14, `CSounds`): the host's sounds kept as
+  16-bit mono, 16 channels mixed (resampled, each with its volumes) into what
+  an output takes for playing (`CAudioSink::Take`), after the stream's sound
+  and before the volume: so an effect waits for the output only (HDMI: the
+  two chunks the VideoCore holds), not for the 2 s ring. One output plays
+  them: the stream's, or one kept running for them (the speaker's while it's
+  there, else HDMI's at 48 kHz). A loop starts and stops through a 43 ms
+  fade (it's cut anywhere in its wave); volumes are eased the same way.
+  Checked with the capture (`PCM`): a level's hum at 100 and 200 Hz, steps
+  4.4 a second, a door's grinding louder on its side; with a Pico as the
+  host, 60 fps as before.
 - **Output** (`CAudioOut`): Circle's VCHIQ sound device
   (`addon/vc4/sound`), destination HDMI, 16-bit stereo in chunks of 2048
   frames (43 ms at 48 kHz) from a 2 s ring; silence while the ring is empty.

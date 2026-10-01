@@ -5,7 +5,9 @@
  * throwing them up to a high island (trigger_push), a pond spilling over its
  * edge, a bridge down to ruins and a portal home (trigger_teleport); eight
  * coins round the way, one in the jump's arc. All eight: the time, and
- * they're back. A fall into the void: back to the start.
+ * they're back. A fall into the void: back to the start. With sounds
+ * (engine/sound.c): the wind, the pond, the platform's motor, the pad's
+ * spring, the portal, steps, a coin's chime.
  *
  * The keys (engine/keys.h): w s a d, the arrows or q e, space. Without keys
  * for PILOT_S the autopilot starts over and goes round
@@ -26,6 +28,7 @@
 #include "render.h"
 #include "game.h"
 #include "keys.h"
+#include "sound.h"
 #include "levels/isles_path.h"
 #include "pickups.h"
 
@@ -82,6 +85,8 @@ int main (void)
 	}
 	static pickups_t coins;
 	pickups_init (&coins, PICKUPS_COIN);
+	static sound_t snd;
+	sound_init (&snd, &bsp, SND_AMB_WIND);
 	printf ("isles: %d coins; keys: w s a d, the arrows, q e, space; the autopilot after %.0f s without\n", g.n_items, PILOT_S);
 	glClearColor (0.45f, 0.65f, 0.95f, 1.0f);
 	glDisable (GL_CULL_FACE);
@@ -128,6 +133,7 @@ int main (void)
 			game_pilot (&pilot, &g, &in, dt);
 		}
 		game_update (&g, &in, dt);
+		sound_game (&snd, &g, dt);
 
 		/* the coins, the fall, the round's end */
 		bool hud_now = false;
@@ -137,6 +143,7 @@ int main (void)
 			pick = PICK_S;
 			pick_item = g.picked;
 			hud_now = true;
+			sound_play (&snd, g.n_taken == g.n_items ? SND_COMPLETE : SND_ITEM, NULL, SOUND_ANY, 0.8f, 0.0f);
 			if (g.n_taken == g.n_items)
 			{
 				done = DONE_S;
@@ -148,6 +155,7 @@ int main (void)
 		}
 		if (g.origin[2] < VOID_Z)
 		{
+			sound_play (&snd, SND_TELEPORT, NULL, SOUND_PLAYER, 0.9f, 0.0f);	/* (back up, as through a portal) */
 			game_respawn (&g);
 			game_pilot_init (&pilot, isles_path, ISLES_PATH);
 			fell = FELL_S;

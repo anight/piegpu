@@ -1481,6 +1481,48 @@ void pgpu_audio_open (uint32_t codec, uint32_t video_stream, const void *config,
 	STORE (media_seq[PGPU_AUDIO_STREAM], 0);
 }
 
+/* ---- sound effects (7.14) ------------------------------------------------- */
+
+void pgpu_sound_data (uint32_t id, uint32_t rate, uint32_t format, const void *samples, uint32_t frames)
+{
+	const uint8_t *src = samples;
+	uint32_t size = format == PGPU_SOUND_S16 ? 2 : 1;
+	for (uint32_t offset = 0; offset < frames; )
+	{
+		uint32_t n = frames - offset < MAX_DATA_BYTES / size ? frames - offset : MAX_DATA_BYTES / size;
+		uint32_t words = (n * size + 3) / 4;
+		uint32_t *p = pgpu_begin (PGPU_OP_SOUND_DATA, PGPU_SOUND_DATA_WORDS + words);
+		p[0] = id;
+		p[1] = rate;
+		p[2] = frames;
+		p[3] = offset;
+		p[4] = format;
+		p[PGPU_SOUND_DATA_WORDS + words - 1] = 0;	/* zero padding */
+		memcpy (&p[PGPU_SOUND_DATA_WORDS], src + offset * size, n * size);
+		pgpu_end ();
+		offset += n;
+	}
+}
+
+void pgpu_sound_delete (uint32_t id)		{ cmd1 (PGPU_OP_SOUND_DELETE, id); }
+
+void pgpu_sound_play (uint32_t channel, uint32_t id, uint32_t left, uint32_t right, uint32_t flags)
+{
+	uint32_t *p = pgpu_begin (PGPU_OP_SOUND_PLAY, 4);
+	p[0] = channel;
+	p[1] = id;
+	p[2] = (left & 0xFFFFu) | right << 16;
+	p[3] = flags;
+	pgpu_end ();
+}
+
+void pgpu_sound_stop (uint32_t channel)		{ pgpu_sound_play (channel, 0, 0, 0, 0); }
+
+void pgpu_sound_volume (uint32_t channel, uint32_t left, uint32_t right)
+{
+	cmd2 (PGPU_OP_SOUND_VOLUME, channel, (left & 0xFFFFu) | right << 16);
+}
+
 void pgpu_audio_volume (uint32_t percent)
 {
 	pgpu_media_control (PGPU_AUDIO_STREAM, PGPU_AUDIO_VOLUME, percent);

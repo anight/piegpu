@@ -542,6 +542,7 @@ void game_update (game_t *g, const game_input_t *in, float dt)
 	{
 		g->velocity[2] = JUMP_SPEED;
 		g->on_ground = false;
+		g->events |= GAME_JUMPED;
 	}
 	g->jump_held = in->jump;
 	if (!g->on_ground)
@@ -554,6 +555,7 @@ void game_update (game_t *g, const game_input_t *in, float dt)
 	}
 
 	bool was_on_ground = g->on_ground;
+	float falling = -g->velocity[2];
 	if (g->on_ground)
 	{
 		ground_move (g, dt);
@@ -575,6 +577,12 @@ void game_update (game_t *g, const game_input_t *in, float dt)
 			g->velocity[2] = 0.0f;
 			categorize (g);
 		}
+	}
+
+	if (!was_on_ground && g->on_ground)
+	{
+		g->events |= GAME_LANDED;
+		g->land_speed = falling > 0.0f ? falling : 0.0f;
 	}
 
 	touch_triggers (g);

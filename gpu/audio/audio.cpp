@@ -44,6 +44,7 @@ CAudio::CAudio (CVCHIQDevice *pVCHIQ, CVideo *pVideo)
 	m_pLastOut (nullptr),
 	m_pLastSink (nullptr),
 	m_pOther (nullptr),
+	m_pSoundSink (nullptr),
 	m_nRate (0),
 	m_bPaused (FALSE),
 	m_nVolume (10),
@@ -92,6 +93,78 @@ void CAudio::SetVolume (unsigned nPercent)
 	SetDefaultVolume (nPercent);
 	m_nVolume = m_nDefaultVolume;
 	SetOutputVolume ();
+}
+
+// ---- the sound effects -----------------------------------------------------------------
+//
+// They're mixed into one output: the stream's while there is one; else one
+// kept running for them (the speaker's while it's there, else HDMI's at
+// 48 kHz), from the first sound the host sends till its session ends.
+
+u32 CAudio::SoundData (unsigned nId, unsigned nRate, unsigned nFrames, unsigned nOffset, u32 nFormat,
+		       const u8 *pData, unsigned nBytes)
+{
+	u32 nError = m_Sounds.Data (nId, nRate, nFrames, nOffset, nFormat, pData, nBytes);
+	UpdateSounds ();
+	return nError;
+}
+
+u32 CAudio::SoundDelete (unsigned nId)
+{
+	u32 nError = m_Sounds.Delete (nId);
+	UpdateSounds ();
+	return nError;
+}
+
+u32 CAudio::SoundPlay (unsigned nChannel, unsigned nId, unsigned nLeft, unsigned nRight, u32 nFlags)
+{
+	return m_Sounds.Play (nChannel, nId, nLeft, nRight, nFlags);
+}
+
+void CAudio::SoundReset (void)
+{
+	m_Sounds.Reset ();
+	UpdateSounds ();
+}
+
+void CAudio::UpdateSounds (void)
+{
+	if (m_pOut)				// the stream's output plays them
+	{
+		CAudioSink::SetSounds (&m_Sounds, m_pOut);
+		return;
+	}
+	if (!m_Sounds.IsLoaded ())
+	{
+		if (m_pSoundSink)		// (no more of them: its output off)
+		{
+			CAudioSink::SetSounds (&m_Sounds, nullptr);
+			m_pSoundSink->Close ();
+			m_pSoundSink = nullptr;
+		}
+		return;
+	}
+	CAudioSink *pSink = GetOutput (48000);
+	if (pSink && pSink != m_pSoundSink)	// (the first sound; or the speaker came, or went)
+	{
+		if (m_pSoundSink)
+		{
+			m_pSoundSink->Close ();
+		}
+		pSink->Flush ();
+		pSink->SetPaused (FALSE);
+		if (pSink->Open ())
+		{
+			m_pSoundSink = pSink;
+			m_nVolume = m_nDefaultVolume;
+			SetOutputVolume ();
+		}
+		else
+		{
+			m_pSoundSink = nullptr;
+		}
+	}
+	CAudioSink::SetSounds (&m_Sounds, m_pSoundSink);
 }
 
 void CAudio::SetMute (boolean bMute)
@@ -189,6 +262,12 @@ u32 CAudio::Open (u32 nCodec, unsigned nVideoStream, const u8 *pConfig, unsigned
 	}
 
 	m_pOut = pOut;
+	if (m_pSoundSink && m_pSoundSink != pOut)	// (the effects go with the stream now)
+	{
+		m_pSoundSink->Close ();
+	}
+	m_pSoundSink = nullptr;
+	CAudioSink::SetSounds (&m_Sounds, pOut);
 	m_nRate = nRate;
 	m_bPaused = FALSE;
 	m_nVideoStream = nVideoStream;
@@ -285,7 +364,14 @@ void CAudio::Close (void)
 
 	m_bOpen = FALSE;
 	m_pOut->Flush ();
-	m_pOut->Close ();			// (HDMI's waits for the VideoCore: silence from here)
+	if (!m_Sounds.IsLoaded ())		// (with sound effects it goes on playing them)
+	{
+		m_pOut->Close ();		// (HDMI's waits for the VideoCore: silence from here)
+	}
+	else
+	{
+		m_pSoundSink = m_pOut;
+	}
 	CloseDecoder ();
 	m_pOut = nullptr;
 	LOGNOTE ("Stream closed: %u units decoded, %u broken", m_nDecoded, m_nErrors);
@@ -520,7 +606,8 @@ int CAudio::Decode (const u8 *pUnit, unsigned nBytes, s16 *pFrames)
 // so a change would be heard that much later
 void CAudio::SetOutputVolume (void)
 {
-	CAudioSink *pOut = m_pOut ? m_pOut : m_pLastSink;	// (no stream: the test sound's)
+	// (no stream: the sound effects' output, or the test sound's)
+	CAudioSink *pOut = m_pOut ? m_pOut : m_pSoundSink ? m_pSoundSink : m_pLastSink;
 	if (pOut)
 	{
 		pOut->SetVolume (m_bMute ? 0 : m_nVolume * 65536 / 100);

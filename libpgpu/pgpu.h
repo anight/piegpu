@@ -175,6 +175,19 @@ void pgpu_audio_volume (uint32_t percent);	/* 0 .. 100 (the RPi's default: its v
    open); returns how many have come (0: none) */
 uint32_t pgpu_media_get_status (uint32_t stream, pgpu_media_status_t *status);
 
+/* Sound effects (docs/protocol.md 7.14): short mono sounds kept by the RPi
+   (ids 1 .. PGPU_SOUNDS; format PGPU_SOUND_U8 or PGPU_SOUND_S16, at their own
+   rate) and played on channels (0 .. PGPU_SOUND_CHANNELS - 1), which the RPi
+   mixes into what it plays (the audio stream's sound too). A channel plays
+   one sound at a time, with its volume left and right (0 .. PGPU_SOUND_FULL):
+   a sound played on a busy channel takes it over. With PGPU_SOUND_LOOP it
+   goes round till the channel is stopped (or given another). */
+void pgpu_sound_data (uint32_t id, uint32_t rate, uint32_t format, const void *samples, uint32_t frames);
+void pgpu_sound_delete (uint32_t id);		/* 0: all of them */
+void pgpu_sound_play (uint32_t channel, uint32_t id, uint32_t left, uint32_t right, uint32_t flags);
+void pgpu_sound_stop (uint32_t channel);
+void pgpu_sound_volume (uint32_t channel, uint32_t left, uint32_t right);	/* of what plays there */
+
 /* link */
 void pgpu_init (void);
 /* the side-band signals (the transport's; over USB they answer at once) */

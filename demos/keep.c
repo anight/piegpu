@@ -4,7 +4,9 @@
  * clouds drifting and its moat of lava swaying (engine/render.c), and nine
  * gems to find round it: across the bridge, through the portcullis, up the
  * lift, over the sky bridge, along the walls. All nine: the time, and they're
- * back. The lava: back to the start.
+ * back. The lava: back to the start. With sounds (engine/sound.c): the wind,
+ * the lava bubbling where it's near, steps, the lift and the portcullis, a
+ * gem's chime.
  *
  * The keys (engine/keys.h): w s a d, the arrows or q e, space. Without keys
  * for PILOT_S the autopilot starts over and goes round
@@ -25,6 +27,7 @@
 #include "render.h"
 #include "game.h"
 #include "keys.h"
+#include "sound.h"
 #include "levels/keep_path.h"
 #include "pickups.h"
 
@@ -80,6 +83,8 @@ int main (void)
 	}
 	static pickups_t gems;
 	pickups_init (&gems, PICKUPS_GEM);
+	static sound_t snd;
+	sound_init (&snd, &bsp, SND_AMB_WIND);
 	printf ("keep: %d gems; keys: w s a d, the arrows, q e, space; the autopilot after %.0f s without\n", g.n_items, PILOT_S);
 	glClearColor (0.0f, 0.0f, 0.0f, 1.0f);
 	glDisable (GL_CULL_FACE);
@@ -126,6 +131,7 @@ int main (void)
 			game_pilot (&pilot, &g, &in, dt);
 		}
 		game_update (&g, &in, dt);
+		sound_game (&snd, &g, dt);
 
 		/* the gems, the lava, the round's end */
 		bool hud_now = false;
@@ -135,6 +141,7 @@ int main (void)
 			pick = PICK_S;
 			pick_item = g.picked;
 			hud_now = true;
+			sound_play (&snd, g.n_taken == g.n_items ? SND_COMPLETE : SND_ITEM, NULL, SOUND_ANY, 0.8f, 0.0f);
 			if (g.n_taken == g.n_items)
 			{
 				done = DONE_S;
@@ -146,6 +153,7 @@ int main (void)
 		}
 		if (g.contents == BSP_CONTENTS_LAVA || g.contents == BSP_CONTENTS_SLIME)
 		{
+			sound_play (&snd, SND_BURN, NULL, SOUND_PLAYER, 1.0f, 0.0f);
 			game_respawn (&g);
 			game_pilot_init (&pilot, keep_path, KEEP_PATH);
 			lava = LAVA_S;
