@@ -340,8 +340,11 @@ Apache 2.0). The controller runs as it comes, without Broadcom's patch file.
 - **Verified** on a Zero W: a JBL GO found, paired with and streamed to
   (835 packets, none dropped); this PC as the speaker (BlueZ, PipeWire), what
   it received recorded: the test sound's three notes on the right channels at
-  the right level, an MP3 from a host playing 18 s through. The Zero 2 W's
-  build compiles; not run yet.
+  the right level, an MP3 from a host playing 18 s through. And on a Zero
+  2 W (the decoder on its second core): the same recording; the JBL GO
+  paired with from the panel, back by itself after a restart (its call
+  taken, the stream open 0.8 s later), the test sound sent to it (465
+  packets, none dropped).
 
 ## Host boards (`hosts/pico`, `hosts/esp32p4`)
 

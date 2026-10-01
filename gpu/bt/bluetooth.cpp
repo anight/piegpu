@@ -19,6 +19,7 @@ LOGMODULE ("bt");
 #define KEEP_SCANS		3		// a device not seen for so many scans is gone
 #define LINK_TIMEOUT_US		30000000	// a connection not ready after so long is given up
 #define RECALL_US		20000000	// the paired speaker called again so often
+#define THEIR_CHANNEL_US	1500000		// a speaker that called opens the stream's channel itself: so long for it
 
 // class of device: Audio/Video, hi-fi audio; it captures, it's audio
 static const u8 ClassOfDevice[3] = {0x28, 0x04, 0x28};
@@ -347,6 +348,11 @@ void CBluetooth::Update (void)
 		if (nNow - m_nLinkSince > LINK_TIMEOUT_US)
 		{
 			HangUp ("It took too long");
+		}
+		else if (   m_Link == LinkSetup && m_bTheirCall && m_nSignalling == CBTL2CAP::None
+			 && nNow - m_nLinkSince > THEIR_CHANNEL_US)
+		{
+			m_nSignalling = m_L2CAP.Open (PSM_AVDTP);	// (it didn't: from here, then)
 		}
 		return;
 	}
@@ -865,6 +871,7 @@ void CBluetooth::LinkLost (const char *pWhy)
 		m_LinkError[sizeof m_LinkError - 1] = '\0';
 	}
 	LOGNOTE ("Disconnected%s%s", m_LinkError[0] ? ": " : "", m_LinkError);
+	m_Link = LinkClosing;				// (its channels go with it: nothing more to hang up)
 	m_L2CAP.LinkDown ();
 	m_HCI.Disconnected (m_nHandle);
 	m_nSignalling = m_nMedia = CBTL2CAP::None;
@@ -1029,9 +1036,13 @@ void CBluetooth::LinkEvent (u8 nCode, const u8 *p, unsigned nBytes)
 				HangUp ("Encryption failed");
 				break;
 			}
+			// The stream's signalling channel: opened by the one that called. A
+			// speaker that called opens it itself, at once: opened from both
+			// sides, each takes its own for the signalling and the other's for
+			// the transport, and nothing answers (a JBL GO calling back)
 			m_bEncrypted = TRUE;
 			SetLink (LinkSetup);
-			if (m_nSignalling == CBTL2CAP::None)	// (unless they opened it already)
+			if (m_nSignalling == CBTL2CAP::None && !m_bTheirCall)
 			{
 				m_nSignalling = m_L2CAP.Open (PSM_AVDTP);
 			}

@@ -386,7 +386,8 @@ main loop (`CBluetooth::Update`); only the UART's bytes move in an interrupt.
 | `bt_avdtp` | the stream: discovered, configured, opened, started, suspended, reconfigured; the speaker's own commands answered |
 | `bt_audio` | the audio sink: the ring's frames paced by the clock, resampled if need be, encoded, packed as media packets |
 
-- **The controller** (a Zero W's BCM43438) answers its reset at 115200 baud
+- **The controller** (a Zero W's BCM43438; a Zero 2 W's answers the same,
+  word for word) answers its reset at 115200 baud
   with flow control, with no patch file loaded: HCI 4.1, manufacturer 15. It
   comes with the address AA:AA:AA:AA:AA:AA: it's given B8:27:EB and the
   board's serial number's low three bytes xor AA (Broadcom's command FC01).
@@ -400,6 +401,13 @@ main loop (`CBluetooth::Update`); only the UART's bytes move in an interrupt.
   opened, the transport channel: 1.6 s from the answer to a stream. The
   speaker then asked for AVCTP (refused: no such service here) and searched
   our record for an AVRCP target (none): it stayed connected.
+- **A speaker that calls back** (switched on again, or after our restart)
+  opens the stream's signalling channel itself, at once. Opened from our side
+  too, each side took its own for the signalling and the other's for the
+  transport, and our first command was never answered (a JBL GO: the board
+  then gave up and went on to the next speaker). So with the speaker's call
+  the channel is left to it (ours only after 1.5 s without); with our call
+  it's ours. Measured after: its call, 0.8 s to an open stream.
 - **The sound's pace** is ours: an SBC frame (128 samples) for every 2.9 ms
   that passed since the last call, five frames a media packet (608 bytes: one
   baseband packet). After the main loop was away for longer than 250 ms that
