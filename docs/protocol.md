@@ -551,7 +551,7 @@ at its own rate (4000 … 48000 Hz); the RPi resamples as it mixes. A
 **channel** (16 of them) plays one sound at a time with a volume left and
 right; where a sound is, and how loud, is the host's to say. A sound is heard
 as soon as the output's own delay allows (HDMI: under 0.1 s; a Bluetooth
-speaker: about 0.2 s), not after what waits of the stream.
+speaker: its own buffer more), not after what waits of the stream.
 
 | Op | Name | Payload | Meaning |
 |---|---|---|---|
@@ -789,7 +789,7 @@ aligned) over the RPi's USB port instead of I2S
 
 - **The GL interface** (interface 2 of the RPi's USB device, a bulk endpoint
   each way; `gpu/link/usb_bulk_link`): active once the host has sent on it,
-  until the RPi restarts. USB itself holds the host back when the RPi's
+  until its session ends (`STREAM_END`, below). USB itself holds the host back when the RPi's
   receive ring is full, so there are no `CREDIT` replies.
 - **The serial port** (interfaces 0 and 1, which also carry the log;
   `gpu/link/usb_link`), as follows.

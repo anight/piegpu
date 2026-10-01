@@ -4,16 +4,18 @@ A toy GPU for OpenGL rendering and media. A Raspberry Pi Zero runs bare
 metal as the graphics card of a microcontroller (like a Raspberry Pi
 Pico or an ESP32): the microcontroller sends OpenGL ES 2.0 commands
 and the RPi renders them with its VideoCore IV V3D, to an ST7789 panel
-or to HDMI. Video (H.264, e.g. from an MP4) is decoded by the VideoCore
-into textures that any draw can use, and sound (AAC, e.g. the
-MP4's, MP3 or Ogg Vorbis) is decoded by the RPi and played on HDMI, with the picture
-following it.
+(with its touch screen) or to HDMI. Video (H.264, e.g. from an MP4) is
+decoded by the VideoCore into textures that any draw can use. Sound (AAC,
+e.g. the MP4's, MP3 or Ogg Vorbis) is decoded by the RPi and played on HDMI
+or on a Bluetooth speaker, with the picture following it; short sound
+effects the host sends once are mixed in by the RPi, on channels the host
+plays them on.
 
 The host can be any microcontroller board capable of the link: I2S as the
 master (DATA, BCLK and FS out, the replies back on REPLY), a READY input and
 optionally FRAME, at 3.3 V ([docs/protocol.md](docs/protocol.md) §2–3). The
-host library (`libpgpu`: the protocol, pgl for the GL ES API, an MP4 reader,
-a HUD, in C) and the demos are shared by every board; a board adds only a
+host library (`libpgpu`: the protocol, pgl for the GL ES API, readers for
+MP4, MP3 and Ogg files, a HUD, in C) and the demos are shared by every board; a board adds only a
 transport, the few functions of `libpgpu/pgpu_link.h`. Tested on:
 
 - a Raspberry Pi Pico 2 W (RP2350), over I2S;
@@ -43,27 +45,29 @@ Documentation ([docs/](docs/README.md)):
 
 | Directory | What |
 |---|---|
-| `gpu/` | the RPi's firmware: links (`link/`), outputs (`display/`), renderer, video (`video/`), audio (`audio/`, with FAAD2, minimp3 and Tremor), SD card installer (`install/`) |
+| `gpu/` | the RPi's firmware: links (`link/`), outputs, touch and backlight (`display/`), renderer, video (`video/`), audio (`audio/`: the decoders FAAD2, minimp3 and Tremor, the outputs, the sound effects' mixer), Bluetooth for a speaker (`bt/`), Settings on the panel (`ui/`), SD card installer (`install/`) |
 | `drivers/` | the RPi's V3D and ST7789 (DMA) drivers |
 | `libpgpu/` | the host library: protocol encoding, pgl (the GL ES API), MP4, MP3 and Ogg readers, HUD, self tests |
 | `transports/` | links for the host library: `pico-i2s`, `esp32p4-i2s`, `pc-usb` |
 | `hosts/` | builds per host: `pico`, `esp32p4`, `pc`, `web` (a page, WebAssembly) |
 | `demos/` | the demos, for every host |
+| `engine/` | a small 3D engine for three of the demos: Quake-format levels (BSP), movement, lifts and doors, sounds; its levels and the tools that make them and the sounds |
 | `protocol/` | the wire format header, shared by both sides |
 | `devtools/` | Circle setup and builds per board, the RPi's USB device (serial port, GL interface, monitor), the run log, `run.sh` (boot an RPi over USB, logs, screenshots) |
 | `tools/` | `glslc` (GLSL compiler: Mesa's vc4, offline), `deqp` (the conformance tests) |
 | `patches/` | a local change to Mesa, for `tools/glslc` (Circle's are in its fork, below) |
-| `third_party/` | submodules: Circle (piegpu's fork), Mesa, VK-GL-CTS, the Raspberry Pi userland |
+| `third_party/` | submodules: Circle (piegpu's fork; LVGL as its submodule), Mesa, VK-GL-CTS, the Raspberry Pi userland |
 | `web/installer/` | a page that installs piegpu on the RPi's SD card over USB and runs demos on it |
 | `experiments/` | the early probes and demos that led here (links, displays, V3D, video) |
 
 ## Boards and building
 
-piegpu supports two boards for now:
+piegpu supports three boards for now, each with its build:
 
-- a Raspberry Pi Zero or Zero W: 32 bit, `kernel.img`, 1.2 ms to render a
-  gears frame;
-- a Zero 2 W: 64 bit, `kernel8.img`, 0.9 ms.
+- a Raspberry Pi Zero: 32 bit, `kernel.img`, 1.2 ms to render a gears frame;
+- a Zero W: the same, and Bluetooth (its own `kernel.img`, below);
+- a Zero 2 W: 64 bit, `kernel8.img`, 0.9 ms; Bluetooth; a second core for
+  the audio decoder.
 
 piegpu builds with its fork of Circle, the submodule `third_party/circle`: the branch
 `piegpu` of [github.com/anight/circle](https://github.com/anight/circle/tree/piegpu),
@@ -110,9 +114,9 @@ The kernel carries it with the git commit and the build time (UTC; the boot
 log, the splash, the installer page, which offers "Upgrade" when its kernel's
 version is higher than the card's).
 
-Video decoding works the same on both boards (in 64 bit too:
-[docs/development.md](docs/development.md#video)). Verified on both boards:
-640x360 to 1280x720, 0 dropped.
+Video decoding works the same in 32 and in 64 bit
+([docs/development.md](docs/development.md#video)). Verified on a Zero and a
+Zero 2 W: 640x360 to 1280x720, 0 dropped.
 
 ### Why the RPi restarted: the run log
 
@@ -133,8 +137,9 @@ runlog: | 30.33 except: Synchronous exception (PC 0x818A4, EC 0x25, ISS 0x46, FA
 
 "crashed" is an exception, assertion or panic (its message last); "stopped
 without a word" a hang the watchdog caught, or a reset; "restarted as asked"
-the host's reboot, the installer's, Reset. Verified on the Zero 2 W (all
-four); the Zero not yet. How it works:
+the host's reboot, the installer's, Settings', Reset. Verified on the Zero
+2 W (all four); on the Zero and the Zero W only the restart as asked has been
+seen. How it works:
 [docs/development.md](docs/development.md#the-run-log-a-restart-explains-itself).
 
 ## Wiring
@@ -143,9 +148,12 @@ four); the Zero not yet. How it works:
                   I2S link + READY/FRAME            SPI0
    ┌────────────┐  (6 signals + GND)   ┌────────────┐   ┌────────────────┐
    │  host MCU  │ ───────────────────► │    RPi     │──►│ ST7789 320x240 │
-   │ (Pi Pico,  │ ◄─────────────────── │   (GPU)    │   └────────────────┘
-   │  ESP32-P4) │                      │            │ mini-HDMI ┌─────────┐
-   └────────────┘                      │            │──────────►│ monitor │
+   │ (Pi Pico,  │ ◄─────────────────── │   (GPU)    │   │  + touch       │
+   │  ESP32-P4) │                      │            │   └────────────────┘
+   └────────────┘                      │            │ mini-HDMI ┌─────────┐
+                                       │            │──────────►│ monitor │
+                                       │            │ Bluetooth ┌─────────┐
+                                       │            │ ·  ·  ·  ►│ speaker │
                                        └─────┬──────┘           └─────────┘
                                              │  USB port, one cable:
                                              │  power; its log; USB boot
@@ -157,12 +165,16 @@ four); the Zero not yet. How it works:
 One host is enough, a microcontroller over I2S or a PC over USB; the RPi
 also needs power on one of its micro-USB ports. Both can be connected at
 once with `host=auto` (the default): USB has priority, the PC's GL commands
-taking over from I2S once it opens its stream, until the RPi restarts.
+taking over from I2S once it opens its stream, until its session ends (the
+program's exit: `STREAM_END`). A session starts with a reset of the RPi's GL
+state, so the microcontroller's program has to start over afterwards: the RPi
+doesn't tell it yet.
 
 Pin numbers below are **physical header pins** with the GPIO number in
 brackets. All signals are 3.3 V. Connect the grounds of both boards. The
-Zero and the Zero 2 W have the same 40-pin header, so the same wiring.
-Verified on both: gears from the ESP32-P4 over I2S, on the panel.
+three RPi boards have the same 40-pin header, so the same wiring. Verified:
+gears from the ESP32-P4 on a Zero and a Zero 2 W; the engine's demos from a
+Pico 2 W on all three, on the panel.
 
 ### Host ↔ RPi: the link
 
@@ -272,7 +284,7 @@ closes it and writes what changed of the first two pages to `settings.txt`.
   - the USB monitor, with `gud=on` (below).
 
   Without a card that holds piegpu, many RPi boards can boot over USB from
-  a PC with `rpiboot` (Raspberry Pi's usbboot lists them). Both supported
+  a PC with `rpiboot` (Raspberry Pi's usbboot lists them). The supported
   boards do, from the installer page (below) or `rpiboot`:
   - `devtools/run.sh gpu` builds, boots and logs, with the Zero's 32-bit
     build (`build/zero`; `BOARD=zerow`: the Zero W's). Other apps (`experiments/`) keep their Makefiles,
@@ -288,7 +300,7 @@ closes it and writes what changed of the first two pages to `settings.txt`.
 
 | Option | Meaning |
 |---|---|
-| `host=auto` | the default: GL commands from a PC over USB once it opens its stream (until the RPi restarts), else from I2S |
+| `host=auto` | the default: GL commands from a PC over USB from when it opens its stream till its session ends, else from I2S |
 | `host=usb`, `host=i2s` | only a PC over USB, or only a Pico / ESP32-P4 over I2S (the log, the installer and the USB monitor work either way) |
 | `gud=off` | the default: no monitor for a PC's desktop to take (the serial port and the GL interface stay) |
 | `gud=on` | the RPi is also a USB monitor for a Linux PC (below) |
@@ -297,9 +309,9 @@ closes it and writes what changed of the first two pages to `settings.txt`.
 | `panel=auto` | the default: a panel if one answers on SDO (MISO) at boot |
 | `panel=yes`, `panel=none` | a panel is there (SDO not wired) or none is; without a panel and a monitor the screen stays on HDMI |
 | `hdmi_pixels=N` | cap the screen on HDMI to N pixels (default: the monitor's native resolution, up to 1920x1200) |
-| `cpu=max`, `cpu=low` | the ARM at its maximum clock (the default: 1000 MHz on both boards, throttled by the firmware at its own temperature limit) or at its lowest (the Zero: 700 MHz, the Zero 2 W: 600 MHz). The rates between aren't offered: asked for 800 or 850 MHz, a Zero's firmware gave 900 |
-| `v3d=N` | the V3D's clock, MHz, within the firmware's range (the Zero: 250-300; the default: its maximum). It holds with `cpu=low` only: with the ARM at its maximum the firmware keeps the V3D at its maximum too (measured on a Zero) |
-| `volume=N` | the sound's volume on HDMI, percent (default: 10) |
+| `cpu=max`, `cpu=low` | the ARM at its maximum clock (the default: 1000 MHz on all three boards, throttled by the firmware at its own temperature limit) or at its lowest (the Zero: 700 MHz, the Zero 2 W: 600 MHz). The rates between aren't offered: asked for 800 or 850 MHz, a Zero's firmware gave 900 |
+| `v3d=N` | the V3D's clock, MHz, within the firmware's range (the Zero and the Zero W: 250-300; the default: its maximum). It holds with `cpu=low` only: with the ARM at its maximum the firmware keeps the V3D at its maximum too (measured on both). The Zero 2 W's is 400 and stays there: its `config.txt` pins it (`v3d_freq`, `v3d_freq_min`) |
+| `volume=N` | the sound's volume, percent (default: 10) |
 | `mute=on`, `mute=off` | the sound muted, whatever the volume (default: off) |
 | `bluetooth=on`, `bluetooth=off` | Bluetooth, for a speaker (default: off; the Zero W's and the Zero 2 W's kernels) |
 | `btlog=on` | log every Bluetooth packet (its first bytes): debugging |
@@ -316,7 +328,23 @@ line, `#` for comments. The RPi reads it at boot and a key there wins over
 `cmdline.txt`'s. The installer page writes `cmdline.txt` (keeping the options
 it has no control for) and never `settings.txt`, so an upgrade keeps them;
 Settings on the panel writes both: `settings.txt` from its Display and Audio
-pages, `cmdline.txt` from its Kernel page.
+pages, `cmdline.txt` from its Kernel page. The Bluetooth speakers paired with
+are in a third file, `speakers.txt` (below).
+
+### Sound: a stream, effects, where it goes
+
+- **The audio stream** ([docs/protocol.md](docs/protocol.md) §7.13): AAC, MP3
+  or Ogg Vorbis from the host, decoded by the RPi (on a Zero 2 W on its
+  second core); a video stream can follow its clock.
+- **Sound effects** (§7.14): the host sends short mono sounds once and plays
+  them on 16 channels, each with its volume left and right; the RPi mixes
+  them into what it plays, the stream's sound or silence, so an effect is
+  heard as soon as the output allows (HDMI: the 85 ms the VideoCore holds;
+  a Bluetooth speaker: its own buffer, not measured). The engine's demos use
+  them (below).
+- **The output:** a Bluetooth speaker while one is connected, else HDMI (a
+  monitor with speakers). The volume and mute (Settings, `volume=`, `mute=`)
+  apply to all of it.
 
 ### Sound on a Bluetooth speaker
 
@@ -333,10 +361,15 @@ Apache 2.0). The controller runs as it comes, without Broadcom's patch file.
   they are called in turn every 10 s, and a call from one of them is taken:
   a speaker switched on is back by itself. Settings pairs and forgets.
 - **Where the sound goes:** to the speaker while its stream is there, else
-  to HDMI; decided when a host's stream (or the test sound) starts. The
-  stream is SBC at the sound's rate when the speaker changes to it (44.1 or
-  48 kHz, joint stereo, bitpool up to 53), else the sound is resampled; it's
-  started when there's sound and suspended after 5 s without.
+  to HDMI; decided when a host's stream (or the test sound) starts, and for
+  sound effects as the speaker comes and goes. The stream is SBC at the
+  sound's rate when the speaker changes to it (44.1 or 48 kHz, joint stereo,
+  bitpool up to 53), else the sound is resampled; it's started when there's
+  sound and suspended after 5 s without (not while a host has sound effects:
+  they may come any moment).
+- **Off and on again** (the switch in Settings) lets the speaker go and
+  calls it back: measured with a JBL GO, 3 to 20 s till its stream is open
+  again (the speaker's own time to answer).
 - **Verified** on a Zero W: a JBL GO found, paired with and streamed to
   (835 packets, none dropped); this PC as the speaker (BlueZ, PipeWire), what
   it received recorded: the test sound's three notes on the right channels at
@@ -344,7 +377,33 @@ Apache 2.0). The controller runs as it comes, without Broadcom's patch file.
   2 W (the decoder on its second core): the same recording; the JBL GO
   paired with from the panel, back by itself after a restart (its call
   taken, the stream open 0.8 s later), the test sound sent to it (465
-  packets, none dropped).
+  packets, none dropped); a video with its sound from a PC (70 s: 59.8 fps,
+  5361 packets, none dropped); a demo's sound effects from a Pico at 60 fps.
+
+## The demos (`demos/`)
+
+Every host builds them (`demos/demos.cmake`):
+
+| Demo | What |
+|---|---|
+| `gears`, `breakout`, `flight` | the classic gears; a 3D Breakout that plays itself; a biplane over a cloud deck |
+| `antigrav` | anti-gravity racing, after WipEout: six craft, a circuit |
+| `walk` | the BSP engine (`engine/`): a Quake-format level walked through, doors that open, a lift |
+| `keep` | the engine outdoors: a castle at dusk, a moat of lava, a lift, nine gems to find |
+| `isles` | the engine in the sky: floating islands, a moving platform, a jump pad, a portal, coins |
+| `touch` | the panel's touch screen: a drawing board with a calibration |
+| `toy-NAME` | Shadertoy-style shaders (`tunnel`, `spheres`, `clouds`, `voronoi`) and games in a shader (`pong`, `snake`, `asteroids`) |
+| `media` | an MP4, an MP3 or an Ogg Vorbis file played by the RPi: the video into a texture, the sound with it |
+| `jet-NAME` | the Jet demos (`demos/jet`): a model viewer and CubeCoders' example scenes |
+| `selftest`, `linktest` | the link, the protocol and pgl tested; the link at full speed both ways |
+
+`walk`, `keep` and `isles` play without keys too (an autopilot walks the
+level) and have sound effects, placed in Quake's manner (`engine/sound.c`:
+quieter with the distance, louder on the side they're on): steps, the jump,
+landings, lifts and doors with their motors, jump pads and teleporters,
+pickups, the wind, lava. The sounds are made from nothing by
+`engine/tools/make_sounds.py` (no samples from anywhere: 250 KB in the host's
+flash); the levels by `engine/tools/make_*.py` and ericw-tools' compilers.
 
 ## Host boards (`hosts/pico`, `hosts/esp32p4`)
 
@@ -357,7 +416,7 @@ its own transport (`libpgpu/pgpu_link.h`; `transports/pico-i2s` and
 build makes one `.uf2` per program in `hosts/pico/build`:
 
 - `gpulink.uf2`: the self tests;
-- `gears.uf2`, `antigrav.uf2`, `toy-pong.uf2`, `jet-viewer.uf2` and so on: the demos.
+- `gears.uf2`, `keep.uf2`, `toy-pong.uf2`, `jet-viewer.uf2` and so on: the demos.
 
 The console is on UART0 (GP0/GP1, pins 1 and 2: a Debugprobe's UART bridge).
 
@@ -405,6 +464,10 @@ cmake -S hosts/pc -B hosts/pc/build && make -C hosts/pc/build -j$(($(nproc) - 1)
   fps on the panel, render 1.2 ms a frame). `media_host` plays the file
   the `PGPU_MEDIA` environment variable names, an MP4, an Ogg Vorbis file or an MP3 (else its
   linked-in test video).
+- A program's exit ends its session (`STREAM_END`; a killed one's too: its
+  signal handler sends it), and the RPi takes commands from I2S again. Over
+  the serial port nothing else may use that port meanwhile (a log reader
+  takes the program's replies away: "no credit from the RPi").
 - While a PC's desktop uses the RPi as a monitor (below), GL frames are
   rendered off screen: turn that monitor off first.
 - Two ways over the cable (`transports/pc-usb/pgpu_host.c`): the RPi's GL
@@ -498,9 +561,10 @@ page, folded until its Show button opens it) are the command line above
 The page needs Chrome or Edge on a desktop (WebUSB, Web Serial, the File
 System Access API) and a secure origin (https, or `localhost`). It's
 published at **https://anight.github.io/piegpu/**: `devtools/publish-installer.sh`
-builds it (`make-firmware.sh`: both boards' firmware, the demos, the test
+builds it (`make-firmware.sh`: each board's firmware, the demos, the test
 media) and pushes it to the `gh-pages` branch, one commit that replaces the
-last (GitHub Pages serves that branch). From a checkout:
+last (GitHub Pages serves that branch). The published page is the last one
+pushed (it shows its version), not this checkout. From a checkout:
 
 ```bash
 web/installer/make-firmware.sh
@@ -524,12 +588,14 @@ How its parts work:
   with `unzip -t`; not yet onto a real card through the folder picker.
 - **Start a blank RPi** (no card reader; `rpiboot.js`): the RPi's boot ROM,
   finding nothing to start, waits for USB, and the page boots piegpu from
-  it (WebUSB, the rpiboot protocol; verified on both boards). The page
-  serves both builds, and a `config.txt` whose `[pi02]` lines make a Zero 2
-  W ask for its 64-bit `kernel8.img` (a Zero asks for `kernel.img`). Once
+  it (WebUSB, the rpiboot protocol; verified on a Zero and a Zero 2 W). The
+  page serves the Zero's and the Zero 2 W's kernels, and a `config.txt`
+  whose `[pi02]` lines make a Zero 2 W ask for its 64-bit `kernel8.img` (a
+  Zero or a Zero W asks for `kernel.img`: the Zero's starts both). Once
   piegpu runs, it says which board it is, and Install writes that board's
-  files only; a card without a FAT file system can be formatted there (one
-  FAT32 partition). The browser needs access to the boot ROM's USB device
+  files only (a Zero W's own kernel, with Bluetooth: this part of the page
+  hasn't run in a browser yet); a card without a FAT file system can be
+  formatted there (one FAT32 partition). The browser needs access to the boot ROM's USB device
   (`0a5c:2763`, `2764`): on Linux a udev rule (Ubuntu's `rpiboot` package
   has one), on Windows the WinUSB driver (not tried). Twice, early on, a Zero
   2 W's boot ROM took `bootcode.bin` and then stopped answering, with
@@ -561,7 +627,8 @@ needed. Test OpenGL runs `demos/gears.c` (60 fps, render 1.2 ms, as
 `gears_host`); Test Video runs `demos/media.c` on the Big Buck Bunny trailer
 (853x480 H.264, Blender Foundation, CC BY 3.0), decoded by the RPi's
 VideoCore: 25 fps, 0 dropped; with its sound on an HDMI monitor that has
-speakers (5.1 AAC, mixed down to stereo, at the `volume=` setting). Test
+speakers, or on the Bluetooth speaker (5.1 AAC, mixed down to stereo, at the
+`volume=` setting). Test
 Audio runs it on "Monkeys Spinning Monkeys" by Kevin MacLeod
 (incompetech.com, CC BY 4.0), as the format beside the button says: an MP3
 (44.1 kHz stereo, 320 kbps, 2:05; decoded by minimp3) or Ogg Vorbis (from

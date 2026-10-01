@@ -302,7 +302,7 @@ cd piegpu && web/installer/make-firmware.sh
 python3 -m http.server 8765 --bind 127.0.0.1 --directory web/installer
 ```
 
-`make-firmware.sh` builds the firmware for both boards (it needs the Arm
+`make-firmware.sh` builds the firmware for each board (it needs the Arm
 toolchains: [README](../README.md#boards-and-building)), the page's demos if
 Emscripten is installed, and downloads the test video, MP3 and Ogg. Then open
 http://localhost:8765. Another computer can use the served files as well:
