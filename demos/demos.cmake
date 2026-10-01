@@ -9,6 +9,9 @@
 #   antigrav            anti-gravity racing, after WipEout: six craft, a circuit
 #                       (its sounds: antigrav_sounds.c, made by
 #                       tools/make_antigrav_sounds.py)
+#   tumble              2D physics: balls and boxes in a box the stick tilts,
+#                       each meeting heard (tumble_sounds.c, made by
+#                       tools/make_tumble_sounds.py)
 #   walk                the BSP engine (engine/): a Quake-format level walked
 #                       through; PGPU_LEVEL (default engine/levels/base.bsp).
 #                       It and the next two with sound effects, mixed by the
@@ -35,7 +38,7 @@ set(PGPU_DEMO_SHADERS ${PGPU_DEMOS}/shaders)
 set(PGPU_LEVEL_walk base)			# the BSP engine's demos' levels (engine/levels)
 set(PGPU_LEVEL_keep keep)
 set(PGPU_LEVEL_isles isles)
-set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav walk keep isles touch
+set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav tumble walk keep isles touch
 	toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids media)
 
 if(NOT COMMAND pgpu_demo)
@@ -43,6 +46,18 @@ function(pgpu_demo target app)
 	target_include_directories(${target} PRIVATE ${PGPU_DEMOS})
 	macro(program name)
 		pgpu_glsl_program(TARGET ${target} NAME ${name} DIR ${PGPU_DEMO_SHADERS} ARGS ${ARGN})
+	endmacro()
+	# the board's stick and game controller (engine/pad.h): the host's
+	# PGPU_PAD_SOURCES (and their PGPU_PAD_INCLUDES, PGPU_PAD_LIBS), or none
+	macro(pad)
+		if(PGPU_PAD_SOURCES)
+			target_sources(${target} PRIVATE ${PGPU_PAD_SOURCES})
+			target_include_directories(${target} PRIVATE ${PGPU_PAD_INCLUDES})
+			target_link_libraries(${target} ${PGPU_PAD_LIBS})
+		else()
+			target_sources(${target} PRIVATE ${PGPU_DEMOS}/../engine/pad_none.c)
+		endif()
+		target_include_directories(${target} PRIVATE ${PGPU_DEMOS}/../engine)
 	endmacro()
 
 	if(app STREQUAL "selftest")
@@ -85,6 +100,11 @@ function(pgpu_demo target app)
 		program(craft -a a_pos:float:3 -a a_normal:float:3 -a a_uv:float:2 -v triangles)
 		program(nightsky -a a_pos:float:2 -a a_dir:float:3 -v triangles)
 
+	elseif(app STREQUAL "tumble")		# 2D physics: balls and boxes in a box the stick tilts
+		target_sources(${target} PRIVATE ${PGPU_DEMOS}/tumble.c ${PGPU_DEMOS}/tumble_sounds.c)
+		program(tumble -a a_pos:float:2 -a a_local:byte:2 -a a_edge:ubyte_norm:2 -a a_color:ubyte_norm:4 -v triangles)
+		pad()
+
 	elseif(app STREQUAL "walk" OR app STREQUAL "keep" OR app STREQUAL "isles")	# the BSP engine
 		set(engine ${PGPU_DEMOS}/../engine)
 		if(NOT PGPU_LEVEL)
@@ -96,16 +116,7 @@ function(pgpu_demo target app)
 		target_sources(${target} PRIVATE ${PGPU_DEMOS}/${app}.c ${engine}/bsp.c ${engine}/render.c ${engine}/collide.c
 			${engine}/game.c ${engine}/keys.c ${engine}/palette.c ${engine}/sound.c ${engine}/sounds/sound_data.c
 			${CMAKE_CURRENT_BINARY_DIR}/level_file_${app}.S)
-		# the board's stick and game controller (engine/pad.h): the host's
-		# PGPU_PAD_SOURCES (and their PGPU_PAD_INCLUDES, PGPU_PAD_LIBS), or none
-		if(PGPU_PAD_SOURCES)
-			target_sources(${target} PRIVATE ${PGPU_PAD_SOURCES})
-			target_include_directories(${target} PRIVATE ${PGPU_PAD_INCLUDES})
-			target_link_libraries(${target} ${PGPU_PAD_LIBS})
-		else()
-			target_sources(${target} PRIVATE ${engine}/pad_none.c)
-		endif()
-		target_include_directories(${target} PRIVATE ${engine})
+		pad()
 		pgpu_glsl_program(TARGET ${target} NAME world DIR ${engine}/shaders
 			ARGS -a a_pos:float:3 -a a_uv:float:2 -a a_luv:float:2 -v triangles)
 		pgpu_glsl_program(TARGET ${target} NAME liquid DIR ${engine}/shaders
