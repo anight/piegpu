@@ -413,8 +413,8 @@ main loop (`CBluetooth::Update`); only the UART's bytes move in an interrupt.
   signalling channel (PSM 0x19), the end points discovered (one SBC sink,
   every option, bitpool 2-53, SCMS-T offered and not taken), configured,
   opened, the transport channel: 1.6 s from the answer to a stream. The
-  speaker then asked for AVCTP (refused: no such service here) and searched
-  our record for an AVRCP target (none): it stayed connected.
+  speaker then asked for AVCTP and searched our record for an AVRCP target
+  (refused and none then; there since: the volume, below).
 - **A speaker that calls back** (switched on again, or after our restart)
   opens the stream's signalling channel itself, at once. Opened from our side
   too, each side took its own for the signalling and the other's for the
@@ -422,6 +422,22 @@ main loop (`CBluetooth::Update`); only the UART's bytes move in an interrupt.
   then gave up and went on to the next speaker). So with the speaker's call
   the channel is left to it (ours only after 1.5 s without); with our call
   it's ours. Measured after: its call, 0.8 s to an open stream.
+- **The volume** (`bt_avrcp`): AVCTP on PSM 0x17, AVRCP's vendor commands in
+  single packets. We ask to be told of the speaker's volume
+  (`RegisterNotification`, event 0x0D: answered with the volume it has, then
+  once at each change, asked again each time) and set it
+  (`SetAbsoluteVolume`, 0 … 127; `CKernel::UpdateSpeakerVolume` keeps it and
+  the audio's volume the same, and `CAudio` sends the sound whole meanwhile).
+  The speaker's commands to a player are answered (what we are, our company,
+  no events; buttons accepted, the volume ones counted). Two records more for
+  it (`bt_sdp`): AVRCP 1.4's target and controller. As it went with a JBL GO:
+  it lists event 0x0D and opens the channel itself 1.4 s after the stream
+  starts when it called; on a channel we opened just then it answered what
+  it can do, but rejected the volume's two commands after 2 s each
+  (`REJECTED`, status 3). So its channel is the one used (ours closed if
+  both are there), and after its call ours is opened only after 6 s without.
+  `BT TRACE` logs the frames,
+  `BT RC type pdu bytes` sends a command by hand, `BT VOLUME n` is the bar.
 - **The sound's pace** is ours: an SBC frame (128 samples) for every 2.9 ms
   that passed since the last call, five frames a media packet (608 bytes: one
   baseband packet). After the main loop was away for longer than 250 ms that

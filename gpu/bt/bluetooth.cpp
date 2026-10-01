@@ -20,6 +20,8 @@ LOGMODULE ("bt");
 #define LINK_TIMEOUT_US		30000000	// a connection not ready after so long is given up
 #define RECALL_US		10000000	// a paired speaker called again so often (a call takes 5 s)
 #define THEIR_CHANNEL_US	1500000		// a speaker that called opens the stream's channel itself: so long for it
+#define CONTROL_US		500000		// the remote control's channel: so long after the stream's ready
+#define THEIR_CONTROL_US	6000000		// a speaker that called opens that one itself too: so long for it
 
 // class of device: Audio/Video, hi-fi audio; it captures, it's audio
 static const u8 ClassOfDevice[3] = {0x28, 0x04, 0x28};
@@ -48,6 +50,7 @@ CBluetooth::CBluetooth (CInterruptSystem *pInterrupt)
 	m_L2CAP (&m_HCI, this),
 	m_AVDTP (this),
 	m_Audio (&m_AVDTP, this),
+	m_AVRCP (this),
 	m_Link (LinkNone),
 	m_nLinkSince (0),
 	m_nHandle (0),
@@ -57,6 +60,8 @@ CBluetooth::CBluetooth (CInterruptSystem *pInterrupt)
 	m_bEncrypted (FALSE),
 	m_nSignalling (CBTL2CAP::None),
 	m_nMedia (CBTL2CAP::None),
+	m_nControl (CBTL2CAP::None),
+	m_bControlTried (FALSE),
 	m_bPending (FALSE),
 	m_nBonds (0),
 	m_bBondChanged (FALSE),
@@ -356,6 +361,7 @@ void CBluetooth::Update (void)
 	m_L2CAP.Update ();
 	m_AVDTP.Update ();
 	m_Audio.Update ();
+	m_AVRCP.Update ();
 
 	if (m_Link != LinkNone && m_Link != LinkReady)
 	{
@@ -369,6 +375,13 @@ void CBluetooth::Update (void)
 			m_nSignalling = m_L2CAP.Open (PSM_AVDTP);	// (it didn't: from here, then)
 		}
 		return;
+	}
+	if (   m_Link == LinkReady && m_nControl == CBTL2CAP::None && !m_bControlTried
+	    && nNow - m_nLinkSince > (m_bTheirCall ? THEIR_CONTROL_US : CONTROL_US))
+	{
+		// the remote control's channel (a speaker that called may have opened it itself)
+		m_bControlTried = TRUE;
+		m_nControl = m_L2CAP.Open (PSM_AVCTP);
 	}
 	if (m_bPending && m_Link == LinkNone)
 	{
@@ -847,7 +860,9 @@ void CBluetooth::Call (void)
 	m_HCI.Command (HCI_CREATE_CONNECTION, Params, sizeof Params);
 	m_bTheirCall = FALSE;
 	m_bKeyUsed = m_bKeyRefused = m_bEncrypted = FALSE;
-	m_nSignalling = m_nMedia = CBTL2CAP::None;
+	m_nSignalling = m_nMedia = m_nControl = CBTL2CAP::None;
+	m_bControlTried = FALSE;
+	m_AVRCP.ChannelClosed ();
 	m_LinkError[0] = '\0';
 	char Address[18];
 	FormatAddress (m_LinkAddress, Address);
@@ -890,7 +905,9 @@ void CBluetooth::LinkLost (const char *pWhy)
 	m_Link = LinkClosing;				// (its channels go with it: nothing more to hang up)
 	m_L2CAP.LinkDown ();
 	m_HCI.Disconnected (m_nHandle);
-	m_nSignalling = m_nMedia = CBTL2CAP::None;
+	m_nSignalling = m_nMedia = m_nControl = CBTL2CAP::None;
+	m_bControlTried = FALSE;
+	m_AVRCP.ChannelClosed ();
 	SetLink (LinkNone);
 	m_nLastCall = CTimer::GetClockTicks ();
 	m_nScanIdle = CTimer::GetClockTicks ();
@@ -916,7 +933,9 @@ void CBluetooth::LinkEvent (u8 nCode, const u8 *p, unsigned nBytes)
 				m_bTheirCall = TRUE;
 				m_bPending = FALSE;
 				m_bKeyUsed = m_bKeyRefused = m_bEncrypted = FALSE;
-				m_nSignalling = m_nMedia = CBTL2CAP::None;
+				m_nSignalling = m_nMedia = m_nControl = CBTL2CAP::None;
+	m_bControlTried = FALSE;
+	m_AVRCP.ChannelClosed ();
 				m_LinkError[0] = '\0';
 				LOGNOTE ("A paired speaker calls: \"%s\"", GetName (p));
 				SetLink (LinkConnecting);
@@ -1072,12 +1091,33 @@ void CBluetooth::LinkEvent (u8 nCode, const u8 *p, unsigned nBytes)
 boolean CBluetooth::OnChannelAsked (u16 nPSM)
 {
 	// their questions about our service; the stream's two channels (the
-	// signalling first, then the transport), if they open them
-	return nPSM == PSM_SDP || (nPSM == PSM_AVDTP && (m_nSignalling == CBTL2CAP::None || m_nMedia == CBTL2CAP::None));
+	// signalling first, then the transport), if they open them; the remote
+	// control's (theirs is the one used, if we opened one too: a JBL GO
+	// answers on ours, but its volume only on its own)
+	return    nPSM == PSM_SDP || (nPSM == PSM_AVDTP && (m_nSignalling == CBTL2CAP::None || m_nMedia == CBTL2CAP::None))
+	       || nPSM == PSM_AVCTP;
 }
 
 void CBluetooth::OnChannelOpen (unsigned nChannel, u16 nPSM, boolean bTheirs)
 {
+	if (nPSM == PSM_AVCTP)
+	{
+		if (bTheirs && nChannel != m_nControl)
+		{
+			unsigned nOurs = m_nControl;
+			m_nControl = nChannel;
+			m_bControlTried = TRUE;
+			if (nOurs != CBTL2CAP::None)
+			{
+				m_L2CAP.Close (nOurs);
+			}
+		}
+		if (nChannel == m_nControl)
+		{
+			m_AVRCP.ChannelOpen ();
+		}
+		return;
+	}
 	if (nPSM != PSM_AVDTP)
 	{
 		return;
@@ -1104,7 +1144,7 @@ void CBluetooth::OnChannelData (unsigned nChannel, u16 nPSM, const u8 *pData, un
 {
 	if (nPSM == PSM_SDP)
 	{
-		u8 Answer[160];
+		u8 Answer[320];
 		unsigned n = SDPAnswer (pData, nBytes, Answer, sizeof Answer);
 		if (n)
 		{
@@ -1114,6 +1154,10 @@ void CBluetooth::OnChannelData (unsigned nChannel, u16 nPSM, const u8 *pData, un
 	else if (nChannel == m_nSignalling)
 	{
 		m_AVDTP.OnSignal (pData, nBytes);
+	}
+	else if (nChannel == m_nControl)
+	{
+		m_AVRCP.OnData (pData, nBytes);
 	}
 }
 
@@ -1133,11 +1177,38 @@ void CBluetooth::OnChannelClosed (unsigned nChannel, u16 nPSM)
 		m_nMedia = CBTL2CAP::None;
 		m_AVDTP.MediaClosed ();
 	}
+	else if (nChannel == m_nControl)		// (refused, or closed: it has no remote control)
+	{
+		m_nControl = CBTL2CAP::None;
+		m_AVRCP.ChannelClosed ();
+	}
 }
 
 boolean CBluetooth::SendSignal (const u8 *pData, unsigned nBytes)
 {
 	return m_L2CAP.Send (m_nSignalling, pData, nBytes);
+}
+
+boolean CBluetooth::SendControl (const u8 *pData, unsigned nBytes)
+{
+	return m_nControl != CBTL2CAP::None && m_L2CAP.Send (m_nControl, pData, nBytes);
+}
+
+// the speaker's volume: ours in percent, its own 0 .. 127
+void CBluetooth::SetVolume (unsigned nPercent)
+{
+	m_AVRCP.SetVolume (((nPercent > 100 ? 100 : nPercent) * CBTAVRCP::MaxVolume + 50) / 100);
+}
+
+boolean CBluetooth::VolumeChanged (unsigned *pPercent)
+{
+	unsigned nVolume;
+	if (!m_AVRCP.VolumeChanged (&nVolume))
+	{
+		return FALSE;
+	}
+	*pPercent = (nVolume * 100 + CBTAVRCP::MaxVolume / 2) / CBTAVRCP::MaxVolume;
+	return TRUE;
 }
 
 void CBluetooth::OpenMedia (void)

@@ -72,6 +72,9 @@ CKernel::CKernel (void)
 	m_Audio (&m_VCHIQ, m_Commands.GetVideo ()),
 #ifdef PGPU_WIRELESS
 	m_Bluetooth (&m_Interrupt),
+	m_bSpeakerVolume (FALSE),
+	m_nSpeakerVolume (~0U),
+	m_nVolumeSaveAt (0),
 #endif
 	m_SettingsApp (&m_Touch, &m_Backlight, &m_Audio),
 	m_bPressing (FALSE),
@@ -241,6 +244,54 @@ void CKernel::GetClockRange (boolean bV3D, unsigned *pMinMHz, unsigned *pMaxMHz)
 	*pMinMHz = bV3D ? m_nV3DMin : m_CPUThrottle.GetMinClockRate () / 1000000;
 	*pMaxMHz = bV3D ? m_nV3DMax : m_CPUThrottle.GetMaxClockRate () / 1000000;
 }
+
+#ifdef PGPU_WIRELESS
+// The speaker's volume and ours as one. A speaker that takes its volume from
+// here (AVRCP's absolute volume) gets the sound as it is and its volume set
+// to ours, when it connects and whenever ours changes (Settings' bar, a
+// host's); its own buttons change ours, and the bar with it. One that only
+// sends its buttons' presses moves ours by a step each; one that does neither
+// has its volume to itself.
+void CKernel::UpdateSpeakerVolume (void)
+{
+	static const unsigned ButtonStep = 6;		// percent a press
+	static const unsigned SaveAfterUs = 3000000;	// (not at every press)
+
+	boolean bHas = m_Bluetooth.HasVolume ();
+	if (bHas != m_bSpeakerVolume)
+	{
+		m_bSpeakerVolume = bHas;
+		m_nSpeakerVolume = ~0U;
+		m_Audio.SetOtherHasVolume (bHas);
+	}
+	unsigned nPercent;
+	int nButtons = m_Bluetooth.GetVolumeButtons ();
+	if (m_Bluetooth.VolumeChanged (&nPercent))
+	{
+		m_Audio.SetVolume (nPercent);
+		m_nSpeakerVolume = m_Audio.GetVolume ();
+		m_nVolumeSaveAt = CTimer::GetClockTicks () + SaveAfterUs;
+		LOGNOTE ("The speaker's buttons: volume %u%%", nPercent);
+	}
+	else if (nButtons && !bHas)
+	{
+		int nVolume = (int) m_Audio.GetVolume () + nButtons * (int) ButtonStep;
+		m_Audio.SetVolume (nVolume < 0 ? 0 : nVolume > 100 ? 100 : nVolume);
+		m_nVolumeSaveAt = CTimer::GetClockTicks () + SaveAfterUs;
+		LOGNOTE ("The speaker's buttons: volume %u%%", m_Audio.GetVolume ());
+	}
+	else if (bHas && m_Audio.GetVolume () != m_nSpeakerVolume)
+	{
+		m_nSpeakerVolume = m_Audio.GetVolume ();
+		m_Bluetooth.SetVolume (m_nSpeakerVolume);
+	}
+	if (m_nVolumeSaveAt && (int) (CTimer::GetClockTicks () - m_nVolumeSaveAt) >= 0)
+	{
+		m_nVolumeSaveAt = 0;
+		SaveSettings ();
+	}
+}
+#endif
 
 // Settings' Test: what to say of it
 const char *CKernel::TestSound (void)
@@ -664,6 +715,36 @@ void CKernel::BluetoothLine (const char *pLine)
 	else if (strcmp (pLine, "TEST") == 0)
 	{
 		LOGNOTE ("BT: test sound: %s", TestSound ());
+	}
+	else if (strcmp (pLine, "TRACE") == 0)		// every packet logged from now on (as btlog=on)
+	{
+		m_Bluetooth.SetTrace (TRUE);
+	}
+	else if (strncmp (pLine, "RC ", 3) == 0)	// an AVRCP command: its type, its PDU, its parameters (hex bytes)
+	{
+		u8 Bytes[10];
+		unsigned n = 0;
+		for (const char *p = pLine + 3; *p && n < sizeof Bytes; )
+		{
+			char *pEnd;
+			Bytes[n++] = (u8) strtoul (p, &pEnd, 16);
+			if (pEnd == p)
+			{
+				n--;
+				break;
+			}
+			p = pEnd;
+		}
+		if (n >= 2)
+		{
+			m_Bluetooth.ControlProbe (Bytes[0], Bytes[1], Bytes + 2, n - 2);
+		}
+	}
+	else if (strncmp (pLine, "VOLUME ", 7) == 0)	// (as Settings' bar does)
+	{
+		m_Audio.SetVolume (atoi (pLine + 7));
+		LOGNOTE ("BT: volume %u%%, %s", m_Audio.GetVolume (),
+			 m_Bluetooth.HasVolume () ? "set at the speaker" : "applied to the sound here");
 	}
 	else if (strcmp (pLine, "LIST") == 0)
 	{
@@ -1145,6 +1226,7 @@ TShutdownMode CKernel::Run (void)
 		{
 			SaveSpeakers ();
 		}
+		UpdateSpeakerVolume ();
 #endif
 
 		// the touch screen: read after each panel frame (or here, without

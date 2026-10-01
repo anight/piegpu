@@ -353,8 +353,8 @@ The Zero W's and the Zero 2 W's kernels (`PGPU_WIRELESS`) have piegpu's own
 small Bluetooth stack (`gpu/bt`, BSD like the rest: just what a speaker
 takes): the board's controller on its inner UART (GPIO30-33, nothing on the
 header), devices found and named, pairing (Secure Simple Pairing without a
-PIN; an old device's PIN 0000), L2CAP, the service record a speaker may ask
-for, AVDTP, and A2DP's SBC (Bluedroid's encoder, `gpu/bt/sbc_encoder`,
+PIN; an old device's PIN 0000), L2CAP, the service records a speaker may ask
+for, AVDTP, AVRCP for the volume, and A2DP's SBC (Bluedroid's encoder, `gpu/bt/sbc_encoder`,
 Apache 2.0). The controller runs as it comes, without Broadcom's patch file.
 
 - **The speakers paired with** are remembered in `speakers.txt` on the card
@@ -368,6 +368,14 @@ Apache 2.0). The controller runs as it comes, without Broadcom's patch file.
   bitpool up to 53), else the sound is resampled; it's started when there's
   sound and suspended after 5 s without (not while a host has sound effects:
   they may come any moment).
+- **The volume is one:** a speaker that takes its volume from the source
+  (AVRCP's absolute volume) gets the sound as it is and Settings' volume as
+  its own: when it connects, and whenever the bar (or a host) changes it. Its
+  own buttons move the bar, and `settings.txt` a moment later. A speaker that
+  only sends its buttons' presses moves the volume here by 6% a press; one
+  that does neither keeps its volume to itself, and ours is applied to the
+  sound, as on HDMI. Verified with a JBL GO on a Zero 2 W: the volume taken
+  at the connection and when it's changed here, a button's press heard here.
 - **Off and on again** (the switch in Settings) lets the speaker go and
   calls it back: measured with a JBL GO, 3 to 20 s till its stream is open
   again (the speaker's own time to answer).
@@ -420,6 +428,10 @@ build makes one `.uf2` per program in `hosts/pico/build`:
 - `gears.uf2`, `keep.uf2`, `toy-pong.uf2`, `jet-viewer.uf2` and so on: the demos.
 
 The console is on UART0 (GP0/GP1, pins 1 and 2: a Debugprobe's UART bridge).
+Programming over SWD while one of these programs runs: stop its DMA first.
+The reply ring's DMA goes on with the cores halted, and where the ring lies in
+OpenOCD's work area (0x20010000, 64 KB) it writes into the image on its way
+to the flash (the verify then fails).
 
 ```bash
 cmake -S hosts/pico -B hosts/pico/build -G Ninja
@@ -429,10 +441,6 @@ cmake -S hosts/pico -B hosts/pico/build -G Ninja
 ninja -C hosts/pico/build
 ```
 
-Programming over SWD while one of these programs runs: stop its DMA first.
-The reply ring's DMA goes on with the cores halted, and where the ring lies in
-OpenOCD's work area (0x20010000, 64 KB) it writes into the image on its way
-to the flash (the verify then fails).
 **ESP32-P4** (Waveshare ESP32-P4-Module-DEV-KIT): ESP-IDF v5.5. One program
 per build, chosen with `PGPU_APP`:
 

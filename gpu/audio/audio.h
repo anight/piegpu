@@ -53,6 +53,8 @@ public:
 	/// \brief The volume from now on: the default, and the stream's (core 0)
 	void SetVolume (unsigned nPercent);
 	unsigned GetDefaultVolume (void) const	{ return m_nDefaultVolume; }
+	/// \return The volume now, percent (the stream's, if it changed its own)
+	unsigned GetVolume (void) const		{ return m_nVolume; }
 
 	/// \brief Muted: silent whatever the volume, till it's taken off (the mute= setting)
 	void SetMute (boolean bMute);
@@ -85,6 +87,9 @@ public:
 	/// \brief Another output (a Bluetooth speaker's): the sound goes there
 	///	   while it takes it (its SetSource says so), else to HDMI
 	void SetOther (class CAudioSinkOther *pOther)	{ m_pOther = pOther; }
+	/// \brief The other output has a volume of its own, which someone else sets
+	///	   to ours (a speaker's): the sound goes there as it is (unless muted)
+	void SetOtherHasVolume (boolean bHas);
 
 	/// \return Where a stream of this rate goes now, or nullptr
 	CAudioSink *GetOutput (unsigned nRate);
@@ -95,12 +100,12 @@ public:
 	u32 SoundDelete (unsigned nId);
 	u32 SoundPlay (unsigned nChannel, unsigned nId, unsigned nLeft, unsigned nRight, u32 nFlags);
 	u32 SoundVolume (unsigned nChannel, unsigned nLeft, unsigned nRight)	{ return m_Sounds.Volume (nChannel, nLeft, nRight); }
+	u32 SoundPitch (unsigned nChannel, u32 nPitch)				{ return m_Sounds.Pitch (nChannel, nPitch); }
 	/// \brief Every sound gone (a new session)
 	void SoundReset (void);
 	/// \brief Call often (core 0): the output for the effects, as there's a stream, a speaker, or neither
 	void UpdateSounds (void);
 
-	u32 SoundPitch (unsigned nChannel, u32 nPitch)				{ return m_Sounds.Pitch (nChannel, nPitch); }
 	/// \brief The MEDIA_STATUS reply of the audio stream
 	boolean GetStatus (u32 *pPayload, boolean bDue);
 
@@ -140,6 +145,7 @@ private:
 	CVideo *m_pVideo;
 	unsigned m_nDefaultVolume;
 	boolean m_bMute;
+	boolean m_bOtherHasVolume;
 	boolean m_bOwnCore;			// the decoder runs on a core of its own
 
 	// the stream (core 0 opens and closes it while the decoder is parked)

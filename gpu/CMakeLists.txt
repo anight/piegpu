@@ -44,7 +44,7 @@ if("PGPU_WIRELESS" IN_LIST CIRCLE_DEFINES)
 	target_link_libraries(sbc_encoder PUBLIC circle_flags)
 	target_include_directories(sbc_encoder PRIVATE bt/sbc_encoder/include ${CIRCLE_INCLUDE_DIRS})
 	target_compile_options(sbc_encoder PRIVATE -w -fmacro-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}/bt/=)
-	target_sources(gpu PRIVATE bt/bt_uart.cpp bt/bt_hci.cpp bt/bt_l2cap.cpp bt/bt_sdp.cpp bt/bt_avdtp.cpp
+	target_sources(gpu PRIVATE bt/bt_uart.cpp bt/bt_hci.cpp bt/bt_l2cap.cpp bt/bt_sdp.cpp bt/bt_avdtp.cpp bt/bt_avrcp.cpp
 		bt/bt_audio.cpp bt/bluetooth.cpp)
 	target_link_libraries(gpu PRIVATE sbc_encoder)
 endif()

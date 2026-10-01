@@ -112,6 +112,8 @@ void CSettingsApp::Open (void)
 	LOGNOTE ("Settings opened");
 }
 
+static void Percent (lv_obj_t *pLabel, int nValue);
+
 boolean CSettingsApp::Update (const u32 *pTouch)
 {
 	if (!m_bOpen)
@@ -176,6 +178,14 @@ boolean CSettingsApp::Update (const u32 *pTouch)
 		lv_label_set_text (m_pPosition, Text);
 	}
 	m_bDown = bDown;
+
+	// the volume changed elsewhere (a speaker's buttons): the bar follows
+	if (m_Screen == ScreenAudio && m_pVolume && !lv_obj_has_state (m_pVolume, LV_STATE_PRESSED)
+	    && lv_slider_get_value (m_pVolume) != (int) m_pAudio->GetDefaultVolume ())
+	{
+		lv_slider_set_value (m_pVolume, m_pAudio->GetDefaultVolume (), LV_ANIM_OFF);
+		Percent (m_pVolumeValue, m_pAudio->GetDefaultVolume ());
+	}
 
 	// the Audio page: speakers looked for while it shows; what Bluetooth is
 	// doing, and the list, as they change

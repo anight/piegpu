@@ -32,6 +32,7 @@ CAudio::CAudio (CVCHIQDevice *pVCHIQ, CVideo *pVideo)
 	m_pVideo (pVideo),
 	m_nDefaultVolume (10),
 	m_bMute (FALSE),
+	m_bOtherHasVolume (FALSE),
 	m_bOwnCore (FALSE),
 	m_bOpen (FALSE),
 	m_nVideoStream (0),
@@ -170,6 +171,12 @@ void CAudio::UpdateSounds (void)
 void CAudio::SetMute (boolean bMute)
 {
 	m_bMute = bMute;
+	SetOutputVolume ();
+}
+
+void CAudio::SetOtherHasVolume (boolean bHas)
+{
+	m_bOtherHasVolume = bHas;
 	SetOutputVolume ();
 }
 
@@ -610,7 +617,9 @@ void CAudio::SetOutputVolume (void)
 	CAudioSink *pOut = m_pOut ? m_pOut : m_pSoundSink ? m_pSoundSink : m_pLastSink;
 	if (pOut)
 	{
-		pOut->SetVolume (m_bMute ? 0 : m_nVolume * 65536 / 100);
+		// (a speaker with its own volume gets the sound whole: the volume is set there)
+		boolean bWhole = m_bOtherHasVolume && pOut == static_cast<CAudioSink *> (m_pOther);
+		pOut->SetVolume (m_bMute ? 0 : bWhole ? 65536 : m_nVolume * 65536 / 100);
 	}
 }
 

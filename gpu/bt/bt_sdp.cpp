@@ -4,8 +4,6 @@
 #include "bt_sdp.h"
 #include <circle/util.h>
 
-#define RECORD_HANDLE		0x00010001
-
 #define PDU_ERROR		0x01
 #define PDU_SEARCH		0x02
 #define PDU_SEARCH_RSP		0x03
@@ -14,10 +12,12 @@
 #define PDU_SEARCH_ATTRIBUTES	0x06
 #define PDU_SEARCH_ATTR_RSP	0x07
 
-// The record's attributes, in the order of their IDs: each its ID (a 16-bit
+// A record's attributes, in the order of their IDs: each its ID (a 16-bit
 // unsigned: 09) and its value. 35 nn: a sequence of nn bytes; 19: a 16-bit
 // UUID; 0A: a 32-bit unsigned
-static const struct { u16 nId; u8 nBytes; u8 Value[20]; } Attributes[] =
+struct TAttribute { u16 nId; u8 nBytes; u8 Value[20]; };
+
+static const TAttribute Source[] =					// the sound's source (A2DP)
 {
 	{0x0000, 5, {0x0A, 0x00, 0x01, 0x00, 0x01}},			// the record's handle
 	{0x0001, 5, {0x35, 3, 0x19, 0x11, 0x0A}},			// its class: AudioSource
@@ -27,8 +27,36 @@ static const struct { u16 nId; u8 nBytes; u8 Value[20]; } Attributes[] =
 	{0x0009, 10, {0x35, 8, 0x35, 6, 0x19, 0x11, 0x0D, 0x09, 0x01, 0x03}},	// the profile: A2DP 1.3
 	{0x0311, 3, {0x09, 0x00, 0x01}},				// features: a player
 };
-// the UUIDs in it (a search finds the record if all it asks for are among these)
-static const u16 RecordUUIDs[] = {0x110A, 0x0100, 0x0019, 0x1002, 0x110D};
+static const TAttribute Target[] =					// what the speaker's buttons command (AVRCP)
+{
+	{0x0000, 5, {0x0A, 0x00, 0x01, 0x00, 0x02}},
+	{0x0001, 5, {0x35, 3, 0x19, 0x11, 0x0C}},			// its class: A/V remote control target
+	{0x0004, 18, {0x35, 16, 0x35, 6, 0x19, 0x01, 0x00, 0x09, 0x00, 0x17,	// L2CAP, PSM 0x17
+			       0x35, 6, 0x19, 0x00, 0x17, 0x09, 0x01, 0x04}},	// AVCTP 1.4
+	{0x0005, 5, {0x35, 3, 0x19, 0x10, 0x02}},
+	{0x0009, 10, {0x35, 8, 0x35, 6, 0x19, 0x11, 0x0E, 0x09, 0x01, 0x04}},	// the profile: AVRCP 1.4
+	{0x0311, 3, {0x09, 0x00, 0x01}},				// features: category 1, a player
+};
+static const TAttribute Controller[] =					// what sets the speaker's volume (AVRCP)
+{
+	{0x0000, 5, {0x0A, 0x00, 0x01, 0x00, 0x03}},
+	{0x0001, 8, {0x35, 6, 0x19, 0x11, 0x0E, 0x19, 0x11, 0x0F}},	// its classes: A/V remote control, its controller
+	{0x0004, 18, {0x35, 16, 0x35, 6, 0x19, 0x01, 0x00, 0x09, 0x00, 0x17,
+			       0x35, 6, 0x19, 0x00, 0x17, 0x09, 0x01, 0x04}},
+	{0x0005, 5, {0x35, 3, 0x19, 0x10, 0x02}},
+	{0x0009, 10, {0x35, 8, 0x35, 6, 0x19, 0x11, 0x0E, 0x09, 0x01, 0x04}},
+	{0x0311, 3, {0x09, 0x00, 0x02}},				// features: category 2, an amplifier's
+};
+
+// the records, and the UUIDs in each (a search finds a record if all it asks
+// for are among them)
+#define RECORDS		3
+static const struct { u32 nHandle; const TAttribute *pAttributes; unsigned nAttributes; u16 UUIDs[6]; } Records[RECORDS] =
+{
+	{0x00010001, Source, sizeof Source / sizeof Source[0], {0x110A, 0x0100, 0x0019, 0x1002, 0x110D}},
+	{0x00010002, Target, sizeof Target / sizeof Target[0], {0x110C, 0x0100, 0x0017, 0x1002, 0x110E}},
+	{0x00010003, Controller, sizeof Controller / sizeof Controller[0], {0x110E, 0x110F, 0x0100, 0x0017, 0x1002}},
+};
 
 // a data element's header: its type, where its data starts, how long it is
 static boolean Element (const u8 *p, unsigned n, unsigned *pType, unsigned *pStart, unsigned *pLength)
@@ -68,7 +96,7 @@ static boolean Element (const u8 *p, unsigned n, unsigned *pType, unsigned *pSta
 
 // A search pattern (a sequence of UUIDs): does the record have them all?
 // *pUsed: the pattern's length
-static boolean Matches (const u8 *p, unsigned n, unsigned *pUsed)
+static boolean Matches (unsigned nRecord, const u8 *p, unsigned n, unsigned *pUsed)
 {
 	static const u8 Base[12] = {0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB};
 	unsigned nType, nStart, nLength;
@@ -97,9 +125,9 @@ static boolean Matches (const u8 *p, unsigned n, unsigned *pUsed)
 			nUUID = (u32) q[0] << 24 | q[1] << 16 | q[2] << 8 | q[3];
 		}
 		boolean bFound = FALSE;
-		for (unsigned k = 0; k < sizeof RecordUUIDs / sizeof RecordUUIDs[0]; k++)
+		for (unsigned k = 0; k < sizeof Records[0].UUIDs / sizeof Records[0].UUIDs[0]; k++)
 		{
-			bFound = bFound || nUUID == RecordUUIDs[k];
+			bFound = bFound || (Records[nRecord].UUIDs[k] && nUUID == Records[nRecord].UUIDs[k]);
 		}
 		bAll = bAll && bFound;
 		i += nS + nL;
@@ -107,10 +135,11 @@ static boolean Matches (const u8 *p, unsigned n, unsigned *pUsed)
 	return bAll;
 }
 
-// The record's attributes whose IDs an attribute ID list asks for (IDs, or
+// A record's attributes whose IDs an attribute ID list asks for (IDs, or
 // ranges of them), as a sequence. \return its length; *pUsed: the list's
-static unsigned Listed (const u8 *p, unsigned n, u8 *pOut, unsigned *pUsed)
+static unsigned Listed (unsigned nRecord, const u8 *p, unsigned n, u8 *pOut, unsigned *pUsed)
 {
+	const TAttribute *Attributes = Records[nRecord].pAttributes;
 	unsigned nType, nStart, nLength;
 	if (!Element (p, n, &nType, &nStart, &nLength) || nType != 6)
 	{
@@ -122,7 +151,7 @@ static unsigned Listed (const u8 *p, unsigned n, u8 *pOut, unsigned *pUsed)
 		*pUsed = nStart + nLength;
 	}
 	unsigned nOut = 2;
-	for (unsigned a = 0; a < sizeof Attributes / sizeof Attributes[0]; a++)
+	for (unsigned a = 0; a < Records[nRecord].nAttributes; a++)
 	{
 		boolean bAsked = FALSE;
 		for (unsigned i = nStart; i < nStart + nLength && !bAsked; )
@@ -159,7 +188,7 @@ static unsigned Listed (const u8 *p, unsigned n, u8 *pOut, unsigned *pUsed)
 
 unsigned SDPAnswer (const u8 *pRequest, unsigned nBytes, u8 *pAnswer, unsigned nMax)
 {
-	if (nBytes < 5 || nMax < 128)
+	if (nBytes < 5 || nMax < 320)
 	{
 		return 0;
 	}
@@ -177,28 +206,40 @@ unsigned SDPAnswer (const u8 *pRequest, unsigned nBytes, u8 *pAnswer, unsigned n
 	{
 	case PDU_SEARCH:				// a pattern, how many at most: the handles
 	{
-		boolean bFound = Matches (p, n, &nUsed);
+		unsigned nFound = 0;
+		nOut = 4;
+		for (unsigned r = 0; r < RECORDS; r++)
+		{
+			if (Matches (r, p, n, &nUsed))
+			{
+				pOut[nOut++] = (u8) (Records[r].nHandle >> 24);
+				pOut[nOut++] = (u8) (Records[r].nHandle >> 16);
+				pOut[nOut++] = (u8) (Records[r].nHandle >> 8);
+				pOut[nOut++] = (u8) Records[r].nHandle;
+				nFound++;
+			}
+		}
 		nCode = PDU_SEARCH_RSP;
 		pOut[0] = pOut[2] = 0;
-		pOut[1] = pOut[3] = bFound ? 1 : 0;
-		nOut = 4;
-		if (bFound)
-		{
-			pOut[4] = (u8) (RECORD_HANDLE >> 24);
-			pOut[5] = (u8) (RECORD_HANDLE >> 16);
-			pOut[6] = (u8) (RECORD_HANDLE >> 8);
-			pOut[7] = (u8) RECORD_HANDLE;
-			nOut = 8;
-		}
+		pOut[1] = pOut[3] = (u8) nFound;
 		pOut[nOut++] = 0;			// (all of it: nothing to continue)
 		break;
 	}
 
 	case PDU_ATTRIBUTES:				// a handle, how many bytes at most, the IDs: the attributes
-		if (n >= 6 && ((u32) p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3]) == RECORD_HANDLE)
+	{
+		unsigned r = RECORDS;
+		if (n >= 6)
+		{
+			u32 nHandle = (u32) p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3];
+			for (r = 0; r < RECORDS && Records[r].nHandle != nHandle; r++)
+			{
+			}
+		}
+		if (r < RECORDS)
 		{
 			nCode = PDU_ATTRIBUTES_RSP;
-			unsigned nList = Listed (p + 6, n - 6, pOut + 2, &nUsed);
+			unsigned nList = Listed (r, p + 6, n - 6, pOut + 2, &nUsed);
 			pOut[0] = 0;
 			pOut[1] = (u8) nList;
 			nOut = 2 + nList;
@@ -211,21 +252,24 @@ unsigned SDPAnswer (const u8 *pRequest, unsigned nBytes, u8 *pAnswer, unsigned n
 			nOut = 2;
 		}
 		break;
+	}
 
 	case PDU_SEARCH_ATTRIBUTES:			// a pattern, how many bytes at most, the IDs: each record's attributes
 	{
-		boolean bFound = Matches (p, n, &nUsed);
 		nCode = PDU_SEARCH_ATTR_RSP;
-		unsigned nList = 0, nSkip;
-		if (bFound && nUsed + 2 <= n)
+		unsigned nLists = 0, nSkip;		// (three records' are 205 bytes: a one-byte length)
+		for (unsigned r = 0; r < RECORDS; r++)
 		{
-			nList = Listed (p + nUsed + 2, n - nUsed - 2, pOut + 4, &nSkip);
+			if (Matches (r, p, n, &nUsed) && nUsed + 2 <= n)
+			{
+				nLists += Listed (r, p + nUsed + 2, n - nUsed - 2, pOut + 4 + nLists, &nSkip);
+			}
 		}
 		pOut[0] = 0;
-		pOut[1] = (u8) (2 + nList);
+		pOut[1] = (u8) (2 + nLists);
 		pOut[2] = 0x35;
-		pOut[3] = (u8) nList;
-		nOut = 4 + nList;
+		pOut[3] = (u8) nLists;
+		nOut = 4 + nLists;
 		pOut[nOut++] = 0;
 		break;
 	}

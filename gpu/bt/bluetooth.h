@@ -3,8 +3,9 @@
 //
 // Bluetooth, for a speaker: the board's controller brought up (bt_uart,
 // bt_hci), the audio devices nearby found (an inquiry, their names), one of
-// them connected and paired with, and the sound sent to it (A2DP: bt_l2cap,
-// bt_avdtp, bt_audio). Only in the kernels of the boards that have the chip
+// them connected and paired with, the sound sent to it (A2DP: bt_l2cap,
+// bt_avdtp, bt_audio), and its volume kept the same as ours (AVRCP:
+// bt_avrcp). Only in the kernels of the boards that have the chip
 // (PGPU_WIRELESS: the Zero W's, the Zero 2 W's).
 //
 // All of it runs in the main loop (Update); only the UART's bytes move in an
@@ -17,10 +18,12 @@
 #include "bt_l2cap.h"
 #include "bt_avdtp.h"
 #include "bt_audio.h"
+#include "bt_avrcp.h"
 #include <circle/interrupt.h>
 #include <circle/types.h>
 
-class CBluetooth : public CBTHCIClient, public CBTL2CAPClient, public CBTAVDTPHost, public CBTAudioHost
+class CBluetooth : public CBTHCIClient, public CBTL2CAPClient, public CBTAVDTPHost, public CBTAudioHost,
+		   public CBTAVRCPHost
 {
 public:
 	static const unsigned MaxDevices = 12;
@@ -69,7 +72,9 @@ public:
 	CBluetooth (CInterruptSystem *pInterrupt);
 
 	/// \brief Log every packet (the btlog=on option)
-	void SetTrace (boolean bTrace)		{ m_HCI.SetTrace (bTrace); }
+	void SetTrace (boolean bTrace)		{ m_HCI.SetTrace (bTrace); m_AVRCP.SetTrace (bTrace); }
+	/// \brief Debugging: an AVRCP command to the speaker by hand
+	void ControlProbe (u8 nType, u8 nPDU, const u8 *pParams, unsigned nBytes)	{ m_AVRCP.Probe (nType, nPDU, pParams, nBytes); }
 
 	/// \brief On: the controller set up (it takes a moment: GetState); off: reset, quiet
 	void SetEnabled (boolean bOn);
@@ -112,6 +117,16 @@ public:
 	/// \return The sound's output to the speaker (the audio's other sink)
 	CBTAudioOut *GetAudioOut (void)		{ return &m_Audio; }
 
+	/// \return TRUE while the connected speaker's own volume is set from here (the
+	///	    sound then goes to it as it is: SetVolume is the volume)
+	boolean HasVolume (void) const		{ return m_AVRCP.HasVolume (); }
+	void SetVolume (unsigned nPercent);
+	/// \return TRUE once after the speaker's buttons changed its volume
+	boolean VolumeChanged (unsigned *pPercent);
+	/// \return The volume buttons' presses of a speaker that leaves the volume to
+	///	    us, since the last call (up: +1, down: -1 each)
+	int GetVolumeButtons (void)		{ return m_AVRCP.GetButtons (); }
+
 	static void FormatAddress (const u8 *pAddress, char *pText);	// "AA:BB:CC:DD:EE:FF" (18 bytes)
 	static boolean ParseAddress (const char *pText, u8 *pAddress);
 
@@ -132,6 +147,8 @@ private:
 	// CBTAudioHost
 	unsigned GetMediaMTU (void) override;
 	boolean SendMedia (const u8 *pPacket, unsigned nBytes) override;
+	// CBTAVRCPHost
+	boolean SendControl (const u8 *pData, unsigned nBytes) override;
 
 	void Call (void);			// the connection asked for
 	void LinkEvent (u8 nCode, const u8 *pParams, unsigned nBytes);
@@ -174,6 +191,7 @@ private:
 	CBTL2CAP m_L2CAP;
 	CBTAVDTP m_AVDTP;
 	CBTAudioOut m_Audio;
+	CBTAVRCP m_AVRCP;
 	TLink m_Link;
 	unsigned m_nLinkSince;			// the state's start
 	u8 m_LinkAddress[6];
@@ -182,6 +200,8 @@ private:
 	boolean m_bKeyUsed, m_bKeyRefused;	// the stored key was given; the device didn't take it
 	boolean m_bEncrypted;
 	unsigned m_nSignalling, m_nMedia;	// the stream's channels (CBTL2CAP::None: not there)
+	unsigned m_nControl;			// the remote control's channel
+	boolean m_bControlTried;		// it was asked for on this connection
 	boolean m_bPending;			// a connection to m_Pending once this one is gone
 	u8 m_Pending[6];
 	char m_LinkError[48];

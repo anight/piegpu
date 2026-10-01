@@ -102,6 +102,7 @@ private:
 #ifdef PGPU_WIRELESS
 	void LoadSpeakers (void);
 	void SaveSpeakers (void);
+	void UpdateSpeakerVolume (void);
 #endif
 	boolean GetBluetooth (void) const	{ return m_bBluetooth; }
 	void SetBluetooth (boolean bOn);
@@ -201,6 +202,9 @@ private:
 #ifdef PGPU_WIRELESS
 	CBluetooth		m_Bluetooth;		// for a speaker (bt/)
 	CString			m_BluetoothNote;
+	boolean			m_bSpeakerVolume;	// the speaker's own volume is set from here
+	unsigned		m_nSpeakerVolume;	// what it was given last, percent (~0: nothing yet)
+	unsigned		m_nVolumeSaveAt;	// its buttons changed the volume: settings.txt then (0: no)
 #endif
 	CSettingsApp		m_SettingsApp;		// on the panel, a long press opens it (gpu/ui)
 	boolean			m_bPressing;		// the long press: held since, where
