@@ -4,7 +4,7 @@
  *
  * Batches go out by DMA over PIO, READY is checked before each batch, idle
  * words keep the clock running. Replies are sampled by a second state machine
- * in lockstep with the bit clock, written to a DMA ring, and parsed every
+ * in lockstep with the bit clock, written to a ring by DMA, and parsed every
  * millisecond by a timer callback (pgpu_rx_parse, shared: pgpu.c).
  */
 #include "pgpu_link.h"
@@ -25,16 +25,20 @@
 static PIO pio = pio0;
 static uint sm, sm_rx;
 static uint offset_tx, offset_rx;
-static int idle_dma, packet_dma, rx_dma;
+static int idle_dma, packet_dma, rx_dma, rx_again_dma;
 
 static const uint32_t idle_word = PGPU_IDLE_WORD;
 
 static volatile uint32_t frame_count;
 
-/* reply receiver: 32 KB DMA ring = 3.5 ms at 75 Mbit/s, parsed every 1 ms */
-#define RX_RING_BITS	15
-#define RX_RING_WORDS	((1u << RX_RING_BITS) / 4)
-static uint32_t rx_ring[RX_RING_WORDS] __attribute__ ((aligned (1u << RX_RING_BITS)));
+/* reply receiver: a 32 KB ring = 3.5 ms at 75 Mbit/s, parsed every 1 ms. A
+   channel fills it and a second one sends that round again (the ring's
+   address to the first one's trigger register; the words that come meanwhile
+   wait in the FIFO: one in 64 cycles, 8 deep). The DMA's own ring mode would
+   want the ring aligned to its size: up to 32 KB of padding before it */
+#define RX_RING_WORDS	8192		/* a power of two (pgpu_rx_t) */
+static uint32_t rx_ring[RX_RING_WORDS];
+static uint32_t *rx_ring_start = rx_ring;	/* what the second channel writes */
 static uint32_t rx_last_index;
 static pgpu_rx_t rx = {rx_ring, RX_RING_WORDS, 0, 0};
 static repeating_timer_t rx_timer;
@@ -52,7 +56,8 @@ static void frame_irq (uint gpio, uint32_t events)
 /* the words the DMA has written since the last call, then the parser */
 static void rx_parse (void)
 {
-	uint32_t index = (dma_hw->ch[rx_dma].write_addr - (uintptr_t) rx_ring) / 4;
+	/* (at the ring's end for a moment, until the channel is sent round) */
+	uint32_t index = (dma_hw->ch[rx_dma].write_addr - (uintptr_t) rx_ring) / 4 % RX_RING_WORDS;
 	rx.written += (index + RX_RING_WORDS - rx_last_index) % RX_RING_WORDS;
 	rx_last_index = index;
 	pgpu_rx_parse (&rx);
@@ -90,16 +95,25 @@ void pgpu_link_init (void)
 	pcm_in_program_init (pio, sm_rx, offset_rx, PIN_REPLY, 1);
 	pio_sm_set_clkdiv_int_frac8 (pio, sm_rx, 1, 0);
 
+	/* the ring, and round again: the second channel's one word starts the
+	   first at the ring's start, with its count */
 	rx_dma = dma_claim_unused_channel (true);
-	dma_channel_config rc = dma_channel_get_default_config (rx_dma);
+	rx_again_dma = dma_claim_unused_channel (true);
+	dma_channel_config rc = dma_channel_get_default_config (rx_again_dma);
+	channel_config_set_transfer_data_size (&rc, DMA_SIZE_32);
+	channel_config_set_read_increment (&rc, false);
+	channel_config_set_write_increment (&rc, false);
+	channel_config_set_high_priority (&rc, true);
+	dma_channel_configure (rx_again_dma, &rc, &dma_hw->ch[rx_dma].al2_write_addr_trig,
+			       &rx_ring_start, 1, false);
+	rc = dma_channel_get_default_config (rx_dma);
 	channel_config_set_transfer_data_size (&rc, DMA_SIZE_32);
 	channel_config_set_read_increment (&rc, false);
 	channel_config_set_write_increment (&rc, true);
-	channel_config_set_ring (&rc, true, RX_RING_BITS);
 	channel_config_set_dreq (&rc, pio_get_dreq (pio, sm_rx, false));
 	channel_config_set_high_priority (&rc, true);
-	dma_channel_configure (rx_dma, &rc, rx_ring, &pio->rxf[sm_rx],
-			       dma_encode_endless_transfer_count (), true);
+	channel_config_set_chain_to (&rc, rx_again_dma);
+	dma_channel_configure (rx_dma, &rc, rx_ring, &pio->rxf[sm_rx], RX_RING_WORDS, true);
 
 	/* idle: the same zero word forever */
 	idle_dma = dma_claim_unused_channel (true);

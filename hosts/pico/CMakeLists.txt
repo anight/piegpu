@@ -58,6 +58,8 @@ foreach(app ${PGPU_DEMO_APPS})
 		pgpu_demo(${app} ${app})
 	endif()
 endforeach()
+# linktest keeps two copies of its texture: 64 KB each here (256 KB by default)
+target_compile_definitions(linktest PRIVATE LINKTEST_SIZE=128)
 
 # ---- Jet examples on the GPU (demos/jet/jet.cmake): jet-NAME ---------------------
 option(JET_PROFILE "print where the Pico's frame time goes (jet-*)" OFF)

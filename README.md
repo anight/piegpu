@@ -428,6 +428,10 @@ cmake -S hosts/pico -B hosts/pico/build -G Ninja
 ninja -C hosts/pico/build
 ```
 
+Programming over SWD while one of these programs runs: stop its DMA first.
+The reply ring's DMA goes on with the cores halted, and where the ring lies in
+OpenOCD's work area (0x20010000, 64 KB) it writes into the image on its way
+to the flash (the verify then fails).
 **ESP32-P4** (Waveshare ESP32-P4-Module-DEV-KIT): ESP-IDF v5.5. One program
 per build, chosen with `PGPU_APP`:
 

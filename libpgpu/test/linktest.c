@@ -6,6 +6,8 @@
  * - round trip: a 256x256 RGBA8888 texture of random data (a new seed each
  *   round) uploaded, then read back from a framebuffer on it (READ_PIXELS)
  *   and compared with what was sent; reply CRC errors are counted here
+ *   (LINKTEST_SIZE: its side; two copies are kept, 256 KB each at 256, which
+ *   a Pico hasn't got: 128 there)
  *
  * Every LINKTEST_REPORT_S seconds a line with the rates and the error counts,
  * and the totals so far; LINKTEST_SECONDS in all (0: for ever).
@@ -24,7 +26,10 @@
 #define BUF_ID		1
 #define TEX_ID		1
 #define FB_ID		1
-#define SIZE		256
+#ifndef LINKTEST_SIZE
+#define LINKTEST_SIZE	256
+#endif
+#define SIZE		LINKTEST_SIZE
 #define UPLOAD_BYTES	65536
 
 static uint32_t rng;
@@ -47,7 +52,7 @@ static void fill (uint32_t *p, uint32_t words, uint32_t seed)
 }
 
 static uint32_t upload[UPLOAD_BYTES / 4];
-static uint32_t *sent, *back;			/* 256 KB each: the heap (PSRAM on the P4) */
+static uint32_t *sent, *back;			/* SIZE x SIZE words each: the heap (PSRAM on the P4) */
 
 int main (void)
 {
