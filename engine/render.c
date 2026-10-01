@@ -7,8 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include "world_program.h"
+#include "liquid_program.h"
+#include "skydome_program.h"
 
-enum { KIND_LIT, KIND_BRIGHT };			/* lightmapped; its own colour */
+enum { KIND_LIT, KIND_BRIGHT, KIND_WARP, KIND_SKY };	/* lightmapped; its own colour; a liquid; the sky */
+static const int program_of[] = {0, 0, 1, 2};
 
 typedef struct
 {
@@ -21,15 +24,30 @@ static bool power_of_two (uint32_t n)	{ return n && !(n & (n - 1)); }
 
 static int kind_of (const char *name)
 {
-	return   strncmp (name, "light", 5) == 0 || strncmp (name, "sky", 3) == 0 || name[0] == '*'
-	       ? KIND_BRIGHT : KIND_LIT;
+	return   name[0] == '*' ? KIND_WARP : strncmp (name, "sky", 3) == 0 ? KIND_SKY
+	       : strncmp (name, "light", 5) == 0 ? KIND_BRIGHT : KIND_LIT;
+}
+
+static GLuint upload (const void *texels, int w, int h, GLenum format, GLenum type)
+{
+	GLuint t;
+	glGenTextures (1, &t);
+	glBindTexture (GL_TEXTURE_2D, t);
+	glPixelStorei (GL_UNPACK_ALIGNMENT, 2);
+	glTexImage2D (GL_TEXTURE_2D, 0, format, w, h, 0, format, type, texels);
+	glGenerateMipmap (GL_TEXTURE_2D);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	return t;
 }
 
 static bool upload_textures (render_t *r)
 {
 	const bsp_t *b = r->bsp;
 	r->textures = calloc (b->n_miptex ? b->n_miptex : 1, sizeof (GLuint));
-	if (!r->textures)
+	r->fronts = calloc (b->n_miptex ? b->n_miptex : 1, sizeof (GLuint));
+	r->hazes = calloc (b->n_miptex ? b->n_miptex : 1, sizeof r->hazes[0]);
+	if (!r->textures || !r->fronts || !r->hazes)
 	{
 		return false;
 	}
@@ -52,18 +70,40 @@ static bool upload_textures (render_t *r)
 		{
 			return false;
 		}
+		if (kind_of (mt->name) == KIND_SKY && mt->width == 2 * mt->height)
+		{
+			/* the sky's two layers: the back (the right half) RGB565, the
+			   front (the left) RGBA5551, see-through where colour 0 */
+			uint32_t h = mt->height;
+			for (uint32_t y = 0; y < h; y++)		/* the haze: the back's average */
+				for (uint32_t x = 0; x < h; x++)
+					for (int c = 0; c < 3; c++)
+						r->hazes[i][c] += bsp_palette[src[y * mt->width + h + x]][c] / (255.0f * h * h);
+			for (int layer = 0; layer < 2; layer++)
+			{
+				for (uint32_t y = 0; y < h; y++)
+					for (uint32_t x = 0; x < h; x++)
+					{
+						uint8_t p = src[y * mt->width + x + (layer ? 0 : h)];
+						const uint8_t *c = bsp_palette[p];
+						texels[y * h + x] = layer
+							? (uint16_t) ((c[0] >> 3) << 11 | (c[1] >> 3) << 6 | (c[2] >> 3) << 1 | (p != 0))
+							: (uint16_t) ((c[0] >> 3) << 11 | (c[1] >> 2) << 5 | c[2] >> 3);
+					}
+				if (layer)
+					r->fronts[i] = upload (texels, h, h, GL_RGBA, GL_UNSIGNED_SHORT_5_5_5_1);
+				else
+					r->textures[i] = upload (texels, h, h, GL_RGB, GL_UNSIGNED_SHORT_5_6_5);
+			}
+			free (texels);
+			continue;
+		}
 		for (uint32_t k = 0; k < mt->width * mt->height; k++)
 		{
 			const uint8_t *c = bsp_palette[src[k]];
 			texels[k] = (uint16_t) ((c[0] >> 3) << 11 | (c[1] >> 2) << 5 | c[2] >> 3);
 		}
-		glGenTextures (1, &r->textures[i]);
-		glBindTexture (GL_TEXTURE_2D, r->textures[i]);
-		glPixelStorei (GL_UNPACK_ALIGNMENT, 2);
-		glTexImage2D (GL_TEXTURE_2D, 0, GL_RGB, mt->width, mt->height, 0, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, texels);
-		glGenerateMipmap (GL_TEXTURE_2D);
-		glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-		glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		r->textures[i] = upload (texels, mt->width, mt->height, GL_RGB, GL_UNSIGNED_SHORT_5_6_5);
 		free (texels);
 	}
 	return true;
@@ -208,7 +248,7 @@ static int face_model (const bsp_t *b, int face)
 	return -1;
 }
 
-static int *face_keys;				/* model, texture, page: packed */
+static int *face_keys;				/* model, texture (the sky's last), page: packed */
 
 static int by_key (const void *a, const void *b)
 {
@@ -236,7 +276,7 @@ bool render_init (render_t *r, const bsp_t *b)
 		return false;
 	}
 
-	/* the faces in batch order: by model, texture, lightmap page */
+	/* the faces in batch order: by model, texture (the sky's last), lightmap page */
 	int n = 0, vertices = 0;
 	for (int i = 0; i < b->n_faces; i++)
 	{
@@ -245,7 +285,10 @@ bool render_init (render_t *r, const bsp_t *b)
 		{
 			continue;
 		}
-		face_keys[i] = (m << 20) | (b->texinfo[b->faces[i].texinfo].miptex & 0xFFF) << 8 | fl[i].page;
+		int t = b->texinfo[b->faces[i].texinfo].miptex;
+		const bsp_miptex_t *mt = bsp_miptex (b, t);
+		bool sky = mt && kind_of (mt->name) == KIND_SKY;
+		face_keys[i] = (m << 20) | (sky << 19) | (t & 0x7FF) << 8 | fl[i].page;
 		r->order[n++] = i;
 		vertices += (b->faces[i].edges - 2) * 3;
 	}
@@ -264,6 +307,8 @@ bool render_init (render_t *r, const bsp_t *b)
 			bt->model = face_keys[i] >> 20;
 			bt->texture = b->texinfo[b->faces[i].texinfo].miptex;
 			bt->page = fl[i].page;
+			const bsp_miptex_t *mt = bsp_miptex (b, bt->texture);
+			bt->kind = mt ? kind_of (mt->name) : KIND_LIT;
 			bt->first_face = k;
 			bt->faces = 0;
 		}
@@ -335,17 +380,29 @@ bool render_init (render_t *r, const bsp_t *b)
 	free (face_keys);
 	face_keys = NULL;
 
-	/* the program */
-	r->program = glCreateProgram ();
-	glProgramBinaryOES (r->program, PGL_PROGRAM_BINARY_PGPU, &world_info, sizeof world_info);
-	r->u_vp = glGetUniformLocation (r->program, "u_vp");
-	r->u_offset = glGetUniformLocation (r->program, "u_offset");
-	r->a_pos = glGetAttribLocation (r->program, "a_pos");
-	r->a_uv = glGetAttribLocation (r->program, "a_uv");
-	r->a_luv = glGetAttribLocation (r->program, "a_luv");
-	glUseProgram (r->program);
-	glUniform1i (glGetUniformLocation (r->program, "u_texture"), 0);
-	glUniform1i (glGetUniformLocation (r->program, "u_lightmap"), 1);
+	/* the programs */
+	const struct { const void *info; size_t size; } binaries[3] =
+	{
+		{&world_info, sizeof world_info}, {&liquid_info, sizeof liquid_info}, {&skydome_info, sizeof skydome_info},
+	};
+	for (int k = 0; k < 3; k++)
+	{
+		render_program_t *p = &r->programs[k];
+		p->id = glCreateProgram ();
+		glProgramBinaryOES (p->id, PGL_PROGRAM_BINARY_PGPU, binaries[k].info, binaries[k].size);
+		p->u_vp = glGetUniformLocation (p->id, "u_vp");
+		p->u_offset = glGetUniformLocation (p->id, "u_offset");
+		p->u_eye = glGetUniformLocation (p->id, "u_eye");
+		p->u_time = glGetUniformLocation (p->id, "u_time");
+		p->u_size = glGetUniformLocation (p->id, "u_size");
+		p->u_haze = glGetUniformLocation (p->id, "u_haze");
+		p->a_pos = glGetAttribLocation (p->id, "a_pos");
+		p->a_uv = glGetAttribLocation (p->id, "a_uv");
+		p->a_luv = glGetAttribLocation (p->id, "a_luv");
+		glUseProgram (p->id);
+		glUniform1i (glGetUniformLocation (p->id, k == 2 ? "u_back" : "u_texture"), 0);
+		glUniform1i (glGetUniformLocation (p->id, k == 2 ? "u_front" : "u_lightmap"), 1);
+	}
 	printf ("render: %d faces in %d batches, %d vertices, %d textures, %d lightmap pages\n", n, r->n_batches,
 		vertices, b->n_miptex, r->n_pages);
 	return true;
@@ -353,28 +410,58 @@ bool render_init (render_t *r, const bsp_t *b)
 
 /* ---- a frame --------------------------------------------------------------------------------------- */
 
-static void begin (render_t *r, const float vp[16], const float offset[3])
+/* a program for the batches to come (and the attributes it takes) */
+static void begin (render_t *r, int program, const float vp[16], const float offset[3])
 {
-	glUseProgram (r->program);
-	glUniformMatrix4fv (r->u_vp, 1, GL_FALSE, vp);
-	glUniform3f (r->u_offset, offset[0], offset[1], offset[2]);
+	const render_program_t *p = &r->programs[program];
+	glUseProgram (p->id);
+	glUniformMatrix4fv (p->u_vp, 1, GL_FALSE, vp);
+	glUniform3f (p->u_offset, offset[0], offset[1], offset[2]);
+	if (p->u_eye >= 0)
+		glUniform3f (p->u_eye, r->eye[0], r->eye[1], r->eye[2]);
+	if (p->u_time >= 0)
+		glUniform1f (p->u_time, program == 2 ? fmodf (r->time, 16.0f) : fmodf (r->time, 6.2831853f * 64));
 	glBindBuffer (GL_ARRAY_BUFFER, r->buffer);
 	for (GLint i = 0; i < 4; i++)
 	{
-		if (i == r->a_pos || i == r->a_uv || i == r->a_luv)
+		if (i == p->a_pos || i == p->a_uv || i == p->a_luv)
 			glEnableVertexAttribArray (i);
 		else
 			glDisableVertexAttribArray (i);
 	}
-	glVertexAttribPointer (r->a_pos, 3, GL_FLOAT, GL_FALSE, sizeof (vertex_t), (void *) 0);
-	glVertexAttribPointer (r->a_uv, 2, GL_FLOAT, GL_FALSE, sizeof (vertex_t), (void *) 12);
-	glVertexAttribPointer (r->a_luv, 2, GL_FLOAT, GL_FALSE, sizeof (vertex_t), (void *) 20);
+	glVertexAttribPointer (p->a_pos, 3, GL_FLOAT, GL_FALSE, sizeof (vertex_t), (void *) 0);
+	if (p->a_uv >= 0)
+		glVertexAttribPointer (p->a_uv, 2, GL_FLOAT, GL_FALSE, sizeof (vertex_t), (void *) 12);
+	if (p->a_luv >= 0)
+		glVertexAttribPointer (p->a_luv, 2, GL_FLOAT, GL_FALSE, sizeof (vertex_t), (void *) 20);
+}
+
+/* a batch's textures: the texture and the lightmap page, or a liquid's
+   texture and its size, or the sky's layers */
+static void bind (render_t *r, const render_batch_t *bt)
+{
+	const bsp_t *b = r->bsp;
+	bool known = bt->texture >= 0 && bt->texture < b->n_miptex;
+	glActiveTexture (GL_TEXTURE1);
+	GLuint front = known && r->fronts[bt->texture] ? r->fronts[bt->texture] : known ? r->textures[bt->texture] : 0;
+	glBindTexture (GL_TEXTURE_2D, bt->kind == KIND_SKY ? front : r->pages[bt->page]);
+	glActiveTexture (GL_TEXTURE0);
+	glBindTexture (GL_TEXTURE_2D, known ? r->textures[bt->texture] : 0);
+	if (bt->kind == KIND_SKY && known)
+	{
+		glUniform3f (r->programs[2].u_haze, r->hazes[bt->texture][0], r->hazes[bt->texture][1], r->hazes[bt->texture][2]);
+	}
+	if (bt->kind == KIND_WARP)
+	{
+		const bsp_miptex_t *mt = known ? bsp_miptex (b, bt->texture) : NULL;
+		glUniform2f (r->programs[1].u_size, mt ? (float) mt->width : 64.0f, mt ? (float) mt->height : 64.0f);
+	}
 }
 
 /* the batches [first, last): their faces marked in this frame (or all), in runs */
-static void draw_batches (render_t *r, int first, int last, bool all)
+static void draw_batches (render_t *r, int first, int last, bool all, const float vp[16], const float offset[3])
 {
-	const bsp_t *b = r->bsp;
+	int program = -1;
 	for (int k = first; k < last; k++)
 	{
 		const render_batch_t *bt = &r->batches[k];
@@ -393,10 +480,12 @@ static void draw_batches (render_t *r, int first, int last, bool all)
 			{
 				if (!bound)
 				{
-					glActiveTexture (GL_TEXTURE1);
-					glBindTexture (GL_TEXTURE_2D, r->pages[bt->page]);
-					glActiveTexture (GL_TEXTURE0);
-					glBindTexture (GL_TEXTURE_2D, bt->texture >= 0 && bt->texture < b->n_miptex ? r->textures[bt->texture] : 0);
+					if (program != program_of[bt->kind])
+					{
+						program = program_of[bt->kind];
+						begin (r, program, vp, offset);
+					}
+					bind (r, bt);
 					bound = true;
 				}
 				glDrawArrays (GL_TRIANGLES, run_first, run_count);
@@ -414,6 +503,7 @@ void render_world (render_t *r, const float eye[3], const float vp[16])
 	const bsp_t *b = r->bsp;
 	r->frame++;
 	memset (&r->stats, 0, sizeof r->stats);
+	memcpy (r->eye, eye, sizeof r->eye);
 
 	int leaf = bsp_point_leaf (b, eye);
 	if (leaf != r->pvs_leaf)
@@ -468,8 +558,7 @@ void render_world (render_t *r, const float eye[3], const float vp[16])
 	}
 
 	static const float none[3] = {0, 0, 0};
-	begin (r, vp, none);
-	draw_batches (r, r->model_batches[0], r->model_batches[1], false);
+	draw_batches (r, r->model_batches[0], r->model_batches[1], false, vp, none);
 }
 
 void render_model (render_t *r, int model, const float offset[3], const float vp[16])
@@ -478,6 +567,5 @@ void render_model (render_t *r, int model, const float offset[3], const float vp
 	{
 		return;
 	}
-	begin (r, vp, offset);
-	draw_batches (r, r->model_batches[model], r->model_batches[model + 1], true);
+	draw_batches (r, r->model_batches[model], r->model_batches[model + 1], true, vp, offset);
 }

@@ -9,6 +9,10 @@
 #   antigrav            anti-gravity racing, after WipEout: six craft, a circuit
 #   walk                the BSP engine (engine/): a Quake-format level walked
 #                       through; PGPU_LEVEL (default engine/levels/base.bsp)
+#   keep                the BSP engine outdoors: a castle at dusk, gems to
+#                       find (default engine/levels/keep.bsp)
+#   isles               the BSP engine in the sky: floating islands, a moving
+#                       platform, a jump pad, a portal, coins (engine/levels/isles.bsp)
 #   toy-NAME            Shadertoy-style: shaders/toy_NAME.frag; a game has
 #                       NAME.c (pong, snake, asteroids)
 #   media               an MP4 or an MP3 played by the RPi: the video decoded
@@ -22,7 +26,10 @@ include(${CMAKE_CURRENT_LIST_DIR}/../libpgpu/pgpu_sources.cmake)
 
 set(PGPU_DEMOS ${CMAKE_CURRENT_LIST_DIR})
 set(PGPU_DEMO_SHADERS ${PGPU_DEMOS}/shaders)
-set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav walk
+set(PGPU_LEVEL_walk base)			# the BSP engine's demos' levels (engine/levels)
+set(PGPU_LEVEL_keep keep)
+set(PGPU_LEVEL_isles isles)
+set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav walk keep isles
 	toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids media)
 
 if(NOT COMMAND pgpu_demo)
@@ -72,19 +79,28 @@ function(pgpu_demo target app)
 		program(craft -a a_pos:float:3 -a a_normal:float:3 -a a_uv:float:2 -v triangles)
 		program(nightsky -a a_pos:float:2 -a a_dir:float:3 -v triangles)
 
-	elseif(app STREQUAL "walk")		# the BSP engine: a level walked through
+	elseif(app STREQUAL "walk" OR app STREQUAL "keep" OR app STREQUAL "isles")	# the BSP engine
 		set(engine ${PGPU_DEMOS}/../engine)
 		if(NOT PGPU_LEVEL)
-			set(PGPU_LEVEL ${engine}/levels/base.bsp)
+			set(PGPU_LEVEL ${engine}/levels/${PGPU_LEVEL_${app}}.bsp)
 		endif()
 		set(PGPU_LEVEL_INCBIN ${PGPU_LEVEL})
-		configure_file(${engine}/level_file.S.in ${CMAKE_CURRENT_BINARY_DIR}/level_file.S @ONLY)
-		set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/level_file.S PROPERTIES OBJECT_DEPENDS ${PGPU_LEVEL})
-		target_sources(${target} PRIVATE ${PGPU_DEMOS}/walk.c ${engine}/bsp.c ${engine}/render.c ${engine}/collide.c
-			${engine}/game.c ${engine}/palette.c ${CMAKE_CURRENT_BINARY_DIR}/level_file.S)
+		configure_file(${engine}/level_file.S.in ${CMAKE_CURRENT_BINARY_DIR}/level_file_${app}.S @ONLY)
+		set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/level_file_${app}.S PROPERTIES OBJECT_DEPENDS ${PGPU_LEVEL})
+		target_sources(${target} PRIVATE ${PGPU_DEMOS}/${app}.c ${engine}/bsp.c ${engine}/render.c ${engine}/collide.c
+			${engine}/game.c ${engine}/keys.c ${engine}/palette.c ${CMAKE_CURRENT_BINARY_DIR}/level_file_${app}.S)
 		target_include_directories(${target} PRIVATE ${engine})
 		pgpu_glsl_program(TARGET ${target} NAME world DIR ${engine}/shaders
 			ARGS -a a_pos:float:3 -a a_uv:float:2 -a a_luv:float:2 -v triangles)
+		pgpu_glsl_program(TARGET ${target} NAME liquid DIR ${engine}/shaders
+			ARGS -a a_pos:float:3 -a a_uv:float:2 -v triangles)
+		pgpu_glsl_program(TARGET ${target} NAME skydome DIR ${engine}/shaders
+			ARGS -a a_pos:float:3 -v triangles)
+		if(NOT app STREQUAL "walk")		# items to pick up
+			target_sources(${target} PRIVATE ${PGPU_DEMOS}/pickups.c)
+			program(gem -a a_pos:float:3 -a a_normal:float:3 -v triangles)
+			program(halo -a a_corner:float:2 -v triangles)
+		endif()
 
 	elseif(app MATCHES "^toy-(.+)$")	# toy.c: one full-screen quad, the picture is the shader
 		set(name ${CMAKE_MATCH_1})

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""make_base.py - the demo level "base" for the BSP engine (engine/), as a
-Quake .map, its textures (a WAD2) and the palette they're in, all made here.
+"""make_base.py - the demo level "base" for the BSP engine (engine/), a Quake
+.map, with the textures of engine/tools/levelkit.py (run that first: the WAD
+and the palette).
 
-  engine/tools/make_base.py        writes engine/levels/base.map, textures.wad,
-                                   engine/palette.c; then compile it:
+  engine/tools/make_base.py        writes engine/levels/base.map; then compile it:
   engine/tools/build-level.sh base (ericw-tools: qbsp, vis, light)
 
 The level is rooms (empty boxes) on a 64-unit grid: every cell that isn't in
@@ -12,253 +12,11 @@ sealed whatever the rooms are. Details (stairs, a ramp, pillars, railings,
 light fixtures) are brushes of their own; a door (func_door) and a lift
 (func_plat) are brush entities. Quake units: a player is 32 wide, 56 tall,
 climbs steps of 18.
-
-The textures are drawn here (numpy), in RGB, then quantized together to a
-palette of 256 made from them (k-means): Quake's BSP stores 8-bit textures,
-and the engine converts them with the same palette (engine/palette.c).
 """
-import numpy as np, os, struct, sys
+import numpy as np, os
+from levelkit import LEVELS, box, ramp_x, write_map
 
-HERE = os.path.dirname (os.path.abspath (__file__))
-LEVELS = os.path.join (HERE, '..', 'levels')
 CELL = 64
-TEX = 64					# texture size
-
-rng = np.random.default_rng (12345)
-
-# ---- noise and drawing -------------------------------------------------------------
-
-def noise (size, cells, seed):
-	"""tileable value noise, size x size, `cells` lattice cells across"""
-	r = np.random.default_rng (seed).random ((cells, cells))
-	c = np.arange (size) * cells / size
-	i = np.floor (c).astype (int); f = c - i; f = f * f * (3 - 2 * f)
-	i1 = (i + 1) % cells
-	a = r[np.ix_ (i, i)]; b = r[np.ix_ (i, i1)]; cc = r[np.ix_ (i1, i)]; d = r[np.ix_ (i1, i1)]
-	fx = f[None, :]; fy = f[:, None]
-	return (a * (1 - fx) + b * fx) * (1 - fy) + (cc * (1 - fx) + d * fx) * fy
-
-def fbm (size, seed, octaves = 4, base = 4):
-	t = np.zeros ((size, size)); amp = 1.0; tot = 0
-	for o in range (octaves):
-		t += amp * noise (size, base << o, seed + o); tot += amp; amp *= 0.5
-	return t / tot
-
-def tint (gray, color):
-	return gray[..., None] * np.array (color)[None, None, :]
-
-def bevel (img, x0, y0, x1, y1, light = 1.25, dark = 0.7, w = 1):
-	"""a raised panel's edges: lit top and left, dark bottom and right"""
-	img[y0:y0 + w, x0:x1] *= light; img[y0:y1, x0:x0 + w] *= light
-	img[y1 - w:y1, x0:x1] *= dark; img[y0:y1, x1 - w:x1] *= dark
-
-# ---- the textures ----------------------------------------------------------------------
-
-def concrete ():
-	n = fbm (TEX, 1) * 0.35 + 0.65 + (rng.random ((TEX, TEX)) - 0.5) * 0.06
-	img = tint (n, (0.55, 0.54, 0.52))
-	for y in (0, 32):
-		img[y, :] *= 0.75				# form lines
-	return img
-
-def floor_tiles ():
-	n = fbm (TEX, 2) * 0.2 + 0.8
-	img = tint (n, (0.50, 0.48, 0.44))
-	for ty in range (2):
-		for tx in range (2):
-			v = 0.9 + 0.2 * rng.random ()
-			img[ty * 32:(ty + 1) * 32, tx * 32:(tx + 1) * 32] *= v
-			bevel (img, tx * 32, ty * 32, tx * 32 + 32, ty * 32 + 32, 1.15, 0.6)
-	return img
-
-def floor_plate ():
-	"""diamond plate: raised diagonal studs"""
-	n = fbm (TEX, 3) * 0.15 + 0.85
-	img = tint (n, (0.42, 0.44, 0.46))
-	y, x = np.mgrid[0:TEX, 0:TEX]
-	for k in (0, 1):
-		u = ((x + (y // 8 % 2) * 8 + k) % 16) - 8; v = (y % 8) - 4
-		stud = (abs (u - v) < 2) & (abs (u + v) < 5)
-		img[stud] *= 1.35 if k == 0 else 0.9
-	return img
-
-def metal_panels (color):
-	n = fbm (TEX, 4) * 0.2 + 0.8
-	img = tint (n, color)
-	for y0, y1 in ((0, 24), (24, 64)):
-		for x0, x1 in ((0, 32), (32, 64)):
-			bevel (img, x0, y0, x1, y1, 1.3, 0.55, 2)
-			for rx, ry in ((x0 + 4, y0 + 4), (x1 - 5, y0 + 4), (x0 + 4, y1 - 5), (x1 - 5, y1 - 5)):
-				img[ry:ry + 2, rx:rx + 2] *= 1.5	# rivets
-	return img
-
-def bricks ():
-	n = fbm (TEX, 5) * 0.25 + 0.75
-	img = tint (n, (0.58, 0.30, 0.20))
-	for row in range (8):
-		y0 = row * 8; off = 8 if row % 2 else 0
-		for col in range (5):
-			x0 = (col * 16 + off) % TEX
-			v = 0.8 + 0.35 * rng.random ()
-			for xx in range (16):
-				img[y0:y0 + 8, (x0 + xx) % TEX] *= v
-		img[y0, :] = (0.30, 0.28, 0.25)		# mortar
-		for col in range (4):
-			img[y0:y0 + 8, (col * 16 + off) % TEX] = (0.30, 0.28, 0.25)
-	return img
-
-def stone ():
-	n = fbm (TEX, 6, 5, 2) * 0.5 + 0.5
-	img = tint (n, (0.46, 0.45, 0.40))
-	return img
-
-def ceiling_panels ():
-	n = fbm (TEX, 7) * 0.1 + 0.9
-	img = tint (n, (0.62, 0.62, 0.60))
-	for k in (0, 32):
-		img[k:k + 2, :] *= 0.5; img[:, k:k + 2] *= 0.5
-	y, x = np.mgrid[0:TEX, 0:TEX]
-	img[((x % 4) == 2) & ((y % 4) == 2)] *= 0.8	# perforations
-	return img
-
-def ceiling_grid ():
-	img = tint (fbm (TEX, 8) * 0.1 + 0.9, (0.30, 0.32, 0.36))
-	for k in range (0, TEX, 16):
-		img[k:k + 3, :] = (0.55, 0.56, 0.58); img[:, k:k + 3] = (0.55, 0.56, 0.58)
-	return img
-
-def wood ():
-	y, x = np.mgrid[0:TEX, 0:TEX]
-	grain = np.sin ((x + fbm (TEX, 9) * 24) * 0.9) * 0.1 + 0.9
-	img = tint (grain * (fbm (TEX, 10) * 0.2 + 0.8), (0.50, 0.34, 0.20))
-	for k in range (0, TEX, 16):
-		img[k, :] *= 0.5				# planks
-	return img
-
-def hazard ():
-	y, x = np.mgrid[0:TEX, 0:TEX]
-	stripe = ((x + y) // 8) % 2 == 0
-	img = np.where (stripe[..., None], np.array ((0.95, 0.75, 0.08)), np.array ((0.08, 0.08, 0.09)))
-	img = img * (fbm (TEX, 11) * 0.2 + 0.8)[..., None]
-	img[:4, :] = (0.5, 0.5, 0.52); img[-4:, :] = (0.5, 0.5, 0.52)
-	return img
-
-def door ():
-	img = metal_panels ((0.45, 0.47, 0.50))
-	img[:, 31:33] = (0.1, 0.1, 0.1)			# the seam
-	img[28:36, :] = np.where ((((np.arange (TEX) // 4) % 2) == 0)[:, None], (0.95, 0.75, 0.08), (0.1, 0.1, 0.1))
-	return img
-
-def lift ():
-	img = floor_plate () * 1.1
-	img[:3, :] = (0.95, 0.75, 0.08); img[-3:, :] = (0.95, 0.75, 0.08)
-	img[:, :3] = (0.95, 0.75, 0.08); img[:, -3:] = (0.95, 0.75, 0.08)
-	return img
-
-def light_panel (color):
-	y, x = np.mgrid[0:TEX, 0:TEX]
-	d = np.minimum (np.minimum (x, TEX - 1 - x), np.minimum (y, TEX - 1 - y))
-	g = np.clip (0.55 + d / 10.0, 0, 1.0)
-	img = tint (g, color)
-	img[d < 3] = (0.35, 0.35, 0.37)
-	return img
-
-# name: (drawing, the engine's flag: "light" names are shown at full brightness)
-TEXTURES = {
-	'concrete': concrete, 'floor_tiles': floor_tiles, 'floor_plate': floor_plate,
-	'metal_grey': lambda: metal_panels ((0.45, 0.46, 0.47)), 'metal_blue': lambda: metal_panels ((0.22, 0.32, 0.50)),
-	'bricks': bricks, 'stone': stone, 'ceil_panels': ceiling_panels, 'ceil_grid': ceiling_grid, 'wood': wood,
-	'hazard': hazard, 'door': door, 'lift': lift,
-	'light_white': lambda: light_panel ((1.0, 0.97, 0.90)), 'light_blue': lambda: light_panel ((0.7, 0.85, 1.0)),
-}
-
-# ---- the palette: k-means over all the textures' texels ----------------------------------
-
-def make_palette (images):
-	px = np.concatenate ([np.clip (i, 0, 1).reshape (-1, 3) for i in images])
-	sel = px[rng.choice (len (px), size = min (len (px), 60000), replace = False)]
-	cent = sel[rng.choice (len (sel), 256, replace = False)].copy ()
-	for it in range (16):
-		d = ((sel[:, None, :] - cent[None, :, :]) ** 2).sum (-1)
-		lab = d.argmin (1)
-		for k in range (256):
-			m = sel[lab == k]
-			cent[k] = m.mean (0) if len (m) else sel[rng.integers (len (sel))]
-	cent = cent[np.argsort (cent.sum (1))]		# dark to light
-	return np.clip (np.round (cent * 255), 0, 255).astype (np.uint8)
-
-def quantize (img, pal):
-	p = pal.astype (float) / 255
-	flat = np.clip (img, 0, 1).reshape (-1, 3)
-	idx = np.empty (len (flat), np.uint8)
-	for s in range (0, len (flat), 4096):
-		d = ((flat[s:s + 4096, None, :] - p[None, :, :]) ** 2).sum (-1)
-		idx[s:s + 4096] = d.argmin (1)
-	return idx.reshape (img.shape[:2])
-
-def mips (img):
-	"""the 4 mip levels (box filtered, then quantized)"""
-	out = [img]
-	for m in range (3):
-		a = out[-1]
-		out.append ((a[0::2, 0::2] + a[1::2, 0::2] + a[0::2, 1::2] + a[1::2, 1::2]) / 4)
-	return out
-
-def write_wad (path, textures, pal):
-	lumps = []
-	for name, img in textures.items ():
-		levels = [quantize (m, pal) for m in mips (img)]
-		h, w = img.shape[:2]
-		head = struct.pack ('<16sII', name.encode ()[:15], w, h)
-		ofs = 16 + 8 + 16; offsets = []
-		for lv in levels:
-			offsets.append (ofs); ofs += lv.size
-		data = head + struct.pack ('<4I', *offsets) + b''.join (lv.tobytes () for lv in levels)
-		lumps.append ((name, data))
-	body = b''; infos = []; pos = 12
-	for name, data in lumps:
-		infos.append (struct.pack ('<iiibbh16s', pos, len (data), len (data), 0x44, 0, 0, name.encode ()[:15]))
-		body += data; pos += len (data)
-	with open (path, 'wb') as f:
-		f.write (b'WAD2' + struct.pack ('<ii', len (lumps), pos) + body + b''.join (infos))
-
-def write_palette_c (path, pal):
-	with open (path, 'w') as f:
-		f.write ('/*\n * palette.c - the palette the BSP levels\' textures are in (256 RGB),\n'
-			 ' * made with their textures by engine/tools/make_base.py (don\'t edit)\n */\n'
-			 '#include "bsp.h"\n\nconst uint8_t bsp_palette[256][3] =\n{\n')
-		for i in range (0, 256, 4):
-			f.write ('\t' + ' '.join ('{%3d, %3d, %3d},' % tuple (pal[j]) for j in range (i, i + 4)) + '\n')
-		f.write ('};\n')
-
-# ---- brushes -------------------------------------------------------------------------------
-
-def plane_face (n, d, tex):
-	"""a brush face on the plane n.p = d (n outwards): three points ordered as
-	   the .map format has them, (p2 - p0) x (p1 - p0) along n"""
-	n = np.array (n, float)
-	u = np.cross (n, (0, 0, 1)) if abs (n[2]) < 0.9 else np.cross (n, (1, 0, 0))
-	u /= np.linalg.norm (u); v = np.cross (n / np.linalg.norm (n), u)
-	p0 = n / np.dot (n, n) * d
-	p1 = p0 + v * 128; p2 = p0 + u * 128		# (u x v = n)
-	fmt = lambda p: '( %s )' % ' '.join (('%.4f' % c).rstrip ('0').rstrip ('.') for c in p)
-	return '%s %s %s %s 0 0 0 1 1' % (fmt (p0), fmt (p1), fmt (p2), tex)
-
-def box (x0, y0, z0, x1, y1, z1, tex):
-	"""an axis box; tex: one name, or a dict by side ('top', 'bottom', 'side')"""
-	t = tex if isinstance (tex, dict) else {'top': tex, 'bottom': tex, 'side': tex}
-	faces = [plane_face ((-1, 0, 0), -x0, t['side']), plane_face ((1, 0, 0), x1, t['side']),
-		 plane_face ((0, -1, 0), -y0, t['side']), plane_face ((0, 1, 0), y1, t['side']),
-		 plane_face ((0, 0, -1), -z0, t['bottom']), plane_face ((0, 0, 1), z1, t['top'])]
-	return '{\n' + '\n'.join (faces) + '\n}\n'
-
-def ramp_x (x0, x1, y0, y1, z0, z1, top, side):
-	"""a wedge: its top rising from z0 at x0 to z1 at x1, solid down to z0"""
-	n = np.array ((-(z1 - z0), 0, x1 - x0), float)
-	faces = [plane_face ((1, 0, 0), x1, side), plane_face ((0, -1, 0), -y0, side),
-		 plane_face ((0, 1, 0), y1, side), plane_face ((0, 0, -1), -z0, side),
-		 plane_face (n, np.dot (n, (x0, 0, z0)), top)]
-	return '{\n' + '\n'.join (faces) + '\n}\n'
 
 # ---- the level ---------------------------------------------------------------------------------
 
@@ -369,20 +127,11 @@ def entities ():
 	return e
 
 def main ():
-	os.makedirs (LEVELS, exist_ok = True)
-	images = {name: f () for name, f in TEXTURES.items ()}
-	pal = make_palette (list (images.values ()))
-	write_wad (os.path.join (LEVELS, 'textures.wad'), images, pal)
-	write_palette_c (os.path.join (HERE, '..', 'palette.c'), pal)
 	g = cells ()
 	world = solid_brushes (g) + details ()
-	with open (os.path.join (LEVELS, 'base.map'), 'w') as f:
-		f.write ('// base: the BSP engine\'s demo level (engine/tools/make_base.py: don\'t edit)\n')
-		f.write ('{\n"classname" "worldspawn"\n"wad" "textures.wad"\n"message" "piegpu base"\n"_minlight" "20"\n')
-		f.write (''.join (world))
-		f.write ('}\n')
-		f.write (''.join (entities ()))
-	print ('base.map: %d world brushes, %d lights; textures.wad: %d textures' % (len (world), len (LIGHTS), len (images)))
+	write_map (os.path.join (LEVELS, 'base.map'), 'base: the BSP engine\'s demo level',
+		   {'message': 'piegpu base', '_minlight': '20'}, world, entities ())
+	print ('base.map: %d world brushes, %d lights' % (len (world), len (LIGHTS)))
 
 if __name__ == '__main__':
 	main ()

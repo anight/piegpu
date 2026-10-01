@@ -10,10 +10,15 @@
  * those in the view (their boxes against the frustum), their faces facing the
  * eye; each batch's such faces as few draws as their runs in the buffer.
  *
- * The shader (engine/shaders/world.*): the texture times the lightmap, twice
- * (as Quake's overbright: 128 is the texture's own colour). Textures named
- * light* are drawn at their own colour (their faces' lightmaps ignored), sky*
- * and *water ones too for now.
+ * The shaders (engine/shaders): world, the texture times the lightmap, twice
+ * (as Quake's overbright: 128 is the texture's own colour); textures named
+ * light* at their own colour (their faces' lightmaps ignored). Liquids (*NAME)
+ * warp, as Quake's, unlit. The sky (sky*: Quake's 256 x 128, the front layer
+ * on the left, colour 0 see-through, the back layer on the right) is two
+ * layers of clouds drifting, chosen by the direction from the eye: a flat
+ * deck in perspective (above, and mirrored below), hazy towards the horizon
+ * (the back layer's colour, on average); drawn last
+ * (what's in front of it hides it early: the V3D's early Z).
  */
 #ifndef ENGINE_RENDER_H
 #define ENGINE_RENDER_H
@@ -26,7 +31,13 @@
 
 typedef struct
 {
-	int model, texture, page;
+	GLuint id;
+	GLint u_vp, u_offset, u_eye, u_time, u_size, u_haze, a_pos, a_uv, a_luv;
+} render_program_t;
+
+typedef struct
+{
+	int model, texture, page, kind;
 	int first_face, faces;			/* in render_t.order */
 } render_batch_t;
 
@@ -44,9 +55,11 @@ typedef struct
 typedef struct
 {
 	const bsp_t *bsp;
-	GLuint program, buffer;
-	GLint u_vp, u_offset, a_pos, a_uv, a_luv;
-	GLuint *textures;			/* a GL texture a miptex (0: none) */
+	render_program_t programs[3];		/* the world, liquids, the sky */
+	GLuint buffer;
+	GLuint *textures;			/* a GL texture a miptex (0: none; a sky's back layer) */
+	GLuint *fronts;				/* a sky's front layer */
+	float (*hazes)[3];			/* a sky's back layer's colour, on average */
 	GLuint pages[RENDER_MAX_PAGES];
 	int n_pages;
 	render_face_t *faces;			/* by the BSP's face index */
@@ -57,6 +70,8 @@ typedef struct
 	uint8_t *pvs;
 	int pvs_leaf;				/* the leaf pvs is for */
 	unsigned frame;
+	float time;				/* seconds: the liquids' and the sky's (the caller's to set) */
+	float eye[3];				/* the last render_world's */
 	render_stats_t stats;
 } render_t;
 

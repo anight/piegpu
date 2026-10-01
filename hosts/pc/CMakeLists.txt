@@ -56,7 +56,7 @@ target_link_libraries(linktest_host pgl)
 # pgpu is in pgl already); frames paced by pgpu_wait_frame (the PC transport:
 # a PING after each frame)
 include(${ROOT}/demos/demos.cmake)
-foreach(app gears breakout flight antigrav walk toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids media)
+foreach(app gears breakout flight antigrav walk keep isles toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids media)
 	add_executable(${app}_host $<TARGET_OBJECTS:pgpu_hud>)
 	target_include_directories(${app}_host PRIVATE ${PGPU_COMPAT_INCLUDE_DIR} ${ROOT}/libpgpu/hud
 		${CMAKE_BINARY_DIR}/glsl)
@@ -66,5 +66,7 @@ endforeach()
 # media_host plays the file PGPU_MEDIA names (an MP4, an Ogg or an MP3), else the one
 # linked in
 target_compile_definitions(media_host PRIVATE PGPU_MEDIA_ENV=1)
-# walk takes its keys from the terminal as they're pressed
-target_compile_definitions(walk_host PRIVATE WALK_RAW_TERMINAL=1)
+# the BSP engine's demos take their keys from the terminal as they're pressed
+target_compile_definitions(walk_host PRIVATE ENGINE_RAW_TERMINAL=1)
+target_compile_definitions(keep_host PRIVATE ENGINE_RAW_TERMINAL=1)
+target_compile_definitions(isles_host PRIVATE ENGINE_RAW_TERMINAL=1)

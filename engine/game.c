@@ -1,7 +1,8 @@
 /*
  * game.c - see game.h. The movement after Quake's (its constants): a slide
  * along the planes hit (up to 4 a step), on the ground the better of that and
- * the same raised by a step and put down again.
+ * the same raised by a step and put down again; down steps (and slopes) it
+ * keeps to the ground (Quake floats down them), the eye eased either way.
  */
 #include "game.h"
 #include <math.h>
@@ -21,13 +22,29 @@
 #define WALKABLE	0.7f		/* a floor's normal's z at least */
 #define HULL		1		/* the player's */
 #define DOOR_REACH	60.0f		/* a door opens with the player this near */
+#define ITEM_REACH	32.0f		/* an item's picked up this near (across; up and down: the player's height) */
 
 static void vset (float *r, float x, float y, float z)	{ r[0] = x; r[1] = y; r[2] = z; }
 static float vdot (const float *a, const float *b)	{ return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
 
 /* ---- the movers ------------------------------------------------------------------- */
 
-static void add_mover (game_t *g, const bsp_entity_t *e, bool plat)
+/* the entity named name (its targetname); false if none */
+static bool find_target (const bsp_t *b, const char *name, bsp_entity_t *out)
+{
+	const char *cursor = NULL;
+	while (name && bsp_entity_next (b, &cursor, out))
+	{
+		const char *t = bsp_entity_value (out, "targetname");
+		if (t && strcmp (t, name) == 0)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+static void add_mover (game_t *g, const bsp_entity_t *e, int kind)
 {
 	const char *m = bsp_entity_value (e, "model");
 	if (!m || m[0] != '*' || g->n_movers >= GAME_MAX_MOVERS)
@@ -42,13 +59,40 @@ static void add_mover (game_t *g, const bsp_entity_t *e, bool plat)
 	{
 		return;
 	}
-	v->plat = plat;
+	v->kind = kind;
 	const char *s = bsp_entity_value (e, "speed");
-	v->speed = s ? (float) atof (s) : plat ? 150.0f : 100.0f;
+	v->speed = s ? (float) atof (s) : kind == GAME_PLAT ? 150.0f : 100.0f;
 	s = bsp_entity_value (e, "wait");
 	v->wait = s ? (float) atof (s) : 3.0f;
 	const bsp_model_t *bm = &g->bsp->models[v->model];
-	if (plat)			/* drawn at the top; starts at the bottom */
+	if (kind == GAME_TRAIN)		/* round its corners: its mins at each */
+	{
+		bsp_entity_t c;
+		const char *first = bsp_entity_value (e, "target");
+		static char name[64];
+		snprintf (name, sizeof name, "%s", first ? first : "");
+		while (v->corners < GAME_MAX_PATH && find_target (g->bsp, name, &c))
+		{
+			float o[3];
+			bsp_entity_vector (&c, "origin", o);
+			for (int k = 0; k < 3; k++)
+				v->path[v->corners][k] = o[k] - bm->mins[k];
+			s = bsp_entity_value (&c, "wait");
+			v->waits[v->corners++] = s ? (float) atof (s) : 0.0f;
+			s = bsp_entity_value (&c, "target");
+			if (!s || (first && strcmp (s, first) == 0))
+				break;
+			snprintf (name, sizeof name, "%s", s);
+		}
+		if (v->corners < 2)
+		{
+			printf ("game: a func_train with %d path_corners: not moving\n", v->corners);
+		}
+		memcpy (v->pos[0], v->path[0], sizeof v->pos[0]);
+		v->state = 2;
+		v->timer = v->waits[0];
+	}
+	else if (kind == GAME_PLAT)	/* drawn at the top; starts at the bottom */
 	{
 		s = bsp_entity_value (e, "height");
 		float h = s ? (float) atof (s) : bm->maxs[2] - bm->mins[2] - 8;
@@ -81,7 +125,8 @@ static void add_mover (game_t *g, const bsp_entity_t *e, bool plat)
 static bool player_near (const game_t *g, const game_mover_t *v)
 {
 	const bsp_model_t *bm = &g->bsp->models[v->model];
-	float r = v->plat ? -8.0f : DOOR_REACH;		/* (on a lift: over its top, inside its edges) */
+	bool plat = v->kind == GAME_PLAT;
+	float r = plat ? -8.0f : DOOR_REACH;		/* (on a lift: over its top, inside its edges) */
 	for (int k = 0; k < 2; k++)
 	{
 		if (g->origin[k] < bm->mins[k] + v->at[k] - r - 16 || g->origin[k] > bm->maxs[k] + v->at[k] + r + 16)
@@ -90,33 +135,48 @@ static bool player_near (const game_t *g, const game_mover_t *v)
 		}
 	}
 	float bottom = bm->mins[2] + v->at[2], top = bm->maxs[2] + v->at[2];
-	return v->plat ? g->origin[2] - 24 >= top - 2 && g->origin[2] - 24 <= top + 36
+	return plat ? g->origin[2] - 24 >= top - 2 && g->origin[2] - 24 <= top + 36
 		       : g->origin[2] + 32 >= bottom - DOOR_REACH && g->origin[2] - 24 <= top + DOOR_REACH;
 }
 
 static void update_mover (game_t *g, game_mover_t *v, float dt)
 {
-	bool near = player_near (g, v);
-	switch (v->state)
+	if (v->kind == GAME_TRAIN)
 	{
-	case 0:
-		if (near)
+		if (v->corners < 2)
+		{
+			return;
+		}
+		if (v->state == 2 && (v->timer -= dt) <= 0.0f)
+		{
+			v->leg = (v->leg + 1) % v->corners;
 			v->state = 1;
-		break;
-	case 2:
-		if (v->plat && near)
-			v->timer = v->wait;		/* (held up while stood on) */
-		if ((v->timer -= dt) <= 0.0f)
-			v->state = 3;
-		break;
+		}
+	}
+	else
+	{
+		bool near = player_near (g, v);
+		switch (v->state)
+		{
+		case 0:
+			if (near)
+				v->state = 1;
+			break;
+		case 2:
+			if (v->kind == GAME_PLAT && near)
+				v->timer = v->wait;	/* (held up while stood on) */
+			if ((v->timer -= dt) <= 0.0f)
+				v->state = 3;
+			break;
+		}
 	}
 	if (v->state != 1 && v->state != 3)
 	{
 		return;
 	}
 
-	/* towards the end its state goes to */
-	const float *to = v->pos[v->state == 1];
+	/* towards the end its state goes to (a train: its next corner) */
+	const float *to = v->kind == GAME_TRAIN ? v->path[v->leg] : v->pos[v->state == 1];
 	float d[3] = {to[0] - v->at[0], to[1] - v->at[1], to[2] - v->at[2]}, len = sqrtf (vdot (d, d)), step = v->speed * dt;
 	float move[3];
 	bool arrived = len <= step;
@@ -147,7 +207,7 @@ static void update_mover (game_t *g, game_mover_t *v, float dt)
 		{
 			memcpy (v->at, was, sizeof v->at);	/* blocked */
 			collide_move_solid (&g->collide, v->solid, v->at);
-			if (v->state == 3 && !v->plat)
+			if (v->state == 3 && v->kind == GAME_DOOR)
 			{
 				v->state = 1;
 			}
@@ -156,8 +216,66 @@ static void update_mover (game_t *g, game_mover_t *v, float dt)
 	}
 	if (arrived)
 	{
-		v->state = v->state == 1 ? 2 : 0;
-		v->timer = v->wait;
+		v->state = v->kind == GAME_TRAIN || v->state == 1 ? 2 : 0;
+		v->timer = v->kind == GAME_TRAIN ? v->waits[v->leg] : v->wait;
+	}
+}
+
+/* ---- the triggers ----------------------------------------------------------------- */
+
+static void add_trigger (game_t *g, const bsp_entity_t *e, int kind)
+{
+	const char *m = bsp_entity_value (e, "model");
+	bsp_entity_t t;
+	if (!m || m[0] != '*' || g->n_triggers >= GAME_MAX_TRIGGERS || atoi (m + 1) >= g->bsp->n_models)
+	{
+		return;
+	}
+	if (!find_target (g->bsp, bsp_entity_value (e, "target"), &t))
+	{
+		printf ("game: a %s without its target\n", kind == GAME_PUSH ? "trigger_push" : "trigger_teleport");
+		return;
+	}
+	game_trigger_t *tr = &g->triggers[g->n_triggers++];
+	memset (tr, 0, sizeof *tr);
+	tr->kind = kind;
+	const bsp_model_t *bm = &g->bsp->models[atoi (m + 1)];
+	memcpy (tr->mins, bm->mins, sizeof tr->mins);
+	memcpy (tr->maxs, bm->maxs, sizeof tr->maxs);
+	bsp_entity_vector (&t, "origin", tr->target);
+	const char *a = bsp_entity_value (&t, "angle");
+	tr->yaw = a ? (float) atof (a) * 3.14159265f / 180 : 0.0f;
+}
+
+/* the triggers the player's box is in: thrown, teleported */
+static void touch_triggers (game_t *g)
+{
+	for (int i = 0; i < g->n_triggers; i++)
+	{
+		game_trigger_t *t = &g->triggers[i];
+		bool in =    g->origin[0] + 16 > t->mins[0] && g->origin[0] - 16 < t->maxs[0]
+			  && g->origin[1] + 16 > t->mins[1] && g->origin[1] - 16 < t->maxs[1]
+			  && g->origin[2] + 32 > t->mins[2] && g->origin[2] - 24 < t->maxs[2];
+		if (in && !t->inside && t->kind == GAME_PUSH)
+		{
+			/* up to the target's height, there at the top of the arc */
+			float h = t->target[2] - g->origin[2];
+			float time = sqrtf ((h > 8.0f ? h : 8.0f) / (0.5f * GRAVITY));
+			vset (g->velocity, (t->target[0] - g->origin[0]) / time, (t->target[1] - g->origin[1]) / time, time * GRAVITY);
+			g->on_ground = false;
+			g->ground = -1;
+			g->events |= GAME_PUSHED;
+		}
+		else if (in && t->kind == GAME_TELEPORT)
+		{
+			memcpy (g->origin, t->target, sizeof g->origin);
+			g->yaw = t->yaw;
+			vset (g->velocity, cosf (t->yaw) * 300.0f, sinf (t->yaw) * 300.0f, 0.0f);	/* (as Quake's) */
+			g->view_z = g->origin[2] + GAME_EYE;
+			g->events |= GAME_TELEPORTED;
+			in = false;
+		}
+		t->inside = in;
 	}
 }
 
@@ -182,27 +300,67 @@ bool game_init (game_t *g, const bsp_t *b)
 		{
 			continue;
 		}
-		if (strcmp (cls, "info_player_start") == 0 && bsp_entity_vector (&e, "origin", g->origin))
+		if (strcmp (cls, "info_player_start") == 0 && bsp_entity_vector (&e, "origin", g->start))
 		{
 			const char *a = bsp_entity_value (&e, "angle");
-			g->yaw = a ? (float) atof (a) * 3.14159265f / 180 : 0.0f;
+			g->start_yaw = a ? (float) atof (a) * 3.14159265f / 180 : 0.0f;
 			start = true;
+		}
+		else if (strncmp (cls, "item_", 5) == 0 && g->n_items < GAME_MAX_ITEMS
+			 && bsp_entity_vector (&e, "origin", g->items[g->n_items].origin))
+		{
+			snprintf (g->items[g->n_items].classname, sizeof g->items[0].classname, "%s", cls);
+			g->n_items++;
 		}
 		else if (strcmp (cls, "func_door") == 0)
 		{
-			add_mover (g, &e, false);
+			add_mover (g, &e, GAME_DOOR);
 		}
 		else if (strcmp (cls, "func_plat") == 0)
 		{
-			add_mover (g, &e, true);
+			add_mover (g, &e, GAME_PLAT);
+		}
+		else if (strcmp (cls, "func_train") == 0)
+		{
+			add_mover (g, &e, GAME_TRAIN);
+		}
+		else if (strcmp (cls, "trigger_push") == 0)
+		{
+			add_trigger (g, &e, GAME_PUSH);
+		}
+		else if (strcmp (cls, "trigger_teleport") == 0)
+		{
+			add_trigger (g, &e, GAME_TELEPORT);
 		}
 	}
 	if (!start)
 	{
 		printf ("game: the level has no info_player_start\n");
 	}
-	g->view_z = g->origin[2] + GAME_EYE;
+	g->picked = -1;
+	game_respawn (g);
 	return true;
+}
+
+void game_respawn (game_t *g)
+{
+	memcpy (g->origin, g->start, sizeof g->origin);
+	vset (g->velocity, 0, 0, 0);
+	g->yaw = g->start_yaw;
+	g->pitch = 0.0f;
+	g->on_ground = false;
+	g->ground = -1;
+	g->view_z = g->origin[2] + GAME_EYE;
+	g->contents = BSP_CONTENTS_EMPTY;
+}
+
+void game_items_reset (game_t *g)
+{
+	for (int i = 0; i < g->n_items; i++)
+	{
+		g->items[i].taken = false;
+	}
+	g->n_taken = 0;
 }
 
 static void clip_velocity (const float *in, const float *normal, float *out, float overbounce)
@@ -344,6 +502,7 @@ static void categorize (game_t *g)
 
 void game_update (game_t *g, const game_input_t *in, float dt)
 {
+	g->events = 0;
 	for (int i = 0; i < g->n_movers; i++)
 	{
 		update_mover (g, &g->movers[i], dt);
@@ -404,6 +563,7 @@ void game_update (game_t *g, const game_input_t *in, float dt)
 		g->velocity[2] = 0.0f;
 	}
 
+	bool was_on_ground = g->on_ground;
 	if (g->on_ground)
 	{
 		ground_move (g, dt);
@@ -414,13 +574,44 @@ void game_update (game_t *g, const game_input_t *in, float dt)
 	}
 	categorize (g);
 
-	/* the eye: straight to the origin, but eased up a step */
+	/* walked off a step down (or down a slope): put down on it, not falling */
+	if (was_on_ground && !g->on_ground && g->velocity[2] <= 0.0f)
+	{
+		float down[3] = {g->origin[0], g->origin[1], g->origin[2] - STEP};
+		collide_trace_t t = collide_trace (&g->collide, HULL, g->origin, down, -1);
+		if (!t.start_solid && t.fraction < 1.0f && t.normal[2] >= WALKABLE)
+		{
+			memcpy (g->origin, t.end, sizeof g->origin);
+			g->velocity[2] = 0.0f;
+			categorize (g);
+		}
+	}
+
+	touch_triggers (g);
+
+	/* what the feet are in; the items walked into */
+	float feet[3] = {g->origin[0], g->origin[1], g->origin[2] - 24.0f + 1.0f};
+	g->contents = collide_contents (&g->collide, 0, feet);
+	g->picked = -1;
+	for (int i = 0; i < g->n_items; i++)
+	{
+		game_item_t *it = &g->items[i];
+		if (   !it->taken && fabsf (it->origin[0] - g->origin[0]) < ITEM_REACH && fabsf (it->origin[1] - g->origin[1]) < ITEM_REACH
+		    && it->origin[2] > g->origin[2] - 24.0f - 8.0f && it->origin[2] < g->origin[2] + 32.0f + 8.0f)
+		{
+			it->taken = true;
+			g->n_taken++;
+			g->picked = i;
+		}
+	}
+
+	/* the eye: straight to the origin, but eased a step up or down */
 	float target = g->origin[2] + GAME_EYE;
-	if (g->on_ground && target > g->view_z && target - g->view_z <= STEP + 1.0f)
+	if (g->on_ground && fabsf (target - g->view_z) <= STEP + 1.0f)
 	{
 		g->view_z += (target - g->view_z) * (1.0f - expf (-dt * 14.0f));
-		if (target - g->view_z > STEP)
-			g->view_z = target - STEP;
+		if (fabsf (target - g->view_z) > STEP)
+			g->view_z = target - (target > g->view_z ? STEP : -STEP);
 	}
 	else
 	{
@@ -443,6 +634,15 @@ void game_pilot_init (game_pilot_t *p, const float (*points)[3], int n)
 	p->best = 1e9f;
 }
 
+/* no floor (within 40 down) this far ahead along the yaw (and no wall before it) */
+static bool gap_ahead (const game_t *g, float d)
+{
+	float ahead[3] = {g->origin[0] + cosf (g->yaw) * d, g->origin[1] + sinf (g->yaw) * d, g->origin[2]};
+	float below[3] = {ahead[0], ahead[1], ahead[2] - 40.0f};
+	return    collide_trace (&g->collide, HULL, g->origin, ahead, -1).fraction == 1.0f
+	       && collide_trace (&g->collide, HULL, ahead, below, -1).fraction == 1.0f;
+}
+
 void game_pilot (game_pilot_t *p, const game_t *g, game_input_t *in, float dt)
 {
 	memset (in, 0, sizeof *in);
@@ -452,12 +652,25 @@ void game_pilot (game_pilot_t *p, const game_t *g, game_input_t *in, float dt)
 	}
 	const float *w = p->points[p->next];
 	float dx = w[0] - g->origin[0], dy = w[1] - g->origin[1], dist = sqrtf (dx * dx + dy * dy);
-	if (dist < 40.0f && fabsf (w[2] - g->origin[2]) < 64.0f)
+	float dz = w[2] - g->origin[2];
+	if ((dist < 40.0f && fabsf (dz) < 64.0f) || (g->events & (GAME_PUSHED | GAME_TELEPORTED)))
 	{
 		p->next = (p->next + 1) % p->n;
 		p->best = 1e9f;
 		p->since = 0.0f;
 		p->reached++;
+		return;
+	}
+	if (dist < 40.0f)
+	{
+		in->look = -g->pitch * 2.0f;		/* under it or over it: a lift's carrying us */
+		p->since += dt;
+		if (p->since > 10.0f)
+		{
+			p->next = (p->next + 1) % p->n;
+			p->best = 1e9f;
+			p->since = 0.0f;
+		}
 		return;
 	}
 
@@ -469,6 +682,15 @@ void game_pilot (game_pilot_t *p, const game_t *g, game_input_t *in, float dt)
 	in->forward = fabsf (diff) < 0.5f ? 1.0f : 0.2f;
 	in->look = -g->pitch * 2.0f;
 
+	/* a sharp turn at it: slower on the way in */
+	const float *w2 = p->points[(p->next + 1) % p->n];
+	float ex = w2[0] - w[0], ey = w2[1] - w[1], elen = sqrtf (ex * ex + ey * ey);
+	if (dist < 128.0f && elen > 1.0f && (dx * ex + dy * ey) / (dist * elen) < 0.5f)
+	{
+		float slow = 0.35f + 0.65f * dist / 128.0f;
+		in->forward = in->forward < slow ? in->forward : slow;
+	}
+
 	/* stuck: a jump; given up after 5 s */
 	if (dist < p->best - 8.0f)
 	{
@@ -477,10 +699,29 @@ void game_pilot (game_pilot_t *p, const game_t *g, game_input_t *in, float dt)
 	}
 	p->since += dt;
 	in->jump = p->since > 1.5f && p->since < 1.7f;
-	if (p->since > 5.0f)
+
+	/* the floor ends ahead, the waypoint no lower: over the gap if running
+	   and there's floor there near enough (a jump at the edge), else a wait
+	   at the edge (a platform to come, or to take us there) */
+	float speed = sqrtf (g->velocity[0] * g->velocity[0] + g->velocity[1] * g->velocity[1]);
+	if (g->on_ground && dz > -16.0f)
 	{
-		p->next = (p->next + 1) % p->n;
-		p->best = 1e9f;
-		p->since = 0.0f;
+		const float ahead_far = 24.0f + speed / 4.0f;	/* (friction stops us from speed within speed / 4) */
+		if (gap_ahead (g, ahead_far))
+		{
+			float under[3] = {w[0], w[1], w[2] - 64.0f};
+			bool floor_there = collide_trace (&g->collide, HULL, w, under, -1).fraction < 1.0f;
+			if (floor_there && dist < 260.0f && speed > 200.0f)
+			{
+				in->jump = gap_ahead (g, 20.0f);
+			}
+			else
+			{
+				in->forward = 0.0f;
+				in->jump = false;
+				p->best = dist;
+				p->since = 0.0f;
+			}
+		}
 	}
 }

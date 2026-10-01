@@ -6,7 +6,7 @@
 #
 # ERICW (default ~/tools/ericw-tools): the unpacked Linux release
 # (github.com/ericwa/ericw-tools, 2.0.0-alpha11 here). The textures come from
-# the .map's WAD (engine/levels/textures.wad, made by make_base.py).
+# the .map's WAD (engine/levels/textures.wad, made by levelkit.py).
 #
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -18,5 +18,5 @@ cd "$LEVELS"
 "$ERICW/qbsp" -nopercent -wadpath "$LEVELS" "$NAME.map" "$NAME.bsp"
 "$ERICW/vis" -nopercent "$NAME.bsp"
 "$ERICW/light" -nopercent -extra "$NAME.bsp"
-rm -f "$NAME.prt" "$NAME.pts" "$NAME.lin" "$NAME.log" "$NAME-"*.log
+rm -f "$NAME.prt" "$NAME.pts" "$NAME.lin" "$NAME.log" "$NAME-"*.log "$NAME".*.json
 ls -l "$NAME.bsp"

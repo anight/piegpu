@@ -5,11 +5,8 @@
  * through: Quake's movement against the level's clipping hulls, doors that
  * open, a lift (engine/game.c).
  *
- * The keys, on the console (a PC's terminal is switched to take them at once:
- * WALK_RAW_TERMINAL): w s forward and back, a d sideways, the arrows or q e
- * to turn (up and down: walk), space to jump. A terminal sends no key-up, only
- * a key's repeats: a key holds for HOLD_S after each. Without keys for
- * PILOT_S the autopilot walks the level (engine/levels/base_path.h).
+ * The keys (engine/keys.h): w s a d, the arrows or q e, space. Without keys
+ * for PILOT_S the autopilot walks the level (engine/levels/base_path.h).
  */
 #include <math.h>
 #include <stdio.h>
@@ -25,118 +22,21 @@
 #include "bsp.h"
 #include "render.h"
 #include "game.h"
+#include "keys.h"
 #include "levels/base_path.h"
-#ifdef WALK_RAW_TERMINAL
-#include <signal.h>
-#include <termios.h>
-#include <unistd.h>
-#endif
 
 extern const uint8_t level_file[], level_file_end[];
 
 #define FOVY		62.0f
-#define HOLD_S		0.3f		/* a key's hold after it's seen */
 #define PILOT_S		10.0f		/* without keys: the autopilot */
-#define TURN		2.2f		/* radians a second */
-
-#ifdef WALK_RAW_TERMINAL
-/* the terminal: keys as they're pressed, not echoed; as it was at the end */
-static struct termios saved;
-static struct sigaction previous[3];
-static const int signals[3] = {SIGINT, SIGTERM, SIGHUP};
-
-static void restore (void)		{ tcsetattr (0, TCSANOW, &saved); }
-
-static void on_signal (int sig)
-{
-	restore ();
-	for (int i = 0; i < 3; i++)
-	{
-		if (signals[i] == sig && previous[i].sa_handler != SIG_DFL && previous[i].sa_handler != SIG_IGN)
-		{
-			previous[i].sa_handler (sig);	/* (the transport's: the session's end) */
-		}
-	}
-	_exit (128 + sig);
-}
-
-static void raw_terminal (void)
-{
-	if (!isatty (0) || tcgetattr (0, &saved) != 0)
-	{
-		return;
-	}
-	struct termios t = saved;
-	t.c_lflag &= ~(ICANON | ECHO);
-	t.c_cc[VMIN] = 0;
-	t.c_cc[VTIME] = 0;
-	tcsetattr (0, TCSANOW, &t);
-	atexit (restore);
-	struct sigaction sa;
-	memset (&sa, 0, sizeof sa);
-	sa.sa_handler = on_signal;
-	for (int i = 0; i < 3; i++)
-	{
-		sigaction (signals[i], &sa, &previous[i]);
-	}
-}
-#endif
-
-/* the keys held: each for HOLD_S after it was last seen */
-enum { K_FORWARD, K_BACK, K_LEFT, K_RIGHT, K_TURN_LEFT, K_TURN_RIGHT, K_JUMP, KEYS };
-
-static bool read_keys (float held[KEYS])
-{
-	static int escape;			/* ESC [ x: the arrows */
-	bool any = false;
-	int c;
-	while ((c = getchar_timeout_us (0)) != PICO_ERROR_TIMEOUT)
-	{
-		int k = -1;
-		if (escape == 1)
-		{
-			escape = c == '[' ? 2 : 0;
-			continue;
-		}
-		if (escape == 2)
-		{
-			k = c == 'A' ? K_FORWARD : c == 'B' ? K_BACK : c == 'C' ? K_TURN_RIGHT : c == 'D' ? K_TURN_LEFT : -1;
-			escape = 0;
-		}
-		else if (c == 27)
-		{
-			escape = 1;
-			continue;
-		}
-		else
-		{
-			switch (c)
-			{
-			case 'w': case 'W': k = K_FORWARD; break;
-			case 's': case 'S': k = K_BACK; break;
-			case 'a': case 'A': k = K_LEFT; break;
-			case 'd': case 'D': k = K_RIGHT; break;
-			case 'q': case 'Q': k = K_TURN_LEFT; break;
-			case 'e': case 'E': k = K_TURN_RIGHT; break;
-			case ' ': k = K_JUMP; break;
-			}
-		}
-		if (k >= 0)
-		{
-			held[k] = HOLD_S;
-			any = true;
-		}
-	}
-	return any;
-}
 
 int main (void)
 {
 	stdio_init_all ();
 	pgpu_init ();
-#ifdef WALK_RAW_TERMINAL
-	raw_terminal ();
-#endif
+	keys_t keys;
+	keys_init (&keys);
+	keys.idle = PILOT_S;
 	printf ("\nwalk: waiting for the RPi (READY)...\n");
 	while (!pgpu_wait_ready (1000))
 	{
@@ -172,7 +72,6 @@ int main (void)
 
 	game_pilot_t pilot;
 	game_pilot_init (&pilot, base_path, BASE_PATH);
-	float held[KEYS] = {0}, idle = PILOT_S;
 	GLint vp[4] = {0};
 	float projection[16];
 	absolute_time_t last = get_absolute_time ();
@@ -190,27 +89,15 @@ int main (void)
 		float dt = absolute_time_diff_us (last, now) / 1e6f;
 		dt = dt > 0.05f ? 0.05f : dt;
 		last = now;
+		r.time += dt;
 
 		/* the input: the keys, or the autopilot without them */
 		game_input_t in;
-		idle = read_keys (held) ? 0.0f : idle + dt;
-		bool pilot_on = idle >= PILOT_S;
+		keys_input (&keys, &g, &in, dt);
+		bool pilot_on = keys.idle >= PILOT_S;
 		if (pilot_on)
 		{
 			game_pilot (&pilot, &g, &in, dt);
-		}
-		else
-		{
-			memset (&in, 0, sizeof in);
-			in.forward = (held[K_FORWARD] > 0) - (held[K_BACK] > 0);
-			in.side = (held[K_RIGHT] > 0) - (held[K_LEFT] > 0);
-			in.turn = TURN * ((held[K_TURN_LEFT] > 0) - (held[K_TURN_RIGHT] > 0));
-			in.look = -g.pitch * 2.0f;
-			in.jump = held[K_JUMP] > 0;
-		}
-		for (int k = 0; k < KEYS; k++)
-		{
-			held[k] = held[k] > dt ? held[k] - dt : 0.0f;
 		}
 		game_update (&g, &in, dt);
 
