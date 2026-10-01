@@ -399,6 +399,7 @@ Every host builds them (`demos/demos.cmake`):
 | Demo | What |
 |---|---|
 | `gears`, `breakout`, `flight` | the classic gears; a 3D Breakout that plays itself; a biplane over a cloud deck |
+| `aquarium` | a tank of tropical fish: five kinds that swim by a wave down their bodies, school, come for food and flee a knock on the glass; caustics on the sand, shafts of light, swaying plants, bubbles, the pump's hum |
 | `tumble` | 2D physics: balls and boxes in a box that the stick tilts (rigid bodies, friction, stacking), each meeting heard; a finger on the panel adds a ball |
 | `antigrav` | anti-gravity racing, after WipEout: six craft, a circuit; heard from the craft followed (engines whose note is their speed, the wind, the crowd, pads, the countdown) |
 | `walk` | the BSP engine (`engine/`): a Quake-format level walked through, doors that open, a lift |

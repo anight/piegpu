@@ -12,6 +12,11 @@
 #   tumble              2D physics: balls and boxes in a box the stick tilts,
 #                       each meeting heard (tumble_sounds.c, made by
 #                       tools/make_tumble_sounds.py)
+#   aquarium            a tank of tropical fish: they swim by a wave down their
+#                       bodies, school, come for food and flee a knock on the
+#                       glass; caustics, shafts of light, bubbles (its caustics
+#                       and sounds: aquarium_assets.c, made by
+#                       tools/make_aquarium_assets.py)
 #   walk                the BSP engine (engine/): a Quake-format level walked
 #                       through; PGPU_LEVEL (default engine/levels/base.bsp).
 #                       It and the next two with sound effects, mixed by the
@@ -38,7 +43,7 @@ set(PGPU_DEMO_SHADERS ${PGPU_DEMOS}/shaders)
 set(PGPU_LEVEL_walk base)			# the BSP engine's demos' levels (engine/levels)
 set(PGPU_LEVEL_keep keep)
 set(PGPU_LEVEL_isles isles)
-set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav tumble walk keep isles touch
+set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav tumble aquarium walk keep isles touch
 	toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids media)
 
 if(NOT COMMAND pgpu_demo)
@@ -99,6 +104,15 @@ function(pgpu_demo target app)
 		program(scenery -a a_pos:float:3 -a a_uv:float:2 -a a_shade:float:1 -v triangles)
 		program(craft -a a_pos:float:3 -a a_normal:float:3 -a a_uv:float:2 -v triangles)
 		program(nightsky -a a_pos:float:2 -a a_dir:float:3 -v triangles)
+
+	elseif(app STREQUAL "aquarium")	# a tank of tropical fish
+		target_sources(${target} PRIVATE ${PGPU_DEMOS}/aquarium.c ${PGPU_DEMOS}/aquarium_assets.c)
+		program(aqua -a a_pos:float:3 -a a_normal:float:3 -a a_uv:float:2 -a a_sway:float:1 -v triangles)
+		pgpu_glsl_program(TARGET ${target} NAME fish DIR ${PGPU_DEMO_SHADERS} FS ${PGPU_DEMO_SHADERS}/aqua.frag
+			ARGS -a a_pos:float:3 -a a_normal:float:3 -a a_uv:float:2 -v triangles)
+		program(bubbles -a a_seed:float:4 -v points)
+		program(shafts -a a_pos:float:3 -a a_uv:float:2 -v triangles)
+		pad()
 
 	elseif(app STREQUAL "tumble")		# 2D physics: balls and boxes in a box the stick tilts
 		target_sources(${target} PRIVATE ${PGPU_DEMOS}/tumble.c ${PGPU_DEMOS}/tumble_sounds.c)
