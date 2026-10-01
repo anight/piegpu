@@ -16,6 +16,9 @@
 # waits for rpiboot. Apps must use CDevLink (devtools/devlink.h), which provides the
 # log over USB serial, the reboot magic and a watchdog.
 #
+# BOARD=zerow boots the Zero W's build of the gpu app (default: zero, the Zero's;
+# either starts on either board).
+#
 # CMDLINE sets the kernel command line (cmdline.txt), e.g. CMDLINE="output=panel"
 # for the gpu app (README "Kernel command line": output=, panel=, hdmi_pixels=).
 #
@@ -138,8 +141,8 @@ SECS=${2:-10}
 
 log "Building $APP"
 if [ "$APP" = "$(cd "$HERE/../gpu" && pwd)" ]; then
-	"$HERE/build-gpu.sh" zero >/dev/null	# (CMake: build/zero)
-	KERNEL=$HERE/../build/zero/kernel.img
+	"$HERE/build-gpu.sh" "${BOARD:-zero}" >/dev/null	# (CMake: build/zero; BOARD=zerow: the Zero W's)
+	KERNEL=$HERE/../build/${BOARD:-zero}/kernel.img
 else
 	# another app: its Makefile, on a Circle configured in place (circle:
 	# ./configure -r 1 -p <arm-none-eabi- toolchain>; ./makeall)

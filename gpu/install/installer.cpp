@@ -562,3 +562,12 @@ boolean CInstaller::WriteFile (const char *pName, const void *pData, unsigned nB
 	LOGNOTE ("Wrote %s: %u bytes", pName, nBytes);
 	return TRUE;
 }
+
+void CInstaller::Unmount (void)
+{
+	if (m_bMounted)
+	{
+		f_mount (nullptr, DRIVE, 0);
+		m_bMounted = FALSE;
+	}
+}

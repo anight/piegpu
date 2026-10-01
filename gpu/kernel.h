@@ -71,7 +71,7 @@ private:
 };
 #endif
 
-class CKernel
+class CKernel : public CSettingsHost
 {
 public:
 	CKernel (void);
@@ -85,7 +85,24 @@ private:
 	void HostInput (void);
 	boolean DetectPanel (void);
 	boolean LoadSettings (void);
-	static void SaveSettings (void *pParam);
+
+	// Settings' (CSettingsHost)
+	void SaveSettings (void);
+	boolean HasBluetooth (void) const;
+	const char *GetBluetoothNote (void) const;
+	boolean GetBluetooth (void) const	{ return m_bBluetooth; }
+	void SetBluetooth (boolean bOn)		{ m_bBluetooth = bOn; }
+	void LoadKernelOptions (void);
+	const char *GetKernelOption (const char *pKey);
+	void SetKernelOption (const char *pKey, const char *pValue);
+	boolean SaveKernelOptions (void);
+	void GetClockRange (boolean bV3D, unsigned *pMinMHz, unsigned *pMaxMHz);
+	const char *TestSound (void);
+	void Restart (void);
+
+	void SetV3DClock (void);
+	static unsigned GetClock (u32 nClockId, u32 nTag);	// MHz
+
 	boolean LongPress (const u32 *pTouch);
 	void OpenSettings (void);
 	void CloseSettings (void);
@@ -115,6 +132,9 @@ private:
 	CActLED			m_ActLED;
 	CKernelOptions		m_Options;
 	CSettings		m_Settings;		// settings.txt (the user's)
+	CSettings		m_CmdLine;		// cmdline.txt as the card has it (Settings: Kernel)
+	boolean			m_bCmdLineRead;		// (else: what this start had)
+	boolean			m_bBluetooth;		// bluetooth= (for speakers, to come)
 	CDeviceNameService	m_DeviceNameService;
 	CNullDevice		m_Null;		// no UART: GPIO14/15 untouched
 	CExceptionHandler	m_ExceptionHandler;
@@ -166,6 +186,10 @@ private:
 	boolean			m_bPressing;		// the long press: held since, where
 	unsigned		m_nPressStart;
 	int			m_nPressX, m_nPressY;
+	unsigned		m_nV3DMin, m_nV3DMax;	// the V3D's clock as the firmware allows it, MHz
+	unsigned		m_nTestTouchEnd;	// the TOUCH host line's finger: down till then (0: let go)
+	boolean			m_bTestTouch, m_bTestTouchChanged;
+	unsigned		m_nTestTouchX, m_nTestTouchY;
 #ifdef ARM_ALLOW_MULTI_CORE
 	CCores			m_Cores;		// core 1: the audio stream's decoder
 #endif

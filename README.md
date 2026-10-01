@@ -23,7 +23,7 @@ A Linux PC, or a page in Chrome, can be the host too, over the RPi's USB port.
 A web page puts piegpu on the RPi's SD card (in the PC's card reader, or over
 that port), and the RPi can serve as a monitor for a Linux desktop.
 
-**Supported for now: the Raspberry Pi Zero / Zero W and the Zero 2 W.** More
+**Supported for now: the Raspberry Pi Zero, the Zero W and the Zero 2 W.** More
 RPi boards are to come; "RPi" below means the board piegpu runs on, and a
 model is named where only that one was verified.
 
@@ -71,10 +71,10 @@ Circle Step51.1 with piegpu's changes as commits (the USB gadget's CDC and
 EP0, FatFs' `f_mkfs`, `MEM_PERSISTENT_SIZE`, vcos in 64 bit, the VideoCore's
 dry-spell flags in VCHIQ sound, and a CMake build). With CMake one Circle tree
 serves every board: each board has a build directory (`build/zero`,
-`build/zero2`) with its toolchain and Circle's options, and the gpu app
-(`gpu/CMakeLists.txt`) builds on it. `build-gpu.sh` fetches the submodule
-and Circle's boot files if they aren't there, configures a board's directory
-the first time (delete it to configure again), and builds.
+`build/zerow`, `build/zero2`) with its toolchain and Circle's options, and
+the gpu app (`gpu/CMakeLists.txt`) builds on it. `build-gpu.sh` fetches the
+submodule and Circle's boot files if they aren't there, configures a board's
+directory the first time (and again when its options changed), and builds.
 
 Toolchains: Arm GNU 15.2 in `~/toolchains` (`arm-none-eabi` and
 `aarch64-none-elf`).
@@ -89,10 +89,18 @@ git submodule update --init third_party/circle
 devtools/build-gpu.sh all
 ```
 
-This gives `build/zero/kernel.img` (the Zero) and `build/zero2/kernel8.img`
-(the Zero 2 W). Verified: the same kernels as the earlier Makefile build but
-for the build time's digits. `web/installer/make-firmware.sh` puts both
-builds on the installer page, which picks the one for the board.
+This gives `build/zero/kernel.img` (the Zero), `build/zerow/kernel.img` (the
+Zero W) and `build/zero2/kernel8.img` (the Zero 2 W).
+`web/installer/make-firmware.sh` puts the builds on the installer page, which
+picks the one for the board.
+
+The Zero's and the Zero W's builds differ by one option, `PGPU_WIRELESS`: the
+Zero has no wireless chip, so its kernel is built without the Bluetooth code
+(for speakers, to come: for now the Bluetooth switch in Settings); the Zero
+W's and the Zero 2 W's are built with it. A build's line in the log says
+which it is (`fwconfig=RASPPI=1,AArch32,wireless,...`). Either 32-bit kernel
+starts on either board: a Zero W with the Zero's kernel has no Bluetooth
+(Settings says so, and the installer page offers the board's own).
 
 **Versions:** `major.minor.patch.build`. `VERSION` holds `major.minor.patch`
 (set by hand); every firmware build takes the next build number of the
@@ -214,16 +222,33 @@ there. Without the SDO wire it can't tell: set `panel=yes` (see below).
   SPI with its own chip select, and is read right after each frame (T_IRQ
   isn't used). A touch is a pressure reading whose X and Y samples agree,
   twice running; `touchcal=` maps the readings to the panel's pixels. The
+  controller's samples are noisy (2 pixels rms under a held finger, whatever
+  its SPI clock), so each reading takes eight of X and of Y and keeps the
+  middle four, and the position is smoothed over the readings and reported
+  only once it has moved 1.25 pixels: a held finger gives a still position. The
   host gets it as a TOUCH reply (`pgpu_get_touch`; the `touch` demo is a
   drawing board with a calibration).
 
 ### Settings on the panel
 
 A long press on the panel (2 s, anywhere, any time) opens **Settings** (LVGL,
-`gpu/ui`): brightness, volume, and the touch's calibration and a test. While
-it's open the panel is its: a host on I2S is told to wait (READY low) and
-goes on after; a PC over USB keeps running, its frames not shown. Done closes
-it and writes what changed to `settings.txt`.
+`gpu/ui`):
+
+- **Display:** the brightness; the touch's calibration and a test.
+- **Audio:** the volume, mute (the volume greyed), a test sound (a note on the left, one on the
+  right, one on both); Bluetooth on or off (for speakers, to come; greyed on
+  a Zero, which has none).
+- **Kernel:** the options of the kernel command line below, each a list to
+  choose from; the clocks' lists are the rates the firmware has for the board,
+  in MHz. They take effect at the next start: leaving the page with one
+  changed writes `cmdline.txt` (the options it doesn't know stay) and asks
+  whether to restart now. A choice that would take Settings itself away at
+  the next start (the touch screen off, no panel, the screen always on HDMI)
+  asks first.
+
+While it's open the panel is its: a host on I2S is told to wait (READY low)
+and goes on after; a PC over USB keeps running, its frames not shown. Done
+closes it and writes what changed of the first two pages to `settings.txt`.
 
 ### RPi ↔ HDMI, and the PC
 
@@ -246,7 +271,7 @@ it and writes what changed to `settings.txt`.
   a PC with `rpiboot` (Raspberry Pi's usbboot lists them). Both supported
   boards do, from the installer page (below) or `rpiboot`:
   - `devtools/run.sh gpu` builds, boots and logs, with the Zero's 32-bit
-    build (`build/zero`). Other apps (`experiments/`) keep their Makefiles,
+    build (`build/zero`; `BOARD=zerow`: the Zero W's). Other apps (`experiments/`) keep their Makefiles,
     which need a Circle configured in place (`./configure`, `./makeall` in a
     copy of it).
   - A Zero 2 W boots its 64-bit build the same way: `rpiboot -d` on a folder
@@ -268,8 +293,11 @@ it and writes what changed to `settings.txt`.
 | `panel=auto` | the default: a panel if one answers on SDO (MISO) at boot |
 | `panel=yes`, `panel=none` | a panel is there (SDO not wired) or none is; without a panel and a monitor the screen stays on HDMI |
 | `hdmi_pixels=N` | cap the screen on HDMI to N pixels (default: the monitor's native resolution, up to 1920x1200) |
-| `cpu=max`, `cpu=low` | the ARM at its maximum clock (the default; the Zero 2 W: 1000 MHz, throttled by the firmware at its own temperature limit) or at the firmware's starting clock (600 MHz) |
+| `cpu=max`, `cpu=low` | the ARM at its maximum clock (the default: 1000 MHz on both boards, throttled by the firmware at its own temperature limit) or at its lowest (the Zero: 700 MHz, the Zero 2 W: 600 MHz). The rates between aren't offered: asked for 800 or 850 MHz, a Zero's firmware gave 900 |
+| `v3d=N` | the V3D's clock, MHz, within the firmware's range (the Zero: 250-300; the default: its maximum). It holds with `cpu=low` only: with the ARM at its maximum the firmware keeps the V3D at its maximum too (measured on a Zero) |
 | `volume=N` | the sound's volume on HDMI, percent (default: 10) |
+| `mute=on`, `mute=off` | the sound muted, whatever the volume (default: off) |
+| `bluetooth=on`, `bluetooth=off` | Bluetooth (for speakers, to come; kept by Settings, not used yet) |
 | `brightness=N` | the panel's backlight, percent (default: 100; its LED pin on GPIO12) |
 | `touch=auto`, `touch=off` | the panel's touch screen: used if its controller answers (the default), or not |
 | `touchcal=x0,x1,y0,y1,swap` | the touch's calibration: the readings at the panel's left and right edges, top and bottom; swap 1: its x from the controller's Y (Settings finds it) |
@@ -277,11 +305,13 @@ it and writes what changed to `settings.txt`.
 
 With `devtools/run.sh`, pass these as `CMDLINE="output=panel" devtools/run.sh gpu`.
 
-**The user's settings** (`volume=`, `brightness=`, `touchcal=`) belong in
-`settings.txt` next to `cmdline.txt`: a `key=value` a line, `#` for comments.
-The RPi reads it at boot and a key there wins over `cmdline.txt`'s. The
-installer page writes `cmdline.txt` and never `settings.txt`, so an upgrade
-keeps them; Settings on the panel writes it.
+**The user's settings** (`volume=`, `mute=`, `brightness=`, `touchcal=`,
+`bluetooth=`) belong in `settings.txt` next to `cmdline.txt`: a `key=value` a
+line, `#` for comments. The RPi reads it at boot and a key there wins over
+`cmdline.txt`'s. The installer page writes `cmdline.txt` (keeping the options
+it has no control for) and never `settings.txt`, so an upgrade keeps them;
+Settings on the panel writes both: `settings.txt` from its Display and Audio
+pages, `cmdline.txt` from its Kernel page.
 
 ## Host boards (`hosts/pico`, `hosts/esp32p4`)
 

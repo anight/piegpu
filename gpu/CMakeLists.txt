@@ -1,7 +1,8 @@
 #
 # The gpu app, the RPi's firmware, built with CMake on Circle's CMake build
 # (third_party/circle/CMakeLists.txt, the submodule): a build directory a board, e.g.
-# build/zero (the Zero: kernel.img) and build/zero2 (the Zero 2 W:
+# build/zero (the Zero: kernel.img), build/zerow (the Zero W: kernel.img
+# with the wireless code, PGPU_WIRELESS) and build/zero2 (the Zero 2 W:
 # kernel8.img). devtools/build-gpu.sh configures and builds them:
 #
 #   cmake -S gpu -B build/zero2 -G Ninja -DCMAKE_TOOLCHAIN_FILE=third_party/circle/cmake/toolchain.cmake \

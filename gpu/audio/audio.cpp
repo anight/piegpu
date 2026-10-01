@@ -11,6 +11,7 @@
 #include <circle/synchronize.h>
 #include <circle/util.h>
 #include <assert.h>
+#include <math.h>
 
 LOGMODULE ("audio");
 
@@ -30,6 +31,7 @@ CAudio::CAudio (CVCHIQDevice *pVCHIQ, CVideo *pVideo)
 :	m_pVCHIQ (pVCHIQ),
 	m_pVideo (pVideo),
 	m_nDefaultVolume (10),
+	m_bMute (FALSE),
 	m_bOwnCore (FALSE),
 	m_bOpen (FALSE),
 	m_nVideoStream (0),
@@ -87,10 +89,51 @@ void CAudio::SetVolume (unsigned nPercent)
 {
 	SetDefaultVolume (nPercent);
 	m_nVolume = m_nDefaultVolume;
-	if (m_pOut)				// (a stream's output)
+	SetOutputVolume ();
+}
+
+void CAudio::SetMute (boolean bMute)
+{
+	m_bMute = bMute;
+	SetOutputVolume ();
+}
+
+boolean CAudio::PlayTest (void)
+{
+	static const unsigned Rate = 48000, NoteFrames = Rate * 3 / 10, GapFrames = Rate / 10, FadeFrames = Rate / 100;
+	static const float Hz[3] = {523.25f, 659.25f, 783.99f};		// C5, E5, G5
+	if (m_bOpen)
 	{
-		SetOutputVolume ();
+		return FALSE;
 	}
+	CAudioOut *pOut = GetOutput (Rate);
+	if (!pOut || (!pOut->IsActive () && !pOut->Start ()))
+	{
+		return FALSE;
+	}
+	pOut->Flush ();
+	pOut->SetPaused (FALSE);
+	m_nVolume = m_nDefaultVolume;
+	SetOutputVolume ();
+
+	unsigned nFrames = 3 * (NoteFrames + GapFrames);
+	s16 *pFrames = new s16[2 * nFrames];
+	memset (pFrames, 0, 2 * nFrames * sizeof (s16));
+	for (unsigned nNote = 0; nNote < 3; nNote++)			// left, right, both
+	{
+		s16 *p = pFrames + 2 * nNote * (NoteFrames + GapFrames);
+		for (unsigned i = 0; i < NoteFrames; i++)
+		{
+			unsigned nEdge = i < NoteFrames - 1 - i ? i : NoteFrames - 1 - i;
+			float fGain = nEdge < FadeFrames ? (float) nEdge / FadeFrames : 1.0f;	// (no clicks)
+			s16 nValue = (s16) (16000.0f * fGain * sinf (6.2831853f * Hz[nNote] * i / Rate));
+			p[2 * i] = nNote != 1 ? nValue : 0;
+			p[2 * i + 1] = nNote != 0 ? nValue : 0;
+		}
+	}
+	pOut->Write (pFrames, nFrames);
+	delete [] pFrames;
+	return TRUE;
 }
 
 u32 CAudio::Open (u32 nCodec, unsigned nVideoStream, const u8 *pConfig, unsigned nConfigBytes)
@@ -464,7 +507,11 @@ int CAudio::Decode (const u8 *pUnit, unsigned nBytes, s16 *pFrames)
 // so a change would be heard that much later
 void CAudio::SetOutputVolume (void)
 {
-	m_pOut->SetVolume (m_nVolume * 65536 / 100);
+	CAudioOut *pOut = m_pOut ? m_pOut : m_pLastOut;	// (no stream: the test sound's)
+	if (pOut)
+	{
+		pOut->SetVolume (m_bMute ? 0 : m_nVolume * 65536 / 100);
+	}
 }
 
 const char *CAudio::DecoderError (void)

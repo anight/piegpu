@@ -1,10 +1,11 @@
 #!/bin/bash
 #
 # Puts the files the installer page serves into web/installer/firmware/, a
-# set per board (the ones piegpu supports for now: the Zero / Zero W and the
-# Zero 2 W): the Raspberry Pi firmware (Circle's boot/: bootcode.bin,
+# set per board (the ones piegpu supports for now: the Zero, the Zero W and
+# the Zero 2 W): the Raspberry Pi firmware (Circle's boot/: bootcode.bin,
 # start.elf, fixup.dat) and the gpu app built for it (devtools/build-gpu.sh:
-# firmware/zero/kernel.img, firmware/zero2/kernel8.img), with a manifest the
+# firmware/zero/kernel.img, firmware/zerow/kernel.img, the one with the
+# wireless code, firmware/zero2/kernel8.img), with a manifest the
 # page reads. config.txt and
 # cmdline.txt come from the page's settings. And the demos the page runs (Test
 # OpenGL, Test Video, Test Audio: hosts/web, into web/installer/demos/), if
@@ -22,12 +23,13 @@ BOOT=$ROOT/third_party/circle/boot
 JOBS=$(( $(nproc) > 1 ? $(nproc) - 1 : 1 ))	# a core left free
 
 rm -rf "$OUT"
-# one build number for both boards' kernels: one version (gpu/Makefile)
+# one build number for all the boards' kernels: one version (gpu/Makefile)
 export PGPU_BUILD=${PGPU_BUILD:-$("$ROOT/devtools/next-build.sh")}
-BOARDS="zero zero2"
-"$ROOT/devtools/build-gpu.sh" all >/dev/null	# (build/zero, build/zero2)
-mkdir -p "$OUT/zero" "$OUT/zero2"
+BOARDS="zero zerow zero2"
+"$ROOT/devtools/build-gpu.sh" all >/dev/null	# (build/zero, build/zerow, build/zero2)
+mkdir -p "$OUT/zero" "$OUT/zerow" "$OUT/zero2"
 cp "$BOOT/bootcode.bin" "$BOOT/start.elf" "$BOOT/fixup.dat" "$ROOT/build/zero/kernel.img" "$OUT/zero/"
+cp "$BOOT/bootcode.bin" "$BOOT/start.elf" "$BOOT/fixup.dat" "$ROOT/build/zerow/kernel.img" "$OUT/zerow/"
 cp "$BOOT/bootcode.bin" "$BOOT/start.elf" "$BOOT/fixup.dat" "$ROOT/build/zero2/kernel8.img" "$OUT/zero2/"
 cp "$BOOT/LICENCE.broadcom" "$OUT/"	# (the Raspberry Pi firmware's terms: its notice goes along)
 
@@ -35,7 +37,7 @@ cp "$BOOT/LICENCE.broadcom" "$OUT/"	# (the Raspberry Pi firmware's terms: its no
 python3 - "$OUT" "$(git -C "$ROOT" describe --always --dirty)" $BOARDS <<'PY'
 import json, os, sys, time, zlib
 out, version, boards = sys.argv[1], sys.argv[2], sys.argv[3:]
-kernels = {'zero': 'kernel.img', 'zero2': 'kernel8.img'}
+kernels = {'zero': 'kernel.img', 'zerow': 'kernel.img', 'zero2': 'kernel8.img'}
 manifest = {'version': version, 'built': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'boards': {}}
 
 # a kernel's build line (gpu/build_info.h: between \x01PGPU-BUILD\x02 and

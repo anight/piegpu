@@ -24,6 +24,8 @@
 
 LOGMODULE ("gpu");
 
+#define CLOCK_ID_V3D		5		// (Circle's list hasn't it)
+
 // while a V3D job runs: VCHIQ's tasks (the video decoder's messages) run too;
 // a few more milliseconds without them at the end of a frame (a frame's
 // conversion into its texture, or a test's 4 ms wait) stalled the decoder for
@@ -34,7 +36,9 @@ static void V3DWait (void)
 }
 
 CKernel::CKernel (void)
-:	m_Timer (&m_Interrupt),
+:	m_bCmdLineRead (FALSE),
+	m_bBluetooth (FALSE),
+	m_Timer (&m_Interrupt),
 	// the firmware starts the ARM at its lowest clock (the Zero 2 W: 600 of
 	// 1000 MHz). The temperature is the firmware's to watch, at its own limit
 	// (it throttles, and the throttle flags say so): CCPUThrottle's Update ()
@@ -71,6 +75,13 @@ CKernel::CKernel (void)
 	m_nPressStart (0),
 	m_nPressX (0),
 	m_nPressY (0),
+	m_nV3DMin (0),
+	m_nV3DMax (0),
+	m_nTestTouchEnd (0),
+	m_bTestTouch (FALSE),
+	m_bTestTouchChanged (FALSE),
+	m_nTestTouchX (0),
+	m_nTestTouchY (0),
 #ifdef ARM_ALLOW_MULTI_CORE
 	m_Cores (&m_Audio),
 #endif
@@ -147,29 +158,184 @@ boolean CKernel::LoadSettings (void)
 	delete [] pText;
 
 	m_Audio.SetDefaultVolume (atoi (Setting ("volume", "10")));	// percent
+	m_Audio.SetMute (strcmp (Setting ("mute", "off"), "on") == 0);
+	m_bBluetooth = strcmp (Setting ("bluetooth", "off"), "on") == 0;
 	return TRUE;
 }
 
 // Settings changed something: settings.txt with it (the other keys there kept)
-void CKernel::SaveSettings (void *pParam)
+void CKernel::SaveSettings (void)
 {
-	CKernel *pThis = (CKernel *) pParam;
 	CString Value;
-	Value.Format ("%u", pThis->m_Audio.GetDefaultVolume ());
-	pThis->m_Settings.Set ("volume", Value);
-	Value.Format ("%u", pThis->m_Backlight.GetBrightness ());
-	pThis->m_Settings.Set ("brightness", Value);
-	if (pThis->m_Touch.IsPresent ())
+	Value.Format ("%u", m_Audio.GetDefaultVolume ());
+	m_Settings.Set ("volume", Value);
+	m_Settings.Set ("mute", m_Audio.IsMuted () ? "on" : "off");
+	Value.Format ("%u", m_Backlight.GetBrightness ());
+	m_Settings.Set ("brightness", Value);
+	if (m_Touch.IsPresent ())
 	{
-		pThis->m_Settings.Set ("touchcal", pThis->m_Touch.GetCalibration ());
+		m_Settings.Set ("touchcal", m_Touch.GetCalibration ());
+	}
+	if (HasBluetooth ())
+	{
+		m_Settings.Set ("bluetooth", m_bBluetooth ? "on" : "off");
 	}
 	char *pText = new char[CSettings::MaxBytes];
-	unsigned nBytes = pThis->m_Settings.Format (pText, CSettings::MaxBytes);
-	if (!pThis->m_Installer.WriteFile ("settings.txt", pText, nBytes))
+	unsigned nBytes = m_Settings.Format (pText, CSettings::MaxBytes);
+	if (!m_Installer.WriteFile ("settings.txt", pText, nBytes))
 	{
 		LOGWARN ("Settings: settings.txt can't be written (no card?)");
 	}
 	delete [] pText;
+}
+
+// The V3D's clock: v3d=MHz, within what the firmware allows (its maximum
+// without the option). The firmware takes any rate there while the ARM is at
+// its low clock (cpu=low); with the ARM at its maximum (the firmware's turbo
+// mode) it keeps the V3D at its maximum too, whatever is asked (measured on a
+// Zero: 250 and 275 asked, 300 MHz running)
+unsigned CKernel::GetClock (u32 nClockId, u32 nTag)
+{
+	CBcmPropertyTags Tags;
+	TPropertyTagClockRate Rate;
+	Rate.nClockId = nClockId;
+	return Tags.GetTag (nTag, &Rate, sizeof Rate, 4) ? (Rate.nRate + 500000) / 1000000 : 0;	// MHz
+}
+
+void CKernel::SetV3DClock (void)
+{
+	m_nV3DMin = GetClock (CLOCK_ID_V3D, PROPTAG_GET_MIN_CLOCK_RATE);
+	m_nV3DMax = GetClock (CLOCK_ID_V3D, PROPTAG_GET_MAX_CLOCK_RATE);
+	if (!m_nV3DMax)
+	{
+		return;
+	}
+	unsigned nMHz = m_Options.GetAppOptionDecimal ("v3d", m_nV3DMax);
+	if (nMHz < m_nV3DMin || nMHz > m_nV3DMax)
+	{
+		LOGWARN ("v3d=%u: not within %u-%u MHz; %u", nMHz, m_nV3DMin, m_nV3DMax, m_nV3DMax);
+		nMHz = m_nV3DMax;
+	}
+	CBcmPropertyTags Tags;
+	TPropertyTagSetClockRate Set;
+	Set.nClockId = CLOCK_ID_V3D;
+	Set.nRate = nMHz * 1000000;
+	Set.nSkipSettingTurbo = SKIP_SETTING_TURBO;
+	unsigned nRunning = 0;
+	if (Tags.GetTag (PROPTAG_SET_CLOCK_RATE, &Set, sizeof Set, 12))
+	{
+		nRunning = GetClock (CLOCK_ID_V3D, PROPTAG_GET_CLOCK_RATE_MEASURED);
+	}
+	if (nRunning != nMHz)
+	{
+		LOGWARN ("V3D clock: %u MHz asked, %u MHz running%s", nMHz, nRunning,
+			 nRunning > nMHz ? " (the firmware keeps it there while the ARM is at its maximum)" : "");
+	}
+}
+
+void CKernel::GetClockRange (boolean bV3D, unsigned *pMinMHz, unsigned *pMaxMHz)
+{
+	*pMinMHz = bV3D ? m_nV3DMin : m_CPUThrottle.GetMinClockRate () / 1000000;
+	*pMaxMHz = bV3D ? m_nV3DMax : m_CPUThrottle.GetMaxClockRate () / 1000000;
+}
+
+// Settings' Test: what to say of it
+const char *CKernel::TestSound (void)
+{
+	if (!m_Audio.PlayTest ())
+	{
+		return "Not now: a stream is playing";
+	}
+	return   !m_Monitor.GetState ().bConnected ? "Played, but no monitor is on HDMI to hear it"
+	       : m_Audio.IsMuted () ? "Played, muted" : "Left, right, both";
+}
+
+// The Zero W and the Zero 2 W have the chip (the Zero doesn't), and their
+// builds the code (PGPU_WIRELESS, devtools/build-gpu.sh: the Zero's is built
+// without it)
+static boolean IsWirelessBoard (void)
+{
+	TMachineModel Model = CMachineInfo::Get ()->GetMachineModel ();
+	return Model == MachineModelZeroW || Model == MachineModelZero2W;
+}
+
+boolean CKernel::HasBluetooth (void) const
+{
+#ifdef PGPU_WIRELESS
+	return IsWirelessBoard ();
+#else
+	return FALSE;
+#endif
+}
+
+// what Settings says under its Bluetooth switch
+const char *CKernel::GetBluetoothNote (void) const
+{
+	return   HasBluetooth () ? "Bluetooth speakers: not yet (the switch is kept)"
+	       : IsWirelessBoard () ? "The Zero's kernel: no Bluetooth in it"
+	       : "This board has no Bluetooth";
+}
+
+// The kernel's options, for Settings to change: cmdline.txt as the card has
+// it now (the installer page may have written it since the start; options
+// this build doesn't know stay as they are). Without the file: what this
+// start had, under what Settings changes (the file is made of the changes)
+void CKernel::LoadKernelOptions (void)
+{
+	char *pText = new char[CSettings::MaxBytes];
+	int nBytes = m_Installer.ReadFile ("cmdline.txt", pText, CSettings::MaxBytes);
+	m_bCmdLineRead = nBytes >= 0;
+	m_CmdLine.ParseLine (pText, nBytes > 0 ? nBytes : 0);
+	delete [] pText;
+}
+
+const char *CKernel::GetKernelOption (const char *pKey)
+{
+	const char *pValue = m_CmdLine.Get (pKey);
+	return pValue || m_bCmdLineRead ? pValue : m_Options.GetAppOptionString (pKey);
+}
+
+void CKernel::SetKernelOption (const char *pKey, const char *pValue)
+{
+	if (pValue)
+	{
+		m_CmdLine.Set (pKey, pValue);
+	}
+	else
+	{
+		m_CmdLine.Remove (pKey);
+	}
+}
+
+boolean CKernel::SaveKernelOptions (void)
+{
+	if (!m_CmdLine.IsComplete ())		// (it would come back shorter)
+	{
+		LOGWARN ("Settings: cmdline.txt has more than Settings can keep: left as it is");
+		return FALSE;
+	}
+	char *pText = new char[CSettings::MaxBytes];
+	unsigned nBytes = m_CmdLine.FormatLine (pText, CSettings::MaxBytes);
+	boolean bOK = m_Installer.WriteFile ("cmdline.txt", pText, nBytes);
+	if (bOK)
+	{
+		LOGNOTE ("Settings: cmdline.txt: %s", pText);
+	}
+	else
+	{
+		LOGWARN ("Settings: cmdline.txt can't be written (no card?)");
+	}
+	delete [] pText;
+	return bOK;
+}
+
+void CKernel::Restart (void)
+{
+	m_Installer.Unmount ();
+	LOGNOTE ("Rebooting (Settings)");
+	CTimer::SimpleMsDelay (100);
+	CRunLog::Restarting ();
+	reboot ();
 }
 
 // a press held 2 s in about one place: once till it's let go
@@ -265,6 +431,14 @@ void CKernel::HostInput (void)
 			else if (strcmp (m_HostLine, "SOUNDTEST") == 0)	// debugging: an underrun on purpose
 			{
 				SoundTest ();
+			}
+			else if (strncmp (m_HostLine, "TOUCH ", 6) == 0)	// debugging: "TOUCH x y ms", a finger there
+			{								// (the panel's pixels) for so long
+				char *pEnd;
+				m_nTestTouchX = strtoul (m_HostLine + 6, &pEnd, 10);
+				m_nTestTouchY = strtoul (pEnd, &pEnd, 10);
+				m_nTestTouchEnd = (CTimer::GetClockTicks () + strtoul (pEnd, nullptr, 10) * 1000) | 1;
+				m_bTestTouch = m_bTestTouchChanged = TRUE;
 			}
 			m_nHostLine = 0;
 		}
@@ -524,12 +698,20 @@ TShutdownMode CKernel::Run (void)
 		LOGWARN ("%s isn't supported yet (for now: the Zero / Zero W and the Zero 2 W)",
 			 CMachineInfo::Get ()->GetMachineName ());
 	}
+#ifndef PGPU_WIRELESS
+	if (IsWirelessBoard ())
+	{
+		LOGNOTE ("This kernel is the Zero's, without the wireless code: no Bluetooth on this board (its own kernel has it)");
+	}
+#endif
 	LOGNOTE ("Core clock %u MHz", CMachineInfo::Get ()->GetClockRate (CLOCK_ID_CORE) / 1000000);
 	m_nARMClock = m_CPUThrottle.GetClockRate ();
-	LOGNOTE ("ARM clock %u MHz (%u-%u MHz), V3D %u MHz; SoC %u C (the firmware's limit: %u C)",
-		 m_nARMClock / 1000000, m_CPUThrottle.GetMinClockRate () / 1000000,
+	SetV3DClock ();
+	// (the clocks as the firmware measures them, not as they were asked for)
+	LOGNOTE ("ARM clock %u MHz (%u-%u MHz), V3D %u MHz (%u-%u MHz); SoC %u C (the firmware's limit: %u C)",
+		 GetClock (CLOCK_ID_ARM, PROPTAG_GET_CLOCK_RATE_MEASURED), m_CPUThrottle.GetMinClockRate () / 1000000,
 		 m_CPUThrottle.GetMaxClockRate () / 1000000,
-		 CMachineInfo::Get ()->GetClockRate (5) / 1000000,	// (5: the V3D's clock id)
+		 GetClock (CLOCK_ID_V3D, PROPTAG_GET_CLOCK_RATE_MEASURED), m_nV3DMin, m_nV3DMax,
 		 m_CPUThrottle.GetTemperature (), m_CPUThrottle.GetMaxTemperature ());
 	// the firmware's throttle flags (under-voltage and so on, since boot)
 	LOGNOTE ("Throttled %05X", GetThrottled ());
@@ -574,7 +756,7 @@ TShutdownMode CKernel::Run (void)
 	}
 	LOGNOTE ("I2S slave: CLK pin 12, FS pin 35, DIN pin 38, DOUT pin 40; READY pin 36, FRAME pin 37");
 
-	m_SettingsApp.Initialize (m_Panel.GetDriver (), SaveSettings, this);
+	m_SettingsApp.Initialize (m_Panel.GetDriver (), this);
 
 	SendDisplay (FALSE);
 	if (m_Touch.IsPresent ())		// (a TOUCH reply after each INFO only with a touch screen)
@@ -673,6 +855,25 @@ TShutdownMode CKernel::Run (void)
 		u32 Touch[CTouch::Words];
 		boolean bTouchChanged = m_Touch.Update (Touch);
 		m_Touch.GetState (Touch);
+		if (m_bTestTouch && !(Touch[0] & PGPU_TOUCH_DOWN))	// the TOUCH host line's finger: there, and
+		{							// where it was let go, till a real one
+			Touch[1] = m_nTestTouchX | m_nTestTouchY << 16;
+			if (m_nTestTouchEnd && (int) (m_nTestTouchEnd - CTimer::GetClockTicks ()) > 0)
+			{
+				Touch[0] |= PGPU_TOUCH_DOWN;
+			}
+			else if (m_nTestTouchEnd)
+			{
+				m_nTestTouchEnd = 0;
+				m_bTestTouchChanged = TRUE;
+			}
+			bTouchChanged = m_bTestTouchChanged;		// (put down, moved, let go)
+			m_bTestTouchChanged = FALSE;
+		}
+		else
+		{
+			m_bTestTouch = FALSE;
+		}
 		if (m_SettingsApp.IsOpen ())
 		{
 			if (!m_SettingsApp.Update (Touch))
@@ -821,11 +1022,22 @@ void CKernel::DumpScreenshot (void)
 	{
 		p = (const u8 *) m_Renderer.GetLastFrame ();
 	}
-	unsigned nBytes = m_Renderer.GetWidth () * m_Renderer.GetHeight () * 2;
-	CleanAndInvalidateDataCacheRange ((uintptr) p, nBytes);	// written by the V3D
+	unsigned nWidth = m_Renderer.GetWidth (), nHeight = m_Renderer.GetHeight ();
+	unsigned nBytes = nWidth * nHeight * 2;
+	if (m_SettingsApp.IsOpen ())		// the panel is its: what it has there
+	{
+		p = (const u8 *) m_SettingsApp.GetPicture ();
+		nWidth = 320;
+		nHeight = 240;
+		nBytes = nWidth * nHeight * 2;
+	}
+	else
+	{
+		CleanAndInvalidateDataCacheRange ((uintptr) p, nBytes);	// written by the V3D
+	}
 
 	CString Header;
-	Header.Format ("\n#SCREENSHOT %u %u rgb565le\n", m_Renderer.GetWidth (), m_Renderer.GetHeight ());
+	Header.Format ("\n#SCREENSHOT %u %u rgb565le\n", nWidth, nHeight);
 	m_DevLink.Write ((const char *) Header, Header.GetLength ());
 	if (!WriteBase64 (p, nBytes))
 	{
@@ -970,7 +1182,7 @@ void CKernel::ShowSplash (COutput *pOutput)
 	Render.Format ("%ux%u", nWidth, nHeight);
 	Board = CMachineInfo::Get ()->GetMachineName ();
 	Clocks.Format ("ARM %u MHz, V3D %u MHz", m_nARMClock / 1000000,
-		       CMachineInfo::Get ()->GetClockRate (5) / 1000000);	// (5: the V3D's clock id)
+		       GetClock (CLOCK_ID_V3D, PROPTAG_GET_CLOCK_RATE_MEASURED));
 	const char *pHost = m_HostMode == HostUSB ? "USB (host=usb)"
 			  : m_HostMode == HostI2S ? "I2S (host=i2s)" : "I2S or USB (host=auto)";
 	Build.Format ("%s (%s)", GetBuildVersion (), GetBuildGit ());

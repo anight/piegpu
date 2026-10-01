@@ -44,6 +44,15 @@ public:
 	void SetVolume (unsigned nPercent);
 	unsigned GetDefaultVolume (void) const	{ return m_nDefaultVolume; }
 
+	/// \brief Muted: silent whatever the volume, till it's taken off (the mute= setting)
+	void SetMute (boolean bMute);
+	boolean IsMuted (void) const		{ return m_bMute; }
+
+	/// \brief A second of sound to hear the output by (Settings): a note on
+	///	   the left, one on the right, one on both, at the volume as it is
+	/// \return FALSE if a stream is playing, or there's no output
+	boolean PlayTest (void);
+
 	// the commands (docs/protocol.md 7.13): 0 or a PGPU_ERR_* code
 	u32 Open (u32 nCodec, unsigned nVideoStream, const u8 *pConfig, unsigned nConfigBytes);
 	u32 Data (u32 nFlags, s64 nPTS, unsigned nSampleBytes, const u8 *pData, unsigned nBytes);
@@ -101,6 +110,7 @@ private:
 	CVCHIQDevice *m_pVCHIQ;
 	CVideo *m_pVideo;
 	unsigned m_nDefaultVolume;
+	boolean m_bMute;
 	boolean m_bOwnCore;			// the decoder runs on a core of its own
 
 	// the stream (core 0 opens and closes it while the decoder is parked)

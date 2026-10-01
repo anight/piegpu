@@ -179,6 +179,29 @@ model is named below, the fact was measured on that one.
   50 fps. `hdmi_group=2` gave 1024×768 at 60 Hz; `hdmi_mode=87` with
   `hdmi_cvt=1024 600 60` gives that monitor's own mode (measured: 59.9 fps).
 
+### The touch screen and Settings
+
+- **The readings are noisy**, and the SPI clock isn't why. Under a held
+  finger a single sample of the XPT2046 is off by 2 pixels rms (up to 10),
+  measured at 2, 1 and 0.5 MHz: 2.3, 2.1 and 1.6 pixels. Its low four bits
+  come out as all ones or all zeros in two samples of three. Sampled one
+  after another, a channel's samples show no settling (the first after the
+  pressure's is the worst); there's no periodic part in the noise either. As
+  it was read at first (three samples a channel, the best two averaged) a held
+  finger's position changed direction 30 times a second, which made a slider
+  flicker by a step or two.
+- **So**: eight samples a channel in a reading (150 us at 2 MHz; the frame
+  rate on the panel is as before, 60), the middle four averaged; the position
+  smoothed over the readings (a quarter of the way to each new one, at once
+  if it's 12 pixels away) and reported 1.25 pixels behind the smoothed one,
+  so it only moves when the finger does. On the recorded readings of a finger
+  held and dragged that left 0 to 0.7 changes of direction a second.
+- **Settings without a finger** (how the menu was checked, the panel out of
+  sight): the `TOUCH x y ms` host line (text mode) puts a finger on the
+  panel at that pixel for so long, and stays where it was let go until a real
+  one comes; lines sent while it's down move it (a drag). The screenshot
+  (`s`) shows Settings while it's open: what it sent to the panel.
+
 ## Video
 
 - **Video** (`gpu/video/`): MMAL (the Raspberry Pi userland's client,

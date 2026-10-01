@@ -55,6 +55,9 @@ public:
 	// be (said nothing to the host)
 	boolean WriteFile (const char *pName, const void *pData, unsigned nBytes);
 
+	// the card let go (before a restart)
+	void Unmount (void);
+
 private:
 	boolean InitCard (boolean bQuiet = FALSE);
 	boolean Mount (boolean bQuiet = FALSE);

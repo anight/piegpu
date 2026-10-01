@@ -14,21 +14,33 @@ export const DEFAULTS = {
 	cvtRate: 60,
 };
 
-export function makeCmdline (s)
+// the options this page sets (the others a card's cmdline.txt may have, set by
+// hand or by Settings on the panel, are kept: otherOptions)
+const FORM_OPTIONS = ['host', 'gud', 'output', 'panel', 'hdmi_pixels'];
+
+// other: the card's own options, to keep (otherOptions)
+export function makeCmdline (s, other = [])
 {
 	const options = [`host=${s.host}`, `gud=${s.gud}`, `output=${s.output}`, `panel=${s.panel}`];
 	if (s.hdmiPixels > 0)
 	{
 		options.push (`hdmi_pixels=${s.hdmiPixels}`);
 	}
-	return options.join (' ') + '\n';
+	return [...options, ...other].join (' ') + '\n';
+}
+
+// what a card's cmdline.txt has that this page doesn't set
+export function otherOptions (cmdline)
+{
+	return (cmdline || '').trim ().split (/\s+/).filter (option => option && !FORM_OPTIONS.includes (option.split ('=')[0]));
 }
 
 // the boards piegpu supports for now, and is built for (web/installer/
 // make-firmware.sh); more RPi boards are to come
-export const BOARDS = {zero: 'Raspberry Pi Zero / Zero W', zero2: 'Raspberry Pi Zero 2 W'};
+export const BOARDS = {zero: 'Raspberry Pi Zero', zerow: 'Raspberry Pi Zero W', zero2: 'Raspberry Pi Zero 2 W'};
 
-// board: 'zero' (32 bit, kernel.img), 'zero2' (64 bit, kernel8.img), or 'any'
+// board: 'zero' or 'zerow' (32 bit, kernel.img; the Zero W's has the wireless
+// code, the config.txt is the same), 'zero2' (64 bit, kernel8.img), or 'any'
 // (a blank board started over USB: which it is shows only then; the Pi
 // firmware's [pi02] filter picks the Zero 2 W's lines)
 // the Zero 2 W's V3D at 400 MHz (its default: 300): 13-24% faster rendering;
@@ -39,7 +51,7 @@ const V3D_400 = ['# the GPU (V3D) at 400 MHz, not 300: 13-24% faster (tested)', 
 export function makeConfig (s, board = 'zero')
 {
 	const lines = [
-		board === 'any' ? '# piegpu on a Raspberry Pi Zero or Zero 2 W (the installer page, starting it over USB)'
+		board === 'any' ? '# piegpu on a Raspberry Pi Zero, Zero W or Zero 2 W (the installer page, starting it over USB)'
 				: `# piegpu on a ${BOARDS[board]} (written by the installer page)`,
 		...(board === 'zero2' ? ['# 64 bit: the firmware starts kernel8.img', 'arm_64bit=1', ...V3D_400] : ['arm_64bit=0']),
 		'initial_turbo=0',

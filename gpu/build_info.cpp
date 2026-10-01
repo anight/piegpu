@@ -11,10 +11,16 @@
 #define STR2(x)	#x
 #define STR(x)	STR2 (x)
 
+#ifdef PGPU_WIRELESS			// (a board with the wireless chip's: devtools/build-gpu.sh)
+	#define WIRELESS	",wireless"
+#else
+	#define WIRELESS	""
+#endif
+
 const char g_BuildInfo[] __attribute__ ((used)) =
 	BUILD_INFO_START
 	"fw=" PGPU_FW_VERSION " fwgit=" PGPU_FW_GIT " fwbuilt=" PGPU_BUILT
-	" fwconfig=RASPPI=" STR (RASPPI) ",AArch" STR (AARCH) ",Circle_" PGPU_CIRCLE
+	" fwconfig=RASPPI=" STR (RASPPI) ",AArch" STR (AARCH) WIRELESS ",Circle_" PGPU_CIRCLE
 	",GCC_" STR (__GNUC__) "." STR (__GNUC_MINOR__) "." STR (__GNUC_PATCHLEVEL__)
 	"\x03";
 

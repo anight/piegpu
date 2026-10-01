@@ -6,18 +6,23 @@
 #include <circle/util.h>
 
 CSettings::CSettings (void)
-:	m_nCount (0)
+:	m_nCount (0),
+	m_nBare (0),
+	m_bComplete (TRUE)
 {
 }
 
-void CSettings::Parse (const char *pText, unsigned nBytes)
+// bLine: a command line (its "key=value"s end at any space), else a file of them (at a line's end)
+void CSettings::Parse (const char *pText, unsigned nBytes, boolean bLine)
 {
 	m_nCount = 0;
+	m_nBare = 0;
+	m_bComplete = TRUE;
 	const char *p = pText, *pEnd = pText + nBytes;
-	while (p < pEnd && m_nCount < MaxKeys)
+	while (p < pEnd)
 	{
 		const char *pLine = p;
-		while (p < pEnd && *p != '\n')
+		while (p < pEnd && *p != '\n' && !(bLine && (*p == ' ' || *p == '\t' || *p == '\r')))
 		{
 			p++;
 		}
@@ -39,6 +44,21 @@ void CSettings::Parse (const char *pText, unsigned nBytes)
 		}
 		if (pEqual == pLineEnd)
 		{
+			// a command line's word without '=': kept as it is
+			unsigned nWord = pLineEnd - pLine;
+			if (!bLine)
+			{
+				continue;
+			}
+			if (m_nCount == MaxKeys || nWord >= KeyChars)
+			{
+				m_bComplete = FALSE;
+				continue;
+			}
+			memcpy (m_Key[m_nCount], pLine, nWord);
+			m_Key[m_nCount][nWord] = '\0';
+			m_Value[m_nCount][0] = '\0';
+			m_nBare |= 1U << m_nCount++;
 			continue;
 		}
 		const char *pKeyEnd = pEqual, *pValue = pEqual + 1, *pValueEnd = pLineEnd;
@@ -55,8 +75,9 @@ void CSettings::Parse (const char *pText, unsigned nBytes)
 			pValueEnd--;
 		}
 		unsigned nKey = pKeyEnd - pLine, nValue = pValueEnd - pValue;
-		if (nKey == 0 || nKey >= KeyChars || nValue >= ValueChars)
+		if (m_nCount == MaxKeys || nKey == 0 || nKey >= KeyChars || nValue >= ValueChars)
 		{
+			m_bComplete = FALSE;
 			continue;
 		}
 		memcpy (m_Key[m_nCount], pLine, nKey);
@@ -101,6 +122,45 @@ void CSettings::Set (const char *pKey, const char *pValue)
 	}
 }
 
+void CSettings::Remove (const char *pKey)
+{
+	for (unsigned i = 0; i < m_nCount; i++)
+	{
+		if (strcmp (m_Key[i], pKey) == 0)
+		{
+			for (unsigned k = i; k + 1 < m_nCount; k++)
+			{
+				strcpy (m_Key[k], m_Key[k + 1]);
+				strcpy (m_Value[k], m_Value[k + 1]);
+			}
+			u32 nLow = (1U << i) - 1;
+			m_nBare = (m_nBare & nLow) | ((m_nBare >> 1) & ~nLow);
+			m_nCount--;
+			return;
+		}
+	}
+}
+
+unsigned CSettings::FormatLine (char *pBuffer, unsigned nSize) const
+{
+	CString Text;
+	for (unsigned i = 0; i < m_nCount; i++)
+	{
+		Text.Append (i ? " " : "");
+		Text.Append (m_Key[i]);
+		if (!(m_nBare & (1U << i)))
+		{
+			Text.Append ("=");
+			Text.Append (m_Value[i]);
+		}
+	}
+	Text.Append ("\n");
+	unsigned n = Text.GetLength () < nSize ? Text.GetLength () : nSize - 1;
+	memcpy (pBuffer, (const char *) Text, n);
+	pBuffer[n] = '\0';
+	return n;
+}
+
 unsigned CSettings::Format (char *pBuffer, unsigned nSize) const
 {
 	static const struct { const char *pKey, *pComment; } Known[] =
@@ -109,6 +169,8 @@ unsigned CSettings::Format (char *pBuffer, unsigned nSize) const
 		{"brightness", "# the panel's backlight, percent (its LED pin on GPIO12, pin 32)\n"},
 		{"touchcal", "# the touch screen's calibration: the readings at the left, right, top and\n"
 			     "# bottom edges, and 1: x from the controller's Y (Settings: Calibrate)\n"},
+		{"mute", "# the sound muted: on, off\n"},
+		{"bluetooth", "# Bluetooth (for speakers, to come): on, off\n"},
 	};
 	CString Text ("# piegpu: the user's settings (the installer page leaves this file alone);\n"
 		      "# a key here wins over cmdline.txt's. Settings (a long press on the panel)\n"

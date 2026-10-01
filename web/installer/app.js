@@ -5,7 +5,7 @@
 
 import {USB_FILTERS, bootStage, waitForBootDevice} from './rpiboot.js';
 import {SERIAL_FILTERS, Installer, crc32} from './pgi.js';
-import {BOARDS, DEFAULTS, makeCmdline, makeConfig, parseSettings} from './settings.js';
+import {BOARDS, DEFAULTS, makeCmdline, makeConfig, otherOptions, parseSettings} from './settings.js';
 import {GLStream, runDemo} from './gl.js';
 import {makeZip, otherEntries, writeFiles} from './card.js';
 
@@ -144,8 +144,8 @@ async function loadManifest ()
 	}
 }
 
-// 'zero' or 'zero2': the board a running piegpu reports (INFO; an older one
-// doesn't say: a Zero); null before one has answered. Only these two are
+// 'zero', 'zerow' or 'zero2': the board a running piegpu reports (INFO; an
+// older one doesn't say: a Zero); null before one has answered. Only these are
 // supported for now (BOARDS): another board counts as a Zero, and the board
 // facts say it isn't supported
 function currentBoard ()
@@ -154,7 +154,7 @@ function currentBoard ()
 	{
 		return null;
 	}
-	return /Zero 2/.test (card.board) ? 'zero2' : 'zero';
+	return /Zero 2/.test (card.board) ? 'zero2' : /Zero W/.test (card.board) ? 'zerow' : 'zero';
 }
 
 // the firmware's files for a board (its kernel: kernel.img or kernel8.img)
@@ -194,11 +194,13 @@ async function loadFirmware (board)
 
 // the files to start a blank board over USB: every board's (the Pi firmware
 // asks for its own kernel: kernel.img, or kernel8.img on a Zero 2 W with the
-// config.txt's [pi02] lines), plus this page's settings
+// config.txt's [pi02] lines), plus this page's settings. A Zero W starts with
+// the Zero's kernel.img (which board it is shows only once it runs); its own
+// goes onto the card
 async function bootFiles ()
 {
 	const files = new Map ();
-	for (const board of Object.keys (manifest?.boards || {zero: null}))
+	for (const board of Object.keys (manifest?.boards || {zero: null}).filter (b => b !== 'zerow'))
 	{
 		for (const [name, bytes] of await loadFirmware (board))
 		{
@@ -532,7 +534,7 @@ async function refreshCard (loadSettings)
 	$('card-retry').hidden = true;
 	$('format').hidden = true;
 	add ('Type', card.board ? `${card.board}${card.ramMB ? `, ${card.ramMB} MB` : ''} (revision ${card.revision})`
-				  + (/Zero/.test (card.board) ? '' : ': not supported yet (for now: the Zero / Zero W and the Zero 2 W)')
+				  + (/Zero/.test (card.board) ? '' : ': not supported yet (for now: the Zero, the Zero W and the Zero 2 W)')
 				: "unknown (this piegpu doesn't say: install to see it)");
 	if (!card.card)
 	{
@@ -595,7 +597,9 @@ function versionNumbers (v)
 }
 
 // the page's kernel for the board, if its version is higher than the card's
-// (or the card's has none: an older build): its build line, else null
+// (or the card's has none: an older build), or the card's is another board's
+// (a Zero W with the Zero's, without the wireless code): its build line, else
+// null
 function kernelUpgrade ()
 {
 	const board = currentBoard ();
@@ -607,6 +611,11 @@ function kernelUpgrade ()
 	}
 	const theirs = versionNumbers (card.build?.version);
 	if (!theirs)
+	{
+		return offered;
+	}
+	const wireless = config => (config || '').split (',').includes ('wireless');
+	if (card.build.config && wireless (card.build.config) !== wireless (offered.config))
 	{
 		return offered;
 	}
@@ -697,9 +706,13 @@ async function install (settingsOnly)
 	{
 		const board = currentBoard ();
 		const files = settingsOnly ? new Map () : await loadFirmware (board);
+		// the card's options this page doesn't set (cpu=, touch=...: by hand, or
+		// Settings on the panel) stay
+		const old = card?.files?.has ('cmdline.txt') ? await installer.read ('cmdline.txt') : null;
+		const other = otherOptions (old ? new TextDecoder ().decode (old) : '');
 		const all = [...files.entries (),
 			     ['config.txt', new TextEncoder ().encode (makeConfig (s, board))],
-			     ['cmdline.txt', new TextEncoder ().encode (makeCmdline (s))]];
+			     ['cmdline.txt', new TextEncoder ().encode (makeCmdline (s, other))]];
 		const total = all.reduce ((n, [, b]) => n + b.length, 0);
 		const bar = $('progress');
 		bar.hidden = false;

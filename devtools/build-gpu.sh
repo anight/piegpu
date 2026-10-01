@@ -3,14 +3,16 @@
 # Build the gpu app for a board, with CMake on Circle's CMake build
 # (third_party/circle, the submodule: piegpu's fork, github.com/anight/circle, branch piegpu):
 #
-#   devtools/build-gpu.sh [zero|zero2|all]
+#   devtools/build-gpu.sh [zero|zerow|zero2|all]
 #
-#   zero    Pi Zero / Zero W, 32 bit: build/zero/kernel.img
+#   zero    Pi Zero, 32 bit: build/zero/kernel.img
+#   zerow   Pi Zero W, 32 bit: build/zerow/kernel.img
 #   zero2   Pi Zero 2 W, 64 bit: build/zero2/kernel8.img
 #
 # (The boards piegpu supports for now; more RPi boards are to come.) One
-# Circle tree serves both: each board has its build directory, configured
-# here the first time (delete it to configure again). The submodule and
+# Circle tree serves them all: each board has its build directory, configured
+# here the first time, and again when its Circle options (below) aren't the
+# ones it was configured with. The submodule and
 # Circle's boot files (third_party/circle/boot: bootcode.bin, start.elf, fixup.dat) are
 # fetched if they aren't there.
 #
@@ -35,6 +37,13 @@
 #
 # ARM_ALLOW_MULTI_CORE (the Zero 2 W, four cores): the gpu app decodes the
 # audio stream's AAC on core 1 (gpu/audio); the Zero has one core.
+#
+# PGPU_WIRELESS (the Zero W, the Zero 2 W): the board has the wireless chip,
+# and its kernel is the one with the Bluetooth code (for speakers, to come:
+# for now the Bluetooth switch in Settings). The Zero has no such chip and
+# its kernel is built without: that's all its build and the Zero W's differ
+# by. Either kernel starts on either board (a Zero W with the Zero's has no
+# Bluetooth; the build's line says which it is: fwconfig=...,wireless).
 #
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -65,7 +74,8 @@ fi
 build ()
 {
 	local out=$ROOT/build/$1
-	if [ ! -f "$out/CMakeCache.txt" ]; then
+	if ! grep -qxF "CIRCLE_DEFINES:UNINITIALIZED=$4" "$out/CMakeCache.txt" 2>/dev/null \
+	   && ! grep -qxF "CIRCLE_DEFINES:STRING=$4" "$out/CMakeCache.txt" 2>/dev/null; then
 		cmake -S "$ROOT/gpu" -B "$out" -G "$GENERATOR" \
 			-DCMAKE_TOOLCHAIN_FILE="$ROOT/third_party/circle/cmake/toolchain.cmake" \
 			-DCIRCLE_PREFIX="$3" -DCIRCLE_RASPPI="$2" "-DCIRCLE_DEFINES=$4" >/dev/null
@@ -80,15 +90,22 @@ build_zero ()
 		"$DEFINES" kernel.img
 }
 
+build_zerow ()
+{
+	build zerow 1 "$TOOLCHAINS/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi/bin/arm-none-eabi-" \
+		"$DEFINES;PGPU_WIRELESS" kernel.img
+}
+
 build_zero2 ()
 {
 	build zero2 3 "$TOOLCHAINS/arm-gnu-toolchain-15.2.rel1-x86_64-aarch64-none-elf/bin/aarch64-none-elf-" \
-		"$DEFINES;ARM_ALLOW_MULTI_CORE" kernel8.img
+		"$DEFINES;ARM_ALLOW_MULTI_CORE;PGPU_WIRELESS" kernel8.img
 }
 
 case "${1:-zero}" in
 zero)	build_zero ;;
+zerow)	build_zerow ;;
 zero2)	build_zero2 ;;
-all)	build_zero; build_zero2 ;;
-*)	echo "usage: $0 [zero|zero2|all]" >&2; exit 1 ;;
+all)	build_zero; build_zerow; build_zero2 ;;
+*)	echo "usage: $0 [zero|zerow|zero2|all]" >&2; exit 1 ;;
 esac

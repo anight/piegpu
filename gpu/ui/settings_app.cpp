@@ -25,13 +25,14 @@ CSettingsApp::CSettingsApp (CTouch *pTouch, CBacklight *pBacklight, CAudio *pAud
 	m_pBacklight (pBacklight),
 	m_pAudio (pAudio),
 	m_pDisplay (nullptr),
-	m_pSave (nullptr),
-	m_pSaveParam (nullptr),
+	m_pHost (nullptr),
 	m_bInitialized (FALSE),
 	m_bOpen (FALSE),
 	m_bChanged (FALSE),
-	m_Screen (ScreenMain),
+	m_bKernelChanged (FALSE),
+	m_Screen (ScreenRoot),
 	m_pLVDisplay (nullptr),
+	m_pPicture (nullptr),
 	m_bWaitRelease (FALSE),
 	m_bDown (FALSE),
 	m_nX (0),
@@ -42,11 +43,10 @@ CSettingsApp::CSettingsApp (CTouch *pTouch, CBacklight *pBacklight, CAudio *pAud
 	s_pThis = this;
 }
 
-void CSettingsApp::Initialize (CST7789DMADisplay *pDisplay, TSaveRoutine *pSave, void *pParam)
+void CSettingsApp::Initialize (CST7789DMADisplay *pDisplay, CSettingsHost *pHost)
 {
 	m_pDisplay = pDisplay;
-	m_pSave = pSave;
-	m_pSaveParam = pParam;
+	m_pHost = pHost;
 }
 
 // ---- LVGL on the panel --------------------------------------------------------------------
@@ -59,6 +59,11 @@ uint32_t CSettingsApp::TickMs (void)
 void CSettingsApp::Flush (lv_display_t *pDisplay, const lv_area_t *pArea, u8 *pPixels)
 {
 	CDisplay::TArea Area = {(unsigned) pArea->x1, (unsigned) pArea->x2, (unsigned) pArea->y1, (unsigned) pArea->y2};
+	unsigned nWidth = pArea->x2 - pArea->x1 + 1;
+	for (int y = pArea->y1; y <= pArea->y2; y++)		// (kept: a screenshot's)
+	{
+		memcpy (s_pThis->m_pPicture + y * WIDTH + pArea->x1, pPixels + (y - pArea->y1) * nWidth * 2, nWidth * 2);
+	}
 	s_pThis->m_pDisplay->SetArea (Area, pPixels, FlushDone, pDisplay);
 }
 
@@ -94,12 +99,15 @@ void CSettingsApp::Open (void)
 							    lv_palette_main (LV_PALETTE_ORANGE), true, &lv_font_montserrat_14);
 		lv_display_set_theme (m_pLVDisplay, pTheme);
 		m_pCanvasPixels = new u16[WIDTH * HEIGHT];
+		m_pPicture = new u16[WIDTH * HEIGHT];
+		memset (m_pPicture, 0, WIDTH * HEIGHT * 2);
 		m_bInitialized = TRUE;
 	}
 	m_bOpen = TRUE;
 	m_bChanged = FALSE;
+	m_bKernelChanged = FALSE;
 	m_bWaitRelease = TRUE;
-	ShowMain ();
+	ShowRoot ();
 	lv_obj_invalidate (lv_screen_active ());	// (all of it: the panel had the host's picture)
 	LOGNOTE ("Settings opened");
 }
@@ -139,8 +147,7 @@ boolean CSettingsApp::Update (const u32 *pTouch)
 			}
 			else if (FitCalibration ())
 			{
-				ShowMain ();
-				lv_label_set_text (m_pNote, "Calibrated. The new touch: try Test");
+				ShowDisplay ("Calibrated. The new touch: try Test");
 			}
 			else
 			{
@@ -226,36 +233,367 @@ static void Percent (lv_obj_t *pLabel, int nValue)
 	lv_label_set_text (pLabel, Text);
 }
 
-void CSettingsApp::ShowMain (void)
+static lv_obj_t *Note (lv_obj_t *pParent, const char *pText, lv_align_t Align, int x, int y)
 {
-	m_Screen = ScreenMain;
-	lv_obj_t *pScreen = NewScreen ();
-	lv_obj_t *pTitle = Label (pScreen, LV_SYMBOL_SETTINGS "  Settings", LV_ALIGN_TOP_LEFT, 12, 14);
-	lv_obj_set_style_text_font (pTitle, &lv_font_montserrat_20, 0);
-	m_pDone = Button (pScreen, "Done", LV_ALIGN_TOP_RIGHT, -10, 8, 76, 34);
+	lv_obj_t *p = Label (pParent, pText, Align, x, y);
+	lv_obj_set_style_text_font (p, &lv_font_montserrat_12, 0);
+	lv_obj_set_style_text_color (p, lv_palette_lighten (LV_PALETTE_GREY, 1), 0);
+	return p;
+}
 
-	Label (pScreen, LV_SYMBOL_IMAGE "  Brightness", LV_ALIGN_TOP_LEFT, 12, 66);
-	m_pBrightness = Slider (pScreen, 70, 5, 100, m_pBacklight->GetBrightness ());
-	m_pBrightnessValue = Label (pScreen, "", LV_ALIGN_TOP_RIGHT, -12, 66);
-	Percent (m_pBrightnessValue, m_pBacklight->GetBrightness ());
-
-	Label (pScreen, LV_SYMBOL_VOLUME_MAX "  Volume", LV_ALIGN_TOP_LEFT, 12, 112);
-	m_pVolume = Slider (pScreen, 116, 0, 100, m_pAudio->GetDefaultVolume ());
-	m_pVolumeValue = Label (pScreen, "", LV_ALIGN_TOP_RIGHT, -12, 112);
-	Percent (m_pVolumeValue, m_pAudio->GetDefaultVolume ());
-
-	Label (pScreen, LV_SYMBOL_EDIT "  Touch", LV_ALIGN_TOP_LEFT, 12, 162);
-	m_pCalibrate = Button (pScreen, "Calibrate", LV_ALIGN_TOP_LEFT, 112, 152, 100, 36);
-	m_pTest = Button (pScreen, "Test", LV_ALIGN_TOP_LEFT, 222, 152, 86, 36);
-
-	m_pNote = Label (pScreen, "Long-press the screen anytime to come back", LV_ALIGN_BOTTOM_MID, 0, -10);
-	lv_obj_set_style_text_font (m_pNote, &lv_font_montserrat_12, 0);
-	lv_obj_set_style_text_color (m_pNote, lv_palette_lighten (LV_PALETTE_GREY, 1), 0);
-
-	lv_obj_t *pEvents[] = {m_pDone, m_pBrightness, m_pVolume, m_pCalibrate, m_pTest};
-	for (lv_obj_t *p : pEvents)
+// the last page's widgets are gone with it (the events tell them apart by these)
+void CSettingsApp::Forget (void)
+{
+	m_pDone = m_pBack = m_pNote = nullptr;
+	m_pMenu[0] = m_pMenu[1] = m_pMenu[2] = nullptr;
+	m_pBrightness = m_pCalibrate = m_pTest = m_pVolume = m_pMute = m_pSoundTest = m_pBluetooth = nullptr;
+	m_pRestart = m_pLater = m_pWarning = m_pYes = m_pNo = nullptr;
+	for (unsigned i = 0; i < KernelOptions; i++)
 	{
-		lv_obj_add_event_cb (p, OnEvent, LV_EVENT_ALL, this);
+		m_pOption[i] = nullptr;
+	}
+}
+
+// a page: its title; Done on the first, a way back on the others
+lv_obj_t *CSettingsApp::Page (TScreen Screen, const char *pTitle)
+{
+	m_Screen = Screen;
+	lv_obj_t *pScreen = NewScreen ();
+	Forget ();
+	if (Screen == ScreenRoot)
+	{
+		m_pDone = Button (pScreen, "Done", LV_ALIGN_TOP_RIGHT, -10, 8, 76, 34);
+		lv_obj_add_event_cb (m_pDone, OnEvent, LV_EVENT_CLICKED, this);
+	}
+	else if (Screen != ScreenRestart)
+	{
+		m_pBack = Button (pScreen, LV_SYMBOL_LEFT, LV_ALIGN_TOP_LEFT, 8, 8, 46, 34);
+		lv_obj_add_event_cb (m_pBack, OnEvent, LV_EVENT_CLICKED, this);
+	}
+	lv_obj_t *pLabel = Label (pScreen, pTitle, LV_ALIGN_TOP_LEFT, m_pBack ? 66 : 12, 14);
+	lv_obj_set_style_text_font (pLabel, &lv_font_montserrat_20, 0);
+	return pScreen;
+}
+
+void CSettingsApp::ShowRoot (void)
+{
+	lv_obj_t *pScreen = Page (ScreenRoot, LV_SYMBOL_SETTINGS "  Settings");
+	static const char *Names[3] = {LV_SYMBOL_IMAGE "   Display", LV_SYMBOL_AUDIO "   Audio", LV_SYMBOL_LIST "   Kernel"};
+	for (int i = 0; i < 3; i++)
+	{
+		m_pMenu[i] = lv_button_create (pScreen);
+		lv_obj_set_size (m_pMenu[i], 300, 44);
+		lv_obj_align (m_pMenu[i], LV_ALIGN_TOP_MID, 0, 56 + i * 52);
+		lv_obj_set_style_bg_color (m_pMenu[i], lv_palette_darken (LV_PALETTE_GREY, 3), 0);
+		Label (m_pMenu[i], Names[i], LV_ALIGN_LEFT_MID, 2, 0);
+		Label (m_pMenu[i], LV_SYMBOL_RIGHT, LV_ALIGN_RIGHT_MID, -2, 0);
+		lv_obj_add_event_cb (m_pMenu[i], OnEvent, LV_EVENT_CLICKED, this);
+	}
+	Note (pScreen, "Hold a finger on the screen to come back here", LV_ALIGN_BOTTOM_MID, 0, -8);
+}
+
+void CSettingsApp::ShowDisplay (const char *pNote)
+{
+	lv_obj_t *pScreen = Page (ScreenDisplay, "Display");
+
+	Label (pScreen, "Brightness", LV_ALIGN_TOP_LEFT, 12, 70);
+	m_pBrightness = Slider (pScreen, 74, 5, 100, m_pBacklight->GetBrightness ());
+	m_pBrightnessValue = Label (pScreen, "", LV_ALIGN_TOP_RIGHT, -12, 70);
+	Percent (m_pBrightnessValue, m_pBacklight->GetBrightness ());
+	lv_obj_add_event_cb (m_pBrightness, OnEvent, LV_EVENT_VALUE_CHANGED, this);
+
+	Label (pScreen, "Touch", LV_ALIGN_TOP_LEFT, 12, 134);
+	m_pCalibrate = Button (pScreen, "Calibrate", LV_ALIGN_TOP_LEFT, 112, 124, 100, 36);
+	m_pTest = Button (pScreen, "Test", LV_ALIGN_TOP_LEFT, 222, 124, 86, 36);
+	lv_obj_add_event_cb (m_pCalibrate, OnEvent, LV_EVENT_CLICKED, this);
+	lv_obj_add_event_cb (m_pTest, OnEvent, LV_EVENT_CLICKED, this);
+	if (!m_pTouch->IsPresent ())
+	{
+		lv_obj_add_state (m_pCalibrate, LV_STATE_DISABLED);
+		lv_obj_add_state (m_pTest, LV_STATE_DISABLED);
+	}
+	m_pNote = Note (pScreen, pNote ? pNote : "", LV_ALIGN_BOTTOM_MID, 0, -8);
+}
+
+void CSettingsApp::ShowAudio (void)
+{
+	lv_obj_t *pScreen = Page (ScreenAudio, "Audio");
+
+	m_pVolumeLabel = Label (pScreen, "Volume", LV_ALIGN_TOP_LEFT, 12, 60);
+	m_pVolume = Slider (pScreen, 64, 0, 100, m_pAudio->GetDefaultVolume ());
+	m_pVolumeValue = Label (pScreen, "", LV_ALIGN_TOP_RIGHT, -12, 60);
+	Percent (m_pVolumeValue, m_pAudio->GetDefaultVolume ());
+	lv_obj_add_event_cb (m_pVolume, OnEvent, LV_EVENT_VALUE_CHANGED, this);
+	lv_color_t Grey = lv_palette_darken (LV_PALETTE_GREY, 2);		// (as it looks while muted)
+	lv_obj_set_style_bg_color (m_pVolume, Grey, LV_PART_INDICATOR | LV_STATE_DISABLED);
+	lv_obj_set_style_bg_color (m_pVolume, Grey, LV_PART_KNOB | LV_STATE_DISABLED);
+	lv_obj_set_style_bg_color (m_pVolume, lv_palette_darken (LV_PALETTE_GREY, 4), LV_PART_MAIN | LV_STATE_DISABLED);
+	lv_obj_set_style_bg_opa (m_pVolume, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DISABLED);
+
+	Label (pScreen, LV_SYMBOL_MUTE "  Mute", LV_ALIGN_TOP_LEFT, 12, 104);
+	m_pMute = lv_switch_create (pScreen);
+	lv_obj_set_size (m_pMute, 56, 30);
+	lv_obj_align (m_pMute, LV_ALIGN_TOP_LEFT, 112, 97);
+	if (m_pAudio->IsMuted ())
+	{
+		lv_obj_add_state (m_pMute, LV_STATE_CHECKED);
+	}
+	lv_obj_add_event_cb (m_pMute, OnEvent, LV_EVENT_VALUE_CHANGED, this);
+	ShowMuted ();
+	m_pSoundTest = Button (pScreen, LV_SYMBOL_PLAY "  Test", LV_ALIGN_TOP_RIGHT, -12, 94, 100, 36);
+	lv_obj_add_event_cb (m_pSoundTest, OnEvent, LV_EVENT_CLICKED, this);
+	m_pNote = Note (pScreen, "", LV_ALIGN_TOP_LEFT, 12, 136);
+
+	// Bluetooth: for speakers, to come; a board without it can't have it on
+	boolean bHas = m_pHost->HasBluetooth ();
+	lv_obj_t *pLabel = Label (pScreen, LV_SYMBOL_BLUETOOTH "  Bluetooth", LV_ALIGN_TOP_LEFT, 12, 172);
+	m_pBluetooth = lv_switch_create (pScreen);
+	lv_obj_set_size (m_pBluetooth, 56, 30);
+	lv_obj_align (m_pBluetooth, LV_ALIGN_TOP_RIGHT, -12, 165);
+	if (bHas && m_pHost->GetBluetooth ())
+	{
+		lv_obj_add_state (m_pBluetooth, LV_STATE_CHECKED);
+	}
+	if (!bHas)
+	{
+		lv_obj_add_state (m_pBluetooth, LV_STATE_DISABLED);
+		lv_obj_set_style_text_color (pLabel, lv_palette_darken (LV_PALETTE_GREY, 1), 0);
+	}
+	lv_obj_add_event_cb (m_pBluetooth, OnEvent, LV_EVENT_VALUE_CHANGED, this);
+	Note (pScreen, m_pHost->GetBluetoothNote (), LV_ALIGN_TOP_LEFT, 12, 204);
+}
+
+// muted: the volume greyed, and not to be moved
+void CSettingsApp::ShowMuted (void)
+{
+	boolean bMuted = m_pAudio->IsMuted ();
+	lv_obj_set_state (m_pVolume, LV_STATE_DISABLED, bMuted);
+	lv_obj_t *pLabels[2] = {m_pVolumeLabel, m_pVolumeValue};
+	for (unsigned i = 0; i < 2; i++)
+	{
+		if (bMuted)
+		{
+			lv_obj_set_style_text_color (pLabels[i], lv_palette_darken (LV_PALETTE_GREY, 1), 0);
+		}
+		else
+		{
+			lv_obj_remove_local_style_prop (pLabels[i], LV_STYLE_TEXT_COLOR, 0);
+		}
+	}
+}
+
+// The kernel's options (README "Kernel command line"): what each can be, the
+// first its default; nullptr: the option left out. The clocks' choices are
+// made for the board (FillOption)
+enum { OptionCPU = 6, OptionV3D = 7 };
+static const struct
+{
+	const char *pKey, *pName, *pChoices, *pValues[6];
+	const char *pWarnValue, *pWarning;	// a value that takes Settings away at the next start
+}
+Options[] =
+{
+	{"host", "Commands from", "auto\nUSB\nI2S", {"auto", "usb", "i2s"}},
+	{"output", "Screen", "auto\npanel\nHDMI", {"auto", "panel", "hdmi"},
+	 "hdmi", "With the screen always on HDMI the panel shows nothing, Settings neither."},
+	{"panel", "Panel", "auto\nyes\nnone", {"auto", "yes", "none"},
+	 "none", "Without the panel there's no Settings."},
+	{"hdmi_pixels", "HDMI size, at most", "native\n1920x1080\n1280x720\n1024x600\n800x480\n640x480",
+	 {nullptr, "2073600", "921600", "614400", "384000", "307200"}},
+	{"gud", "USB monitor", "off\non", {"off", "on"}},
+	{"touch", "Touch screen", "auto\noff", {"auto", "off"},
+	 "off", "Without the touch screen Settings can't be opened."},
+	{"cpu", "CPU clock", nullptr, {"max", "low"}},
+	{"v3d", "V3D clock", nullptr, {nullptr}},
+	{"clcheck", "V3D job check", "on\noff", {"on", "off"}},
+};
+
+// An option's list: its choices, their values (m_Value), and the one that's
+// set chosen. What the card has that isn't one of them: one more choice
+void CSettingsApp::FillOption (unsigned i)
+{
+	char Choices[128] = "";
+	unsigned n = 0;
+	if (i == OptionCPU)			// the ARM's two ends
+	{
+		unsigned nMin, nMax;
+		m_pHost->GetClockRange (FALSE, &nMin, &nMax);
+		lv_snprintf (Choices, sizeof Choices, "%u MHz\n%u MHz", nMax, nMin);
+		strcpy (m_Value[i][0], "max");
+		strcpy (m_Value[i][1], "low");
+		n = 2;
+	}
+	else if (i == OptionV3D)		// its maximum (the option left out), then down to its minimum
+	{					// by 25 MHz; with the ARM at its maximum: only that
+		unsigned nMin, nMax;
+		m_pHost->GetClockRange (TRUE, &nMin, &nMax);
+		const char *pCPU = m_pHost->GetKernelOption ("cpu");
+		if (!pCPU || strcmp (pCPU, "low") != 0)
+		{
+			nMin = nMax;
+		}
+		for (unsigned nMHz = nMax; nMHz >= nMin && nMHz > 0 && n < MaxChoices; nMHz -= 25)
+		{
+			unsigned nLength = strlen (Choices);
+			lv_snprintf (Choices + nLength, sizeof Choices - nLength, "%s%u MHz", n ? "\n" : "", nMHz);
+			lv_snprintf (m_Value[i][n], sizeof m_Value[i][n], "%u", nMHz);
+			n++;
+		}
+		if (n == 0)			// (the firmware didn't say)
+		{
+			strcpy (Choices, "-");
+			n = 1;
+		}
+		m_Value[i][0][0] = '\0';
+	}
+	else
+	{
+		lv_snprintf (Choices, sizeof Choices, "%s", Options[i].pChoices);
+		for (; n < 6 && (n == 0 || Options[i].pValues[n]); n++)
+		{
+			lv_snprintf (m_Value[i][n], sizeof m_Value[i][n], "%s", Options[i].pValues[n] ? Options[i].pValues[n] : "");
+		}
+	}
+	m_nValues[i] = n;
+
+	const char *pValue = m_pHost->GetKernelOption (Options[i].pKey);
+	unsigned nSelected = 0;
+	if (pValue)
+	{
+		for (nSelected = 0; nSelected < n && strcmp (pValue, m_Value[i][nSelected]) != 0; nSelected++)
+		{
+		}
+		if (nSelected == n && i == OptionV3D)		// (not to be had, as the ARM's clock is: the maximum)
+		{
+			nSelected = 0;
+		}
+		else if (nSelected == n)
+		{
+			unsigned nLength = strlen (Choices);
+			lv_snprintf (Choices + nLength, sizeof Choices - nLength, "\n%s", pValue);
+		}
+	}
+	lv_dropdown_set_options (m_pOption[i], Choices);
+	lv_dropdown_set_selected (m_pOption[i], nSelected);
+}
+
+// a choice made: the option's value from now (none: the option left out)
+void CSettingsApp::SetOption (unsigned i, unsigned nChoice)
+{
+	const char *pNew = m_Value[i][nChoice];
+	m_pHost->SetKernelOption (Options[i].pKey, pNew[0] ? pNew : nullptr);
+	m_bKernelChanged = TRUE;
+	if (i == OptionCPU)		// the V3D's rates go with the ARM's: at its maximum
+	{				// the V3D's own is no more
+		const char *pCPU = m_pHost->GetKernelOption ("cpu");
+		if ((!pCPU || strcmp (pCPU, "low") != 0) && m_pHost->GetKernelOption ("v3d"))
+		{
+			m_pHost->SetKernelOption ("v3d", nullptr);
+		}
+		FillOption (OptionV3D);
+	}
+}
+
+// A choice that takes Settings away at the next start: sure? (Then only
+// cmdline.txt on the card, by the installer page or by hand, brings it back)
+void CSettingsApp::Warn (unsigned i, unsigned nChoice)
+{
+	m_nWarnOption = i;
+	m_nWarnChoice = nChoice;
+	char Text[200];
+	lv_snprintf (Text, sizeof Text, "%s\nTo get it back: the installer page, or cmdline.txt on the card.\n\nSet it?",
+		     Options[i].pWarning);
+	m_pWarning = lv_msgbox_create (nullptr);
+	lv_obj_set_width (m_pWarning, 290);
+	lv_msgbox_add_title (m_pWarning, LV_SYMBOL_WARNING "  Warning");
+	lv_msgbox_add_text (m_pWarning, Text);
+	m_pYes = lv_msgbox_add_footer_button (m_pWarning, "Yes");
+	m_pNo = lv_msgbox_add_footer_button (m_pWarning, "No");
+	lv_obj_set_style_bg_color (m_pYes, lv_palette_darken (LV_PALETTE_GREY, 2), 0);
+	lv_obj_set_size (m_pYes, 96, 38);			// (a finger's)
+	lv_obj_set_size (m_pNo, 96, 38);
+	lv_obj_set_style_pad_hor (lv_msgbox_get_content (m_pWarning), 12, 0);
+	lv_obj_set_style_pad_bottom (lv_msgbox_get_footer (m_pWarning), 10, 0);
+	lv_obj_add_event_cb (m_pYes, OnEvent, LV_EVENT_CLICKED, this);
+	lv_obj_add_event_cb (m_pNo, OnEvent, LV_EVENT_CLICKED, this);
+}
+
+void CSettingsApp::ShowKernel (void)
+{
+	lv_obj_t *pScreen = Page (ScreenKernel, "Kernel");
+	m_pHost->LoadKernelOptions ();
+	m_bKernelChanged = FALSE;
+
+	// the options: a list to scroll
+	lv_obj_t *pList = lv_obj_create (pScreen);
+	lv_obj_set_size (pList, WIDTH, HEIGHT - 50);
+	lv_obj_align (pList, LV_ALIGN_TOP_LEFT, 0, 50);
+	lv_obj_set_style_border_width (pList, 0, 0);
+	lv_obj_set_style_radius (pList, 0, 0);
+	lv_obj_set_style_pad_all (pList, 6, 0);
+	lv_obj_set_style_pad_row (pList, 6, 0);
+	lv_obj_set_flex_flow (pList, LV_FLEX_FLOW_COLUMN);
+	lv_obj_set_scroll_dir (pList, LV_DIR_VER);
+	for (unsigned i = 0; i < KernelOptions; i++)
+	{
+		lv_obj_t *pRow = lv_obj_create (pList);
+		lv_obj_set_size (pRow, WIDTH - 12, 42);
+		lv_obj_set_style_border_width (pRow, 0, 0);
+		lv_obj_set_style_pad_all (pRow, 0, 0);
+		lv_obj_set_style_bg_opa (pRow, LV_OPA_TRANSP, 0);
+		lv_obj_remove_flag (pRow, LV_OBJ_FLAG_SCROLLABLE);
+		Label (pRow, Options[i].pName, LV_ALIGN_LEFT_MID, 6, 0);
+
+		m_pOption[i] = lv_dropdown_create (pRow);
+		FillOption (i);
+		lv_obj_set_width (m_pOption[i], 132);
+		lv_obj_align (m_pOption[i], LV_ALIGN_RIGHT_MID, -2, 0);
+		lv_obj_add_event_cb (m_pOption[i], OnEvent, LV_EVENT_VALUE_CHANGED, this);
+	}
+}
+
+// the kernel's options changed and written (or not: no card): now, or later?
+void CSettingsApp::ShowRestart (boolean bWritten)
+{
+	lv_obj_t *pScreen = Page (ScreenRestart, "Kernel");
+	lv_obj_t *pText = Label (pScreen, bWritten ? "The kernel's settings are saved.\nThey take effect when piegpu restarts.\n\nRestart now?"
+						   : "The kernel's settings couldn't be saved:\ncmdline.txt can't be written\n(is there a card?)",
+				 LV_ALIGN_TOP_LEFT, 14, 62);
+	lv_obj_set_width (pText, WIDTH - 28);
+	lv_label_set_long_mode (pText, LV_LABEL_LONG_WRAP);
+	if (bWritten)
+	{
+		m_pRestart = Button (pScreen, "Restart now", LV_ALIGN_BOTTOM_LEFT, 14, -16, 140, 44);
+		lv_obj_add_event_cb (m_pRestart, OnEvent, LV_EVENT_CLICKED, this);
+	}
+	m_pLater = Button (pScreen, bWritten ? "Later" : "OK", LV_ALIGN_BOTTOM_RIGHT, -14, -16, 130, 44);
+	lv_obj_set_style_bg_color (m_pLater, lv_palette_darken (LV_PALETTE_GREY, 2), 0);
+	lv_obj_add_event_cb (m_pLater, OnEvent, LV_EVENT_CLICKED, this);
+}
+
+// a page left
+void CSettingsApp::Back (void)
+{
+	switch (m_Screen)
+	{
+	case ScreenKernel:
+		if (m_bKernelChanged)			// written now: Later keeps them for the next start
+		{
+			m_bKernelChanged = FALSE;
+			ShowRestart (m_pHost->SaveKernelOptions ());
+			break;
+		}
+		ShowRoot ();
+		break;
+
+	case ScreenTest:
+	case ScreenCalibrate:
+		ShowDisplay ();
+		break;
+
+	default:
+		ShowRoot ();
+		break;
 	}
 }
 
@@ -263,6 +601,7 @@ void CSettingsApp::ShowCalibrate (const char *pNote)
 {
 	m_Screen = ScreenCalibrate;
 	lv_obj_t *pScreen = NewScreen ();
+	Forget ();
 	lv_obj_set_style_bg_color (pScreen, lv_color_black (), 0);
 	m_pNote = Label (pScreen, pNote ? pNote : "Tap the targets", LV_ALIGN_TOP_MID, 0, 72);
 	m_pPosition = Label (pScreen, "", LV_ALIGN_TOP_MID, 0, 160);
@@ -296,13 +635,14 @@ void CSettingsApp::ShowTest (void)
 {
 	m_Screen = ScreenTest;
 	lv_obj_t *pScreen = NewScreen ();
+	Forget ();
 	m_pCanvas = lv_canvas_create (pScreen);
 	lv_canvas_set_buffer (m_pCanvas, m_pCanvasPixels, WIDTH, HEIGHT, LV_COLOR_FORMAT_RGB565);
 	lv_canvas_fill_bg (m_pCanvas, lv_color_hex (0x101418), LV_OPA_COVER);
 	lv_obj_remove_flag (m_pCanvas, LV_OBJ_FLAG_CLICKABLE);
 	m_pPosition = Label (pScreen, "Draw with a finger", LV_ALIGN_TOP_LEFT, 10, 12);
-	m_pBack = Button (pScreen, "Back", LV_ALIGN_TOP_RIGHT, -10, 8, 76, 34);
-	lv_obj_add_event_cb (m_pBack, OnEvent, LV_EVENT_ALL, this);
+	m_pBack = Button (pScreen, LV_SYMBOL_LEFT, LV_ALIGN_TOP_RIGHT, -10, 8, 46, 34);
+	lv_obj_add_event_cb (m_pBack, OnEvent, LV_EVENT_CLICKED, this);
 	m_bWaitRelease = m_bDown;		// (the press on Test isn't a stroke)
 }
 
@@ -324,31 +664,91 @@ void CSettingsApp::OnEvent (lv_event_t *pEvent)
 	CSettingsApp *pThis = (CSettingsApp *) lv_event_get_user_data (pEvent);
 	lv_obj_t *pTarget = (lv_obj_t *) lv_event_get_target (pEvent);
 	lv_event_code_t Code = lv_event_get_code (pEvent);
-	if (Code == LV_EVENT_VALUE_CHANGED && pTarget == pThis->m_pBrightness)
+	if (Code == LV_EVENT_VALUE_CHANGED)
 	{
-		int n = lv_slider_get_value (pTarget);
-		pThis->m_pBacklight->SetBrightness (n);
-		Percent (pThis->m_pBrightnessValue, n);
-		pThis->m_bChanged = TRUE;
-	}
-	else if (Code == LV_EVENT_VALUE_CHANGED && pTarget == pThis->m_pVolume)
-	{
-		int n = lv_slider_get_value (pTarget);
-		pThis->m_pAudio->SetVolume (n);
-		Percent (pThis->m_pVolumeValue, n);
-		pThis->m_bChanged = TRUE;
-	}
-	else if (Code != LV_EVENT_CLICKED)
-	{
-	}
-	else if (pTarget == pThis->m_pDone)
-	{
-		if (pThis->m_bChanged && pThis->m_pSave)
+		if (pTarget == pThis->m_pBrightness)
 		{
-			(*pThis->m_pSave) (pThis->m_pSaveParam);
+			int n = lv_slider_get_value (pTarget);
+			pThis->m_pBacklight->SetBrightness (n);
+			Percent (pThis->m_pBrightnessValue, n);
+			pThis->m_bChanged = TRUE;
+		}
+		else if (pTarget == pThis->m_pVolume)
+		{
+			int n = lv_slider_get_value (pTarget);
+			pThis->m_pAudio->SetVolume (n);
+			Percent (pThis->m_pVolumeValue, n);
+			pThis->m_bChanged = TRUE;
+		}
+		else if (pTarget == pThis->m_pBluetooth)
+		{
+			pThis->m_pHost->SetBluetooth (lv_obj_has_state (pTarget, LV_STATE_CHECKED));
+			pThis->m_bChanged = TRUE;
+		}
+		else if (pTarget == pThis->m_pMute)
+		{
+			pThis->m_pAudio->SetMute (lv_obj_has_state (pTarget, LV_STATE_CHECKED));
+			pThis->ShowMuted ();
+			pThis->m_bChanged = TRUE;
+		}
+		for (unsigned i = 0; i < KernelOptions; i++)
+		{
+			if (pTarget == pThis->m_pOption[i])
+			{
+				// one of its choices: its value (none: the option left out); the
+				// one more, that the card had: as it was
+				unsigned n = lv_dropdown_get_selected (pTarget);
+				if (n >= pThis->m_nValues[i])
+				{
+					continue;
+				}
+				const char *pOld = pThis->m_pHost->GetKernelOption (Options[i].pKey);
+				const char *pNew = pThis->m_Value[i][n];
+				pOld = pOld ? pOld : pThis->m_Value[i][0];	// (left out: its default)
+				if (strcmp (pOld, pNew) == 0)
+				{
+					continue;
+				}
+				if (Options[i].pWarnValue && strcmp (pNew, Options[i].pWarnValue) == 0)
+				{
+					pThis->Warn (i, n);
+				}
+				else
+				{
+					pThis->SetOption (i, n);
+				}
+			}
+		}
+		return;
+	}
+	if (Code != LV_EVENT_CLICKED)
+	{
+		return;
+	}
+	if (pTarget == pThis->m_pDone)
+	{
+		if (pThis->m_bChanged)
+		{
+			pThis->m_pHost->SaveSettings ();
 		}
 		pThis->m_bOpen = FALSE;
 		LOGNOTE ("Settings closed%s", pThis->m_bChanged ? " (saved)" : "");
+	}
+	else if (pTarget == pThis->m_pBack)
+	{
+		pThis->Back ();
+	}
+	else if (pTarget == pThis->m_pMenu[0])
+	{
+		pThis->ShowDisplay ();
+	}
+	else if (pTarget == pThis->m_pMenu[1])
+	{
+		pThis->ShowAudio ();
+	}
+	else if (pTarget == pThis->m_pMenu[2])
+	{
+		pThis->ShowKernel ();
 	}
 	else if (pTarget == pThis->m_pCalibrate)
 	{
@@ -358,9 +758,34 @@ void CSettingsApp::OnEvent (lv_event_t *pEvent)
 	{
 		pThis->ShowTest ();
 	}
-	else if (pTarget == pThis->m_pBack)
+	else if (pTarget == pThis->m_pYes || pTarget == pThis->m_pNo)
 	{
-		pThis->ShowMain ();
+		if (pTarget == pThis->m_pYes)
+		{
+			pThis->SetOption (pThis->m_nWarnOption, pThis->m_nWarnChoice);
+		}
+		else
+		{
+			pThis->FillOption (pThis->m_nWarnOption);	// (as it was)
+		}
+		lv_msgbox_close_async (pThis->m_pWarning);
+		pThis->m_pWarning = pThis->m_pYes = pThis->m_pNo = nullptr;
+	}
+	else if (pTarget == pThis->m_pSoundTest)
+	{
+		lv_label_set_text (pThis->m_pNote, pThis->m_pHost->TestSound ());
+	}
+	else if (pTarget == pThis->m_pRestart)
+	{
+		if (pThis->m_bChanged)
+		{
+			pThis->m_pHost->SaveSettings ();
+		}
+		pThis->m_pHost->Restart ();
+	}
+	else if (pTarget == pThis->m_pLater)
+	{
+		pThis->ShowRoot ();
 	}
 }
 
