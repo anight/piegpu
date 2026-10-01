@@ -330,7 +330,7 @@ Apache 2.0). The controller runs as it comes, without Broadcom's patch file.
 
 - **The speakers paired with** are remembered in `speakers.txt` on the card
   (address, key, name; the last used first; up to 8). While none is connected
-  they are called in turn every 20 s, and a call from one of them is taken:
+  they are called in turn every 10 s, and a call from one of them is taken:
   a speaker switched on is back by itself. Settings pairs and forgets.
 - **Where the sound goes:** to the speaker while its stream is there, else
   to HDMI; decided when a host's stream (or the test sound) starts. The

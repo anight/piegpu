@@ -18,7 +18,7 @@ LOGMODULE ("bt");
 #define SCAN_PAUSE_US		3000000		// between scans
 #define KEEP_SCANS		3		// a device not seen for so many scans is gone
 #define LINK_TIMEOUT_US		30000000	// a connection not ready after so long is given up
-#define RECALL_US		20000000	// the paired speaker called again so often
+#define RECALL_US		10000000	// a paired speaker called again so often (a call takes 5 s)
 #define THEIR_CHANNEL_US	1500000		// a speaker that called opens the stream's channel itself: so long for it
 
 // class of device: Audio/Video, hi-fi audio; it captures, it's audio
@@ -111,12 +111,26 @@ void CBluetooth::SetEnabled (boolean bOn)
 	}
 	if (!bOn)
 	{
+		// the speaker first let go as it should be (it knows at once, and
+		// takes our call when Bluetooth is on again): its answer waited for,
+		// a moment
+		m_bPending = FALSE;
+		if (m_State == StateReady && m_Link != LinkNone)
+		{
+			HangUp ("");
+			unsigned nStart = CTimer::GetClockTicks ();
+			while (m_Link != LinkNone && CTimer::GetClockTicks () - nStart < 500000)
+			{
+				m_HCI.Update ();
+			}
+		}
 		if (m_Link != LinkNone)
 		{
+			m_Link = LinkClosing;		// (its channels go with it: nothing to hang up)
 			m_L2CAP.LinkDown ();
 			m_Link = LinkNone;
 		}
-		m_bPending = FALSE;
+		m_LinkError[0] = '\0';
 		m_HCI.Restart ();
 		m_HCI.Command (HCI_RESET);	// (quiet: no scans, no links)
 		m_HCI.Update ();
@@ -360,6 +374,14 @@ void CBluetooth::Update (void)
 	{
 		Call ();
 	}
+	else if (   m_Link == LinkNone && m_nBonds && !m_bUserHangUp && nNow - m_nLastCall >= RECALL_US
+		 && !m_bInquiring && !m_bNaming)
+	{
+		// the speakers paired with: called in turn, till one is there (between
+		// the scans too: one waiting to be called isn't found by them)
+		m_nLastCall = nNow;
+		Connect (m_Bond[m_nCallNext++ % m_nBonds].Address);
+	}
 	else if (m_bScanning && !m_AVDTP.IsStreaming ())
 	{
 		// (with a speaker connected too, while no sound goes to it: another one may be chosen)
@@ -367,12 +389,6 @@ void CBluetooth::Update (void)
 		{
 			Inquire ();
 		}
-	}
-	else if (m_Link == LinkNone && m_nBonds && !m_bUserHangUp && nNow - m_nLastCall >= RECALL_US)
-	{
-		// the speakers paired with: called in turn, till one is there
-		m_nLastCall = nNow;
-		Connect (m_Bond[m_nCallNext++ % m_nBonds].Address);
 	}
 }
 
