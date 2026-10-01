@@ -87,3 +87,16 @@ demo_program(wifi texview -a a_pos:float:2 -v triangles)
 target_include_directories(wifi PRIVATE ${CMAKE_CURRENT_LIST_DIR}/wifi)
 target_link_libraries(wifi pico_cyw43_arch_lwip_threadsafe_background pico_lwip_sntp pico_rand pico_flash hardware_flash)
 target_compile_definitions(wifi PRIVATE PICO_FLASH_ASSUME_CORE1_SAFE=1)
+
+# ---- keyboard: a Bluetooth keyboard, Classic or LE (keyboard/) ----------------------
+# picosdl's keyboard host on BTstack (keyboard/bt), the state and what's typed on
+# the screen. The radio's driver and BTstack run in the background; BTstack keeps
+# the keyboard and its keys in the last two sectors of the flash (core 1 isn't
+# started, so they're written without asking it).
+pico_host_executable(keyboard keyboard/keyboard.c keyboard/psdl_pico_log.c keyboard/bt/bt_app.c keyboard/bt/bt_le.c
+	keyboard/bt/bt_classic.c keyboard/bt/hid_report.c keyboard/bt/kbd_decode.c keyboard/bt/debug.c)
+target_include_directories(keyboard PRIVATE ${CMAKE_CURRENT_LIST_DIR}/keyboard ${CMAKE_CURRENT_LIST_DIR}/keyboard/bt)
+pico_btstack_make_gatt_header(keyboard PRIVATE ${CMAKE_CURRENT_LIST_DIR}/keyboard/bt/kbd_host.gatt)
+target_link_libraries(keyboard pico_btstack_ble pico_btstack_classic pico_btstack_cyw43
+	pico_cyw43_arch_threadsafe_background pico_multicore pico_rand)
+target_compile_definitions(keyboard PRIVATE CYW43_LWIP=0 PICO_FLASH_ASSUME_CORE1_SAFE=1)

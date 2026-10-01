@@ -1,0 +1,23 @@
+A Bluetooth HID keyboard host on BTstack, Classic and LE: picosdl's
+(backend/pico/bt, with ../psdl_pico_log.[ch], its interrupt-safe console
+output), BSD-2-Clause as piegpu is, by the same author.
+
+Changed here: the device is called "piegpu"; bt_app tells a screen what it's
+doing and which digits pairing wants typed (bt_app_get_status,
+bt_app_show_passkey: the two transports call the latter).
+
+btstack_config.h is derived from the pico-examples Pico W Bluetooth
+configuration, and kbd_host.gatt follows BTstack's own example, so this
+directory carries BSD-3-Clause material:
+
+  Copyright (C) 2009 BlueKitchen GmbH
+  Copyright (c) 2020 Raspberry Pi (Trading) Ltd.
+
+BSD-3-Clause adds a no-endorsement clause that BSD-2-Clause does not have: the
+names of the copyright holders and of their contributors may not be used to
+endorse or promote products derived from this software without specific prior
+written permission.
+
+BTstack itself is in the Pico SDK, not distributed here; on Raspberry Pi's
+Pico W boards it is used under their licence for it (the SDK's
+src/rp2_common/pico_btstack/LICENSE.RP).

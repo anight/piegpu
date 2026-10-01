@@ -1,0 +1,11 @@
+// The GATT database this host exposes, which is only its own name.
+//
+// Two lines, and they are BTstack's example boilerplate with the name changed -
+// the syntax is fixed by BTstack's GATT compiler. See README here for the
+// BSD-3-Clause notice that covers it.
+//
+// Keep the name in step with gap_set_local_name() in bt_app.c: this is what a
+// connected peer reads, that is what it sees while scanning, and two different
+// answers to "what is this device called" is a confusing thing to debug.
+PRIMARY_SERVICE, GAP_SERVICE
+CHARACTERISTIC, GAP_DEVICE_NAME, READ, "piegpu"
