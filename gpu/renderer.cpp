@@ -634,11 +634,13 @@ boolean CRenderer::CopyToTiled (u32 nSrcBus, u32 nDstBus, unsigned nWidth, unsig
 // and swap
 void CRenderer::Present (TRenderStats *pStats)
 {
+	m_pOutput->Prepare (m_pFrameBuffer[m_nBuffer]);	// (while the frame before goes out)
+
 	unsigned nStart = CTimer::GetClockTicks ();
 	m_pOutput->WaitIdle ();
+	m_pOutput->Show (m_pFrameBuffer[m_nBuffer], PanelDone, this);	// (the panel: in step with its scan)
 	unsigned nWaitUs = CTimer::GetClockTicks () - nStart;
 
-	m_pOutput->Show (m_pFrameBuffer[m_nBuffer], PanelDone, this);
 	m_nBuffer = (m_nBuffer + 1) % m_nBuffers;
 
 	m_PinFrame.Write (HIGH);		// FRAME pulse (>= 10 us)

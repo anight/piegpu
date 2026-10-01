@@ -26,10 +26,10 @@ set(mmal ${ul}/core/mmal_format.c ${ul}/core/mmal_port.c ${ul}/core/mmal_port_cl
 	 ${ul}/vc/mmal_vc_opaque_alloc.c ${ul}/vc/mmal_vc_shm.c)
 
 add_executable(gpu
-	main.cpp build_info.cpp kernel.cpp commands.cpp geometry.cpp textures.cpp programs.cpp renderer.cpp
+	main.cpp build_info.cpp kernel.cpp settings.cpp commands.cpp geometry.cpp textures.cpp programs.cpp renderer.cpp
 	link/i2s_link.cpp link/byte_stream_link.cpp link/usb_link.cpp link/usb_bulk_link.cpp
-	display/panel_output.cpp display/touch.cpp display/hdmi_output.cpp display/hdmi_monitor.cpp display/gud_display.cpp
-	video/video.cpp audio/audio.cpp audio/audio_out.cpp install/installer.cpp
+	display/panel_output.cpp display/touch.cpp display/backlight.cpp display/hdmi_output.cpp display/hdmi_monitor.cpp display/gud_display.cpp
+	video/video.cpp audio/audio.cpp audio/audio_out.cpp install/installer.cpp ui/settings_app.cpp
 	${ROOT}/drivers/v3d.cpp ${ROOT}/drivers/v3dcheck.cpp ${ROOT}/drivers/st7789dma.cpp
 	${ROOT}/devtools/devlink.cpp ${ROOT}/devtools/runlog.cpp ${ROOT}/devtools/pgpugadget.cpp
 	video/compat/circle_vcos.c video/compat/circle_micros.cpp ${mmal}
@@ -71,6 +71,16 @@ add_dependencies(gpu build_info_values)
 # Ogg Vorbis, audio/vorbis.c with Tremor and libogg (audio/tremor, BSD-3-Clause:
 # <ogg/ogg.h> from there; alloca is the compiler's; its C library shim
 # force-included)
+# LVGL (third_party/circle/addon/lvgl/lvgl, MIT): the Settings app's widgets
+# (gpu/ui), its configuration gpu/ui/lv_conf.h
+file(GLOB_RECURSE lvgl_sources ${ROOT}/third_party/circle/addon/lvgl/lvgl/src/*.c)
+add_library(lvgl STATIC ${lvgl_sources})
+target_link_libraries(lvgl PUBLIC circle_flags)
+target_compile_definitions(lvgl PUBLIC LV_CONF_INCLUDE_SIMPLE)
+target_include_directories(lvgl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ui ${ROOT}/third_party/circle/addon/lvgl/lvgl
+	PRIVATE ${CIRCLE_INCLUDE_DIRS})
+target_compile_options(lvgl PRIVATE -w)
+
 file(GLOB libfaad audio/faad2/libfaad/*.c)
 file(GLOB tremor audio/tremor/*.c audio/tremor/libogg/*.c)
 add_library(audio_codecs STATIC ${libfaad} audio/faad2/compat/faad_circle.c audio/aac.c audio/mp3.c
@@ -87,6 +97,6 @@ target_compile_options(audio_codecs PRIVATE -DHAVE_INTTYPES_H=1 -DHAVE_STRING_H=
 set_source_files_properties(${libfaad} PROPERTIES
 	COMPILE_OPTIONS "-include;${CMAKE_CURRENT_SOURCE_DIR}/audio/faad2/compat/faad_circle.h")
 
-target_link_libraries(gpu PRIVATE audio_codecs circle_sdcard circle_fatfs circle_vcos circle_vchiqsound circle_vchiq
+target_link_libraries(gpu PRIVATE audio_codecs lvgl circle_sdcard circle_fatfs circle_vcos circle_vchiqsound circle_vchiq
 	circle_linuxemu circle_usb circle_usbgadget circle_input circle_fs circle_sched circle_sound circle)
 circle_kernel(gpu)

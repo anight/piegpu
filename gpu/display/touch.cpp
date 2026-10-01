@@ -36,6 +36,8 @@ CTouch::CTouch (CPanelOutput *pPanel)
 	m_nLastReading (0),
 	m_nSeen (0),
 	m_bDown (FALSE),
+	m_nGood (0),
+	m_nIdle (0),
 	m_nPresses (0),
 	m_nX (0), m_nY (0), m_nRawX (0), m_nRawY (0), m_nPressure (0)
 {
@@ -140,6 +142,13 @@ void CTouch::AuxRoutine (const u8 *pRx, void *pParam)
 	pThis->m_nReadings = pThis->m_nReadings + 1;
 }
 
+// how far apart the closest two are
+int CTouch::Spread (int a, int b, int c)
+{
+	int ab = a > b ? a - b : b - a, ac = a > c ? a - c : c - a, bc = b > c ? b - c : c - b;
+	return ab < ac ? (ab < bc ? ab : bc) : (ac < bc ? ac : bc);
+}
+
 int CTouch::BestTwo (int a, int b, int c)
 {
 	int ab = a > b ? a - b : b - a, ac = a > c ? a - c : c - a, bc = b > c ? b - c : c - b;
@@ -177,23 +186,40 @@ boolean CTouch::Update (u32 *pPayload)
 	int nY = BestTwo (VALUE (r + 6), VALUE (r + 10), VALUE (r + 14));
 	int nX = BestTwo (VALUE (r + 8), VALUE (r + 12), VALUE (r + 16));
 	int nPressure = nZ1 + 4095 - nZ2;
-	if (nZ1 == 0)
-	{
-		nPressure = 0;				// (not touched: Z1 reads 0)
-	}
 
-	boolean bDown = m_bDown;
-	if (nPressure >= Pressed)
+	// a touch: pressed hard enough, its X and Y readings agreeing (the best
+	// two of each), twice running. Let go: Z1 near 0 (nothing pressed), twice
+	// running. Any other reading changes nothing: now and then one comes with
+	// Z2 at full scale and a Z1 that says pressed (nothing is: a touch pulls
+	// Z2 down), or with its X or Y readings apart
+	boolean bAgree =    Spread (VALUE (r + 6), VALUE (r + 10), VALUE (r + 14)) <= MaxSpread
+			 && Spread (VALUE (r + 8), VALUE (r + 12), VALUE (r + 16)) <= MaxSpread;
+	boolean bDown = m_bDown, bTouched = FALSE;
+	if (nZ1 < MinZ1)
 	{
-		bDown = TRUE;
+		m_nGood = 0;
+		if (++m_nIdle >= 2)
+		{
+			bDown = FALSE;
+		}
 	}
-	else if (nPressure < Released)
+	else if (nZ2 <= MaxZ2 && nPressure >= Pressed && bAgree)
 	{
-		bDown = FALSE;
+		m_nIdle = 0;
+		bDown = m_bDown || ++m_nGood >= 2;
+		bTouched = TRUE;
+	}
+	else
+	{
+		return FALSE;
+	}
+	if (!bDown && !m_bDown)
+	{
+		return FALSE;				// (still not touched: nothing new)
 	}
 
 	boolean bChanged = bDown != m_bDown;
-	if (bDown)
+	if (bDown && bTouched)				// (where: a touched reading's)
 	{
 		int nA = m_bSwap ? nY : nX, nB = m_bSwap ? nX : nY;
 		int x = (nA - m_nX0) * (WIDTH - 1) / (m_nX1 - m_nX0);
@@ -227,4 +253,25 @@ void CTouch::GetState (u32 *pPayload) const
 	pPayload[1] = m_nX | (u32) m_nY << 16;
 	pPayload[2] = m_nRawX | (u32) m_nRawY << 16;
 	pPayload[3] = m_nPressure;
+}
+
+void CTouch::SetCalibration (int nX0, int nX1, int nY0, int nY1, boolean bSwap)
+{
+	if (nX0 == nX1 || nY0 == nY1)
+	{
+		return;
+	}
+	m_nX0 = nX0;
+	m_nX1 = nX1;
+	m_nY0 = nY0;
+	m_nY1 = nY1;
+	m_bSwap = bSwap;
+	LOGNOTE ("Touch: calibration now %s", (const char *) GetCalibration ());
+}
+
+CString CTouch::GetCalibration (void) const
+{
+	CString Value;
+	Value.Format ("%d,%d,%d,%d,%u", m_nX0, m_nX1, m_nY0, m_nY1, m_bSwap ? 1 : 0);
+	return Value;
 }

@@ -43,6 +43,10 @@ public:
 
 	/// \brief Show a whole frame (GetWidth x GetHeight RGB565 pixels)
 	/// \param pDone Called (maybe from an interrupt) once the pixels have been taken
+	/// \brief The frame Show will get next: what can be done for it while
+	///	   the frame before is still going out
+	virtual void Prepare (const void *pPixels)	{ }
+
 	virtual void Show (const void *pPixels, TDoneRoutine *pDone, void *pParam) = 0;
 
 	/// \brief Wait until the frame shown last has been taken

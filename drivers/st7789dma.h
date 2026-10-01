@@ -58,12 +58,25 @@ public:
 	void SetPixel (unsigned nPosX, unsigned nPosY, TRawColor nColor);
 
 	/// \brief Transfer an area by DMA
-	/// \param pPixels RGB565 (byte order as configured), 4-byte aligned, unchanged until done
+	/// \param pPixels RGB565 (byte order as configured), 4-byte aligned; copied
+	///	   (turned into the panel's order) before this returns
 	/// \param pRoutine If given, returns immediately and calls pRoutine (from
 	///	   interrupt context) when the transfer is done; otherwise waits
 	void SetArea (const TArea &rArea, const void *pPixels,
 		      TAreaCompletionRoutine *pRoutine = nullptr,
 		      void *pParam = nullptr);
+
+	/// \brief A whole frame made ready to send (turned into the panel's
+	///	   order), while the frame before may still be going out
+	void PrepareFrame (const void *pPixels);
+
+	/// \brief Send the frame made ready, after the one before, starting at a
+	///	   fixed point of the panel's scan (so the two never cross: no tearing)
+	void ShowFrame (TAreaCompletionRoutine *pRoutine = nullptr, void *pParam = nullptr);
+
+	/// \return The line the panel is refreshing now (GSCAN: 0 .. its lines
+	///	    with the porches, about 344 a frame); the bus idle
+	unsigned GetScanLine (void);
 
 	/// \return Is a DMA transfer running?
 	boolean IsBusy (void) const		{ return m_bBusy; }
@@ -92,6 +105,8 @@ public:
 
 private:
 	void SetWindow (unsigned x0, unsigned y0, unsigned x1, unsigned y1);
+	static void Turn (const u16 *pFrom, unsigned nWidth, unsigned nHeight, u16 *pTo);
+	void Send (const TArea &rArea, TAreaCompletionRoutine *pRoutine, void *pParam);
 	void Command (u8 uchCmd);
 	void Data (const void *pData, size_t nLength);
 	void Data8 (u8 uchData)			{ Data (&uchData, 1); }
@@ -121,6 +136,11 @@ private:
 	void *m_pAuxParam;
 
 	u8 *m_pDummyRx;				// RX DMA target (SPI is full duplex)
+
+	// what's sent, in the panel's order: one going out, one being made
+	u16 *m_pTurned[2];
+	unsigned m_nFree;			// the one not going out
+	static const unsigned SyncFirst = 20, SyncLast = 300;	// a frame starts with the scan here
 
 	const u8 * volatile m_pNext;		// next chunk of the running transfer
 	volatile size_t m_nRemaining;

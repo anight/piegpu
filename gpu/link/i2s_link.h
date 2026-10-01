@@ -49,6 +49,10 @@ public:
 
 	boolean Initialize (void);
 
+	/// \brief Hold: READY stays low (the host waits before its next batch)
+	///	   whatever room there is, until let go
+	void SetHold (boolean bHold);
+
 	/// \brief Return the next valid packet, or nullptr if none is complete yet
 	/// \param pHeader Receives the header word
 	/// \return Payload (LENGTH words), valid until the next call
@@ -102,6 +106,7 @@ private:
 	u32 *m_pControlBlock;
 
 	boolean m_bReady;
+	boolean m_bHold;				// READY kept low (SetHold)
 
 	u32 *m_pTxRing;
 	u32 m_nTxRingBus;

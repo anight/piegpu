@@ -83,6 +83,16 @@ void CAudio::SetDefaultVolume (unsigned nPercent)
 	m_nDefaultVolume = nPercent > 100 ? 100 : nPercent;
 }
 
+void CAudio::SetVolume (unsigned nPercent)
+{
+	SetDefaultVolume (nPercent);
+	m_nVolume = m_nDefaultVolume;
+	if (m_pOut)				// (a stream's output)
+	{
+		SetOutputVolume ();
+	}
+}
+
 u32 CAudio::Open (u32 nCodec, unsigned nVideoStream, const u8 *pConfig, unsigned nConfigBytes)
 {
 	Close ();

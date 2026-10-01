@@ -5,6 +5,7 @@
 #include <circle/gpiopin.h>
 #include <circle/machineinfo.h>
 #include <circle/logger.h>
+#include <circle/synchronize.h>
 #include <circle/timer.h>
 #include <circle/util.h>
 
@@ -34,14 +35,44 @@ static unsigned SPIClockSpeed (void)
 
 CPanelOutput::CPanelOutput (CInterruptSystem *pInterrupt)
 :	m_Display (pInterrupt, DC_PIN, RESET_PIN, WIDTH, HEIGHT, SPIClockSpeed (), 0,
-		   TRUE)			// little endian RGB565 from the V3D
+		   TRUE),			// little endian RGB565 from the V3D
+	m_bHeld (FALSE),
+	m_nHeldShow (0),
+	m_pPrepared (nullptr)
 {
+}
+
+// the frame turned for the panel (read from where the V3D wrote it: not
+// what the cache may have of it)
+void CPanelOutput::Prepare (const void *pPixels)
+{
+	if (m_bHeld)
+	{
+		return;
+	}
+	CleanAndInvalidateDataCacheRange ((uintptr) pPixels, WIDTH * HEIGHT * sizeof (u16));
+	m_Display.PrepareFrame (pPixels);
+	m_pPrepared = pPixels;
 }
 
 void CPanelOutput::Show (const void *pPixels, TDoneRoutine *pDone, void *pParam)
 {
-	const CDisplay::TArea Full = {0, WIDTH - 1, 0, HEIGHT - 1};
-	m_Display.SetArea (Full, pPixels, pDone, pParam);
+	if (m_bHeld)				// not shown, but no faster than the panel takes them
+	{
+		while (CTimer::GetClockTicks () - m_nHeldShow < HeldFrameUs)
+		{
+			CTimer::SimpleusDelay (100);
+		}
+		m_nHeldShow = CTimer::GetClockTicks ();
+		return;				// (the renderer's routine does nothing: WaitIdle syncs)
+	}
+	if (m_pPrepared != pPixels)
+	{
+		m_Display.WaitIdle ();
+		Prepare (pPixels);
+	}
+	m_pPrepared = nullptr;
+	m_Display.ShowFrame (pDone, pParam);
 }
 
 // ---- reading the panel's registers ----------------------------------------------

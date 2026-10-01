@@ -47,9 +47,17 @@ public:
 	// a line from the host that starts with "PGI " (no line end)
 	void Command (char *pLine);
 
+	// a file from the card into pBuffer (up to nSize bytes); its length, or
+	// -1 if there's no card or no such file (said nothing to the host)
+	int ReadFile (const char *pName, char *pBuffer, unsigned nSize);
+
+	// a file onto the card (as <name>.new, then renamed); FALSE if it can't
+	// be (said nothing to the host)
+	boolean WriteFile (const char *pName, const void *pData, unsigned nBytes);
+
 private:
-	boolean InitCard (void);
-	boolean Mount (void);
+	boolean InitCard (boolean bQuiet = FALSE);
+	boolean Mount (boolean bQuiet = FALSE);
 	void Format (void);
 	void Info (void);
 	void Put (const char *pName, const char *pBytes, const char *pCRC);

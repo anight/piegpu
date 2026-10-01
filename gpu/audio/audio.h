@@ -40,6 +40,10 @@ public:
 	/// \param nPercent the volume a stream starts with (the volume= option)
 	void SetDefaultVolume (unsigned nPercent);
 
+	/// \brief The volume from now on: the default, and the stream's (core 0)
+	void SetVolume (unsigned nPercent);
+	unsigned GetDefaultVolume (void) const	{ return m_nDefaultVolume; }
+
 	// the commands (docs/protocol.md 7.13): 0 or a PGPU_ERR_* code
 	u32 Open (u32 nCodec, unsigned nVideoStream, const u8 *pConfig, unsigned nConfigBytes);
 	u32 Data (u32 nFlags, s64 nPTS, unsigned nSampleBytes, const u8 *pData, unsigned nBytes);

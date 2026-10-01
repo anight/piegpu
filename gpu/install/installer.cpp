@@ -180,7 +180,7 @@ void CInstaller::Command (char *pLine)
 }
 
 // the card's driver (on first use: a card put in after boot is found too)
-boolean CInstaller::InitCard (void)
+boolean CInstaller::InitCard (boolean bQuiet)
 {
 	if (!m_pBuffer)
 	{
@@ -193,7 +193,10 @@ boolean CInstaller::InitCard (void)
 		{
 			delete m_pEMMC;			// again at the next command
 			m_pEMMC = nullptr;
-			Reply ("INFO %s card=0 error=no-card", (const char *) Board ());
+			if (!bQuiet)
+			{
+				Reply ("INFO %s card=0 error=no-card", (const char *) Board ());
+			}
 			return FALSE;
 		}
 		LOGNOTE ("SD card: %llu MB", m_pEMMC->GetSize () >> 20);
@@ -201,17 +204,21 @@ boolean CInstaller::InitCard (void)
 	return TRUE;
 }
 
-boolean CInstaller::Mount (void)
+boolean CInstaller::Mount (boolean bQuiet)
 {
 	if (m_bMounted)
 	{
 		return TRUE;
 	}
-	if (!InitCard ())
+	if (!InitCard (bQuiet))
 	{
 		return FALSE;
 	}
 	FRESULT Result = f_mount (&m_FileSystem, DRIVE, 1);
+	if (Result != FR_OK && bQuiet)
+	{
+		return FALSE;
+	}
 	if (Result != FR_OK)
 	{
 		Reply ("INFO %s card=1 size=%llu fs=none error=%s", (const char *) Board (), m_pEMMC->GetSize () >> 20,
@@ -505,4 +512,53 @@ boolean CInstaller::ValidName (const char *pName)
 		}
 	}
 	return n > 0 && n < 60 && pName[0] != '.';
+}
+
+int CInstaller::ReadFile (const char *pName, char *pBuffer, unsigned nSize)
+{
+	if (!ValidName (pName) || !Mount (TRUE))
+	{
+		return -1;
+	}
+	CString Path;
+	Path.Format (DRIVE "/%s", pName);
+	FIL File;
+	if (f_open (&File, Path, FA_READ) != FR_OK)
+	{
+		return -1;
+	}
+	UINT nRead = 0;
+	FRESULT Result = f_read (&File, pBuffer, nSize, &nRead);
+	f_close (&File);
+	return Result == FR_OK ? (int) nRead : -1;
+}
+
+boolean CInstaller::WriteFile (const char *pName, const void *pData, unsigned nBytes)
+{
+	if (!ValidName (pName) || m_bOpen || !Mount (TRUE))	// (not while the host sends a file)
+	{
+		return FALSE;
+	}
+	CString Path, Temp;
+	Path.Format (DRIVE "/%s", pName);
+	Temp.Format (DRIVE "/%s.new", pName);
+	FIL File;
+	if (f_open (&File, Temp, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK)
+	{
+		return FALSE;
+	}
+	UINT nWritten = 0;
+	FRESULT Result = f_write (&File, pData, nBytes, &nWritten);
+	if (f_close (&File) != FR_OK || Result != FR_OK || nWritten != nBytes)
+	{
+		f_unlink (Temp);
+		return FALSE;
+	}
+	f_unlink (Path);				// (there may be none)
+	if (f_rename (Temp, Path) != FR_OK)
+	{
+		return FALSE;
+	}
+	LOGNOTE ("Wrote %s: %u bytes", pName, nBytes);
+	return TRUE;
 }

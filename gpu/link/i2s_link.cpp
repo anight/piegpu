@@ -48,6 +48,7 @@ CI2SLink::CI2SLink (void)
 	m_nRead (0),
 	m_nInvalidated (0),
 	m_bReady (FALSE),
+	m_bHold (FALSE),
 	m_pTxRing (nullptr),
 	m_nTxPos (0),
 	m_nTxLastIndex (0),
@@ -431,6 +432,12 @@ const u32 *CI2SLink::GetPacket (u32 *pHeader)
 	}
 }
 
+void CI2SLink::SetHold (boolean bHold)
+{
+	m_bHold = bHold;
+	UpdateReady ();
+}
+
 void CI2SLink::UpdateReady (void)
 {
 	unsigned nFill = Available ();
@@ -440,6 +447,15 @@ void CI2SLink::UpdateReady (void)
 	}
 
 	unsigned nFree = RingWords - nFill;
+	if (m_bHold)				// (held: not ready, whatever room there is)
+	{
+		if (m_bReady)
+		{
+			m_bReady = FALSE;
+			m_PinReady.Write (LOW);
+		}
+		return;
+	}
 	if (m_bReady && nFree < ReadyLowWords)
 	{
 		m_bReady = FALSE;

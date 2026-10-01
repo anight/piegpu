@@ -66,6 +66,11 @@ CKernel::CKernel (void)
 	m_Renderer (&m_V3D),
 	m_Commands (&m_Renderer, &m_I2SLink),
 	m_Audio (&m_VCHIQ, m_Commands.GetVideo ()),
+	m_SettingsApp (&m_Touch, &m_Backlight, &m_Audio),
+	m_bPressing (FALSE),
+	m_nPressStart (0),
+	m_nPressX (0),
+	m_nPressY (0),
 #ifdef ARM_ALLOW_MULTI_CORE
 	m_Cores (&m_Audio),
 #endif
@@ -88,7 +93,6 @@ boolean CKernel::Initialize (void)
 	m_bGUD = strcmp (m_Options.GetAppOptionString ("gud", "off"), "on") == 0;	// (off by default)
 	m_bJobCheck = strcmp (m_Options.GetAppOptionString ("clcheck", "on"), "off") != 0;
 	m_nHDMIPixels = m_Options.GetAppOptionDecimal ("hdmi_pixels", m_nHDMIPixels);
-	m_Audio.SetDefaultVolume (m_Options.GetAppOptionDecimal ("volume", 10));	// percent
 	m_Commands.SetAudio (&m_Audio);
 	if (m_nHDMIPixels < 320 * 240 || m_nHDMIPixels > CRenderer::MaxPixels)
 	{
@@ -103,17 +107,141 @@ boolean CKernel::Initialize (void)
 	       && (!m_bGUD || m_GUD.Initialize ())	// (before the gadget starts)
 	       && (m_Gadget.SetStream (&m_USBBulkLink), TRUE)
 	       && m_DevLink.Initialize ()
+	       && LoadSettings ()
 	       && DetectPanel ()
 	       && m_VCHIQ.Initialize ()
 	       && (!(m_bPanelPresent || m_OutputMode == OutputPanel) || m_Panel.Initialize ())
+	       && (!m_bPanelPresent || (m_Backlight.Initialize (atoi (Setting ("brightness", "100"))), TRUE))
 	       && (!m_bPanelPresent		// (touch=off, or none there: without)
-		   || (m_Touch.Initialize (m_Options.GetAppOptionString ("touch", "auto"),
-					   m_Options.GetAppOptionString ("touchcal")), TRUE))
+		   || (m_Touch.Initialize (Setting ("touch", "auto"), Setting ("touchcal")), TRUE))
 	       && (m_OutputMode == OutputPanel || m_HDMI.Initialize ())
 #ifdef ARM_ALLOW_MULTI_CORE
 	       && m_Cores.Initialize ()
 #endif
 	       ;
+}
+
+// the user's settings (settings.txt on the card, if there's one): read once,
+// before what they set up; the volume's now
+boolean CKernel::LoadSettings (void)
+{
+	char *pText = new char[CSettings::MaxBytes];
+	int nBytes = m_Installer.ReadFile ("settings.txt", pText, CSettings::MaxBytes);
+	if (nBytes >= 0)
+	{
+		m_Settings.Parse (pText, nBytes);
+		CString Keys;
+		for (unsigned i = 0; i < m_Settings.GetCount (); i++)
+		{
+			Keys.Append (i ? " " : "");
+			Keys.Append (m_Settings.GetKey (i));
+			Keys.Append ("=");
+			Keys.Append (m_Settings.Get (m_Settings.GetKey (i)));
+		}
+		LOGNOTE ("Settings: settings.txt: %s", m_Settings.GetCount () ? (const char *) Keys : "(none)");
+	}
+	else
+	{
+		LOGNOTE ("Settings: no settings.txt (the kernel command line's, or the defaults)");
+	}
+	delete [] pText;
+
+	m_Audio.SetDefaultVolume (atoi (Setting ("volume", "10")));	// percent
+	return TRUE;
+}
+
+// Settings changed something: settings.txt with it (the other keys there kept)
+void CKernel::SaveSettings (void *pParam)
+{
+	CKernel *pThis = (CKernel *) pParam;
+	CString Value;
+	Value.Format ("%u", pThis->m_Audio.GetDefaultVolume ());
+	pThis->m_Settings.Set ("volume", Value);
+	Value.Format ("%u", pThis->m_Backlight.GetBrightness ());
+	pThis->m_Settings.Set ("brightness", Value);
+	if (pThis->m_Touch.IsPresent ())
+	{
+		pThis->m_Settings.Set ("touchcal", pThis->m_Touch.GetCalibration ());
+	}
+	char *pText = new char[CSettings::MaxBytes];
+	unsigned nBytes = pThis->m_Settings.Format (pText, CSettings::MaxBytes);
+	if (!pThis->m_Installer.WriteFile ("settings.txt", pText, nBytes))
+	{
+		LOGWARN ("Settings: settings.txt can't be written (no card?)");
+	}
+	delete [] pText;
+}
+
+// a press held 2 s in about one place: once till it's let go
+boolean CKernel::LongPress (const u32 *pTouch)
+{
+	static const unsigned HoldUs = 2000000;
+	static const int Slack = 24;		// pixels it may wander
+	boolean bDown = !!(pTouch[0] & PGPU_TOUCH_DOWN);
+	int x = pTouch[1] & 0xFFFF, y = pTouch[1] >> 16;
+	if (!bDown)
+	{
+		m_bPressing = FALSE;
+		m_nPressStart = 0;
+		return FALSE;
+	}
+	if (!m_bPressing || x < m_nPressX - Slack || x > m_nPressX + Slack || y < m_nPressY - Slack || y > m_nPressY + Slack)
+	{
+		m_bPressing = TRUE;		// (a new press, or it moved: from here)
+		m_nPressStart = CTimer::GetClockTicks () | 1;
+		m_nPressX = x;
+		m_nPressY = y;
+		return FALSE;
+	}
+	if (m_nPressStart && CTimer::GetClockTicks () - m_nPressStart >= HoldUs)
+	{
+		m_nPressStart = 0;		// (once a press)
+		return TRUE;
+	}
+	return FALSE;
+}
+
+// Settings has the panel. A host on I2S is told to wait (READY low: it stops
+// before its next batch, and goes on where it was after). A PC over USB
+// can't be (it gives up after 10 s without credit): its frames are rendered
+// at the panel's pace but not shown. To the host the touch is let go
+void CKernel::OpenSettings (void)
+{
+	if (!m_bPanelPresent || m_OutputMode == OutputHDMI)
+	{
+		return;
+	}
+	m_I2SLink.SetHold (TRUE);
+	m_Panel.SetHeld (TRUE);
+	m_Panel.WaitIdle ();
+	u32 Touch[CTouch::Words];
+	m_Touch.GetState (Touch);
+	Touch[0] &= ~PGPU_TOUCH_DOWN;
+	m_Commands.SetTouch (Touch);
+	m_SettingsApp.Open ();
+}
+
+// the panel back: the host's next frame, or the splash (or HDMI's notice)
+// if none comes
+void CKernel::CloseSettings (void)
+{
+	m_Panel.WaitIdle ();
+	m_Panel.SetHeld (FALSE);
+	m_I2SLink.SetHold (FALSE);
+	if (m_pScreen != &m_Panel)
+	{
+		ShowPanelNotice ();
+	}
+	else if (!m_bFrameSeen || CTimer::GetClockTicks () - m_nLastFrame > 500000)
+	{
+		ShowSplash (&m_Panel);
+	}
+}
+
+const char *CKernel::Setting (const char *pKey, const char *pDefault)
+{
+	const char *pValue = m_Settings.Get (pKey);
+	return pValue ? pValue : m_Options.GetAppOptionString (pKey, pDefault);
 }
 
 // text from the host (the USB serial link): "s" alone asks for a screenshot,
@@ -316,7 +444,7 @@ boolean CKernel::HostIdle (void) const
 // with the screen on HDMI: the panel says so, and what goes there
 void CKernel::ShowPanelNotice (void)
 {
-	if (!m_bPanelPresent)
+	if (!m_bPanelPresent || m_Panel.IsHeld ())	// (Settings has the panel)
 	{
 		return;
 	}
@@ -446,6 +574,8 @@ TShutdownMode CKernel::Run (void)
 	}
 	LOGNOTE ("I2S slave: CLK pin 12, FS pin 35, DIN pin 38, DOUT pin 40; READY pin 36, FRAME pin 37");
 
+	m_SettingsApp.Initialize (m_Panel.GetDriver (), SaveSettings, this);
+
 	SendDisplay (FALSE);
 	if (m_Touch.IsPresent ())		// (a TOUCH reply after each INFO only with a touch screen)
 	{
@@ -538,9 +668,23 @@ TShutdownMode CKernel::Run (void)
 		m_Commands.UpdateVideo ();
 
 		// the touch screen: read after each panel frame (or here, without
-		// them); a change goes to the host
+		// them); a change goes to the host, unless Settings is open (a long
+		// press opens it)
 		u32 Touch[CTouch::Words];
-		if (m_Touch.Update (Touch))
+		boolean bTouchChanged = m_Touch.Update (Touch);
+		m_Touch.GetState (Touch);
+		if (m_SettingsApp.IsOpen ())
+		{
+			if (!m_SettingsApp.Update (Touch))
+			{
+				CloseSettings ();
+			}
+		}
+		else if (LongPress (Touch))
+		{
+			OpenSettings ();
+		}
+		else if (bTouchChanged)
 		{
 			m_Commands.SetTouch (Touch);
 		}
@@ -781,6 +925,10 @@ void CKernel::DumpAudio (void)
 // 1024x600: 2, 1920x1080: 4); it stays until the host's first frame
 void CKernel::ShowSplash (COutput *pOutput)
 {
+	if (pOutput == &m_Panel && m_Panel.IsHeld ())	// (Settings has the panel)
+	{
+		return;
+	}
 	const THDMIState &M = m_Monitor.GetState ();
 	unsigned nWidth = pOutput->GetWidth (), nHeight = pOutput->GetHeight ();
 

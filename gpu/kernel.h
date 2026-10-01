@@ -25,6 +25,9 @@
 #include "link/usb_bulk_link.h"
 #include "display/panel_output.h"
 #include "display/touch.h"
+#include "display/backlight.h"
+#include "settings.h"
+#include "ui/settings_app.h"
 #include "display/hdmi_output.h"
 #include "display/hdmi_monitor.h"
 #include "display/gud_display.h"
@@ -81,6 +84,13 @@ public:
 private:
 	void HostInput (void);
 	boolean DetectPanel (void);
+	boolean LoadSettings (void);
+	static void SaveSettings (void *pParam);
+	boolean LongPress (const u32 *pTouch);
+	void OpenSettings (void);
+	void CloseSettings (void);
+	/// \return A user setting: settings.txt's, else the kernel command line's, else pDefault
+	const char *Setting (const char *pKey, const char *pDefault = nullptr);
 	void ChooseOutput (COutput **ppOutput, unsigned *pWidth, unsigned *pHeight);
 	void HDMISize (unsigned *pWidth, unsigned *pHeight);
 	void ApplyOutput (void);
@@ -104,6 +114,7 @@ private:
 	// do not change this order
 	CActLED			m_ActLED;
 	CKernelOptions		m_Options;
+	CSettings		m_Settings;		// settings.txt (the user's)
 	CDeviceNameService	m_DeviceNameService;
 	CNullDevice		m_Null;		// no UART: GPIO14/15 untouched
 	CExceptionHandler	m_ExceptionHandler;
@@ -135,6 +146,7 @@ private:
 	unsigned		m_nHDMIPixels;		// the largest screen on HDMI (default: native)
 	CPanelOutput		m_Panel;
 	CTouch			m_Touch;		// the panel's touch screen (on its SPI)
+	CBacklight		m_Backlight;		// the panel's (PWM)
 	CHDMIOutput		m_HDMI;
 	CHDMIMonitor		m_Monitor;
 	COutput			*m_pScreen;		// the panel or HDMI: where the picture is
@@ -150,6 +162,10 @@ private:
 	CRenderer		m_Renderer;
 	CCommands		m_Commands;
 	CAudio			m_Audio;		// the audio stream, on HDMI (volume= option)
+	CSettingsApp		m_SettingsApp;		// on the panel, a long press opens it (gpu/ui)
+	boolean			m_bPressing;		// the long press: held since, where
+	unsigned		m_nPressStart;
+	int			m_nPressX, m_nPressY;
 #ifdef ARM_ALLOW_MULTI_CORE
 	CCores			m_Cores;		// core 1: the audio stream's decoder
 #endif

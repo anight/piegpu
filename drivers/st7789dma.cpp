@@ -10,6 +10,7 @@
 #define ST7789_SLPOUT	0x11
 #define ST7789_INVOFF	0x20
 #define ST7789_DISPON	0x29
+#define ST7789_GSCAN	0x45
 #define ST7789_CASET	0x2A
 #define ST7789_RASET	0x2B
 #define ST7789_RAMWR	0x2C
@@ -52,6 +53,7 @@ CST7789DMADisplay::CST7789DMADisplay (CInterruptSystem *pInterrupt,
 	m_pAuxRoutine (nullptr),
 	m_pAuxParam (nullptr),
 	m_pDummyRx (nullptr),
+	m_nFree (0),
 	m_pNext (nullptr),
 	m_nRemaining (0),
 	m_bBusy (FALSE),
@@ -76,6 +78,11 @@ boolean CST7789DMADisplay::Initialize (void)
 	p = new u8[2 * MaxAux + 64];			// (whole cache lines each)
 	m_pAuxTx = (u8 *) (((uintptr) p + 63) & ~(uintptr) 63);
 	m_pAuxRx = m_pAuxTx + MaxAux;
+	for (unsigned i = 0; i < 2; i++)
+	{
+		p = new u8[m_nWidth * m_nHeight * sizeof (u16) + 64];
+		m_pTurned[i] = (u16 *) (((uintptr) p + 63) & ~(uintptr) 63);
+	}
 
 	if (!m_SPI.Initialize ())
 	{
@@ -96,7 +103,10 @@ boolean CST7789DMADisplay::Initialize (void)
 	Command (ST7789_SWRESET);
 	CTimer::SimpleMsDelay (150);
 
-	Command (ST7789_MADCTL);	Data8 (0x70);		// landscape (MV)
+	// the panel's own order: 240 across, 320 down, refreshed top to bottom.
+	// Frames come in landscape (m_nWidth x m_nHeight) and are turned into it
+	// (Turn): written along the panel's scan, not across it as with MV
+	Command (ST7789_MADCTL);	Data8 (0x00);
 	static const u8 Porch[] = {0x0C, 0x0C, 0x00, 0x33, 0x33};
 	Command (ST7789_FRMCTR2);	Data (Porch, sizeof Porch);
 	Command (ST7789_COLMOD);	Data8 (0x05);		// 16 bpp
@@ -132,14 +142,14 @@ void CST7789DMADisplay::Clear (TRawColor nColor)
 {
 	WaitIdle ();
 
-	u16 Line[m_nWidth];
-	for (unsigned x = 0; x < m_nWidth; x++)
+	u16 Line[m_nHeight];				// (a line of the panel's: the landscape's height)
+	for (unsigned x = 0; x < m_nHeight; x++)
 	{
 		Line[x] = (u16) nColor;
 	}
 
-	SetWindow (0, 0, m_nWidth-1, m_nHeight-1);
-	for (unsigned y = 0; y < m_nHeight; y++)
+	SetWindow (0, 0, m_nHeight-1, m_nWidth-1);
+	for (unsigned y = 0; y < m_nWidth; y++)
 	{
 		Data (Line, sizeof Line);
 	}
@@ -149,27 +159,45 @@ void CST7789DMADisplay::SetPixel (unsigned nPosX, unsigned nPosY, TRawColor nCol
 {
 	WaitIdle ();
 
-	SetWindow (nPosX, nPosY, nPosX, nPosY);
+	SetWindow (m_nHeight-1 - nPosY, nPosX, m_nHeight-1 - nPosY, nPosX);
 	u16 usColor = (u16) nColor;
 	Data (&usColor, sizeof usColor);
 }
 
-void CST7789DMADisplay::SetArea (const TArea &rArea, const void *pPixels,
-				 TAreaCompletionRoutine *pRoutine, void *pParam)
+// A landscape area (nWidth x nHeight pixels) into the panel's order (nHeight
+// across, nWidth down): the panel's column i is the landscape's row nHeight -
+// 1 - i, its row j the landscape's column j (as MADCTL's MX | MV showed it).
+// Eight landscape columns at a time: eight panel rows written along, the
+// landscape read a cache line a row
+void CST7789DMADisplay::Turn (const u16 *pFrom, unsigned nWidth, unsigned nHeight, u16 *pTo)
 {
-	assert (pPixels != 0);
-	assert (((uintptr) pPixels & 3) == 0);
+	for (unsigned j = 0; j < nWidth; j += 8)
+	{
+		unsigned nColumns = nWidth - j < 8 ? nWidth - j : 8;
+		const u16 *pSource = pFrom + (nHeight - 1) * nWidth + j;
+		u16 *pRows = pTo + j * nHeight;
+		for (unsigned i = 0; i < nHeight; i++, pSource -= nWidth, pRows++)
+		{
+			for (unsigned k = 0; k < nColumns; k++)
+			{
+				pRows[k * nHeight] = pSource[k];
+			}
+		}
+	}
+}
 
-	WaitIdle ();
-
-	SetWindow (rArea.x1, rArea.y1, rArea.x2, rArea.y2);
+// the landscape area's pixels, turned and in the free buffer: out by DMA
+void CST7789DMADisplay::Send (const TArea &rArea, TAreaCompletionRoutine *pRoutine, void *pParam)
+{
+	SetWindow (m_nHeight-1 - rArea.y2, rArea.x1, m_nHeight-1 - rArea.y1, rArea.x2);
 	m_DCPin.Write (HIGH);
 
-	m_pNext = (const u8 *) pPixels;
+	m_pNext = (const u8 *) m_pTurned[m_nFree];
 	m_nRemaining = (rArea.x2 - rArea.x1 + 1) * (rArea.y2 - rArea.y1 + 1) * sizeof (u16);
 	m_pRoutine = pRoutine;
 	m_pParam = pParam;
 	m_bBusy = TRUE;
+	m_nFree ^= 1;
 
 	StartChunk ();
 
@@ -177,6 +205,57 @@ void CST7789DMADisplay::SetArea (const TArea &rArea, const void *pPixels,
 	{
 		WaitIdle ();
 	}
+}
+
+void CST7789DMADisplay::SetArea (const TArea &rArea, const void *pPixels,
+				 TAreaCompletionRoutine *pRoutine, void *pParam)
+{
+	assert (pPixels != 0);
+	assert (rArea.x1 <= rArea.x2 && rArea.x2 < m_nWidth);
+	assert (rArea.y1 <= rArea.y2 && rArea.y2 < m_nHeight);
+
+	WaitIdle ();
+
+	Turn ((const u16 *) pPixels, rArea.x2 - rArea.x1 + 1, rArea.y2 - rArea.y1 + 1, m_pTurned[m_nFree]);
+	Send (rArea, pRoutine, pParam);
+}
+
+void CST7789DMADisplay::PrepareFrame (const void *pPixels)
+{
+	Turn ((const u16 *) pPixels, m_nWidth, m_nHeight, m_pTurned[m_nFree]);
+}
+
+// The frame starts while the panel's scan is between SyncFirst and SyncLast:
+// past the top (the scan stays ahead of what's written: it's a little faster,
+// 320 lines in about 15.5 ms to our 16.4), and not so late that its next pass
+// would catch the writing up before the bottom. So each refresh shows one
+// whole frame
+void CST7789DMADisplay::ShowFrame (TAreaCompletionRoutine *pRoutine, void *pParam)
+{
+	WaitIdle ();
+
+	unsigned nStart = CTimer::GetClockTicks (), nLine;
+	do
+	{
+		nLine = GetScanLine ();
+	}
+	while ((nLine < SyncFirst || nLine > SyncLast) && CTimer::GetClockTicks () - nStart < 20000);
+
+	const TArea Full = {0, m_nWidth-1, 0, m_nHeight-1};
+	Send (Full, pRoutine, pParam);
+}
+
+// GSCAN: read at 4 MHz (the panel reads slowly), a dummy bit before its 10 bits
+unsigned CST7789DMADisplay::GetScanLine (void)
+{
+	static const u8 Tx[4] = {ST7789_GSCAN, 0, 0, 0};
+	u8 Rx[4];
+	m_DCPin.Write (LOW);
+	m_SPI.SetClock (4000000);
+	m_SPI.WriteReadSync (m_nChipSelect, Tx, Rx, sizeof Rx);
+	m_SPI.SetClock (m_nClockSpeed);
+
+	return ((Rx[1] << 8 | Rx[2]) << 1 | Rx[3] >> 7) & 0x3FF;
 }
 
 void CST7789DMADisplay::WaitIdle (void)
@@ -295,8 +374,8 @@ void CST7789DMADisplay::Transfer (unsigned nChipSelect, unsigned nClockSpeed, co
 
 void CST7789DMADisplay::SetWindow (unsigned x0, unsigned y0, unsigned x1, unsigned y1)
 {
-	assert (x0 <= x1 && x1 < m_nWidth);
-	assert (y0 <= y1 && y1 < m_nHeight);
+	assert (x0 <= x1 && x1 < m_nHeight);		// (the panel's: 240 across, 320 down)
+	assert (y0 <= y1 && y1 < m_nWidth);
 
 	u8 Column[4] = {(u8) (x0 >> 8), (u8) x0, (u8) (x1 >> 8), (u8) x1};
 	Command (ST7789_CASET);

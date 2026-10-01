@@ -52,6 +52,11 @@ export PGPU_BUILD=${PGPU_BUILD:-$("$HERE/next-build.sh")}
 if [ ! -f "$ROOT/third_party/circle/CMakeLists.txt" ]; then
 	git -C "$ROOT" submodule update --init third_party/circle
 fi
+# LVGL (Circle's addon/lvgl/lvgl, a submodule of the submodule: the Settings
+# app's widgets, gpu/ui), one commit of it
+if [ ! -f "$ROOT/third_party/circle/addon/lvgl/lvgl/lvgl.h" ]; then
+	git -C "$ROOT/third_party/circle" submodule update --init --depth 1 addon/lvgl/lvgl
+fi
 if [ ! -f "$ROOT/third_party/circle/boot/start.elf" ]; then
 	make -C "$ROOT/third_party/circle/boot" firmware >/dev/null
 fi

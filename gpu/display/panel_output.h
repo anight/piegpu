@@ -3,7 +3,9 @@
 //
 // The ST7789 panel (320x240) on SPI0 CE0, by DMA (drivers/st7789dma): 75 MHz
 // = 300 MHz core / 4 (config.txt core_freq=300), D/C on GPIO24, reset on
-// GPIO25. The V3D writes little endian RGB565, which the driver sends as is.
+// GPIO25. The V3D writes little endian RGB565; the driver turns each frame
+// into the panel's own order (it scans 240 across, 320 down) while the frame
+// before goes out, and starts it in step with the panel's scan: no tearing.
 //
 #ifndef _panel_output_h
 #define _panel_output_h
@@ -35,7 +37,12 @@ public:
 
 	CDisplay *GetDisplay (void)		{ return &m_Display; }
 
+	void Prepare (const void *pPixels);
 	void Show (const void *pPixels, TDoneRoutine *pDone, void *pParam);
+
+	/// \brief Held: frames aren't shown (the Settings app has the panel)
+	void SetHeld (boolean bHeld)		{ m_bHeld = bHeld; }
+	boolean IsHeld (void) const		{ return m_bHeld; }
 
 	void WaitIdle (void)			{ m_Display.WaitIdle (); }
 
@@ -44,6 +51,10 @@ public:
 
 private:
 	CST7789DMADisplay m_Display;
+	volatile boolean m_bHeld;
+	static const unsigned HeldFrameUs = 16667;	// held: a frame's time all the same
+	unsigned m_nHeldShow;
+	const void *m_pPrepared;			// the frame made ready (Prepare)
 };
 
 #endif

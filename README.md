@@ -195,9 +195,35 @@ landscape as 320x240 (`gpu/display/panel_output`).
 | DC | 18 (GPIO24) |
 | RESET | 22 (GPIO25) |
 | SDO (MISO) | 21 (GPIO9, SPI0 MISO) |
+| LED (backlight) | 32 (GPIO12, PWM0) |
+| T_CLK | 23 (GPIO11, with SCK) |
+| T_DIN | 19 (GPIO10, with SDI) |
+| T_DO | 21 (GPIO9, with SDO) |
+| T_CS | 26 (GPIO7, SPI0 CE1) |
 
 At boot the RPi reads the panel's ID over SDO, so it knows whether a panel is
 there. Without the SDO wire it can't tell: set `panel=yes` (see below).
+
+- **No tearing:** the panel refreshes itself 60 times a second along its own
+  240x320 order. The RPi turns each landscape frame into that order and
+  starts sending it just after the panel's scan has passed the top (it reads
+  the scan line over SDO), so every refresh shows one whole frame.
+- **Backlight:** the LED pin on GPIO12 is dimmed by PWM (10 kHz, `brightness=`
+  below). With the LED pin on 3.3 V instead the backlight is simply on.
+- **Touch** (`gpu/display/touch`): the module's XPT2046 shares the panel's
+  SPI with its own chip select, and is read right after each frame (T_IRQ
+  isn't used). A touch is a pressure reading whose X and Y samples agree,
+  twice running; `touchcal=` maps the readings to the panel's pixels. The
+  host gets it as a TOUCH reply (`pgpu_get_touch`; the `touch` demo is a
+  drawing board with a calibration).
+
+### Settings on the panel
+
+A long press on the panel (2 s, anywhere, any time) opens **Settings** (LVGL,
+`gpu/ui`): brightness, volume, and the touch's calibration and a test. While
+it's open the panel is its: a host on I2S is told to wait (READY low) and
+goes on after; a PC over USB keeps running, its frames not shown. Done closes
+it and writes what changed to `settings.txt`.
 
 ### RPi ↔ HDMI, and the PC
 
@@ -244,9 +270,18 @@ there. Without the SDO wire it can't tell: set `panel=yes` (see below).
 | `hdmi_pixels=N` | cap the screen on HDMI to N pixels (default: the monitor's native resolution, up to 1920x1200) |
 | `cpu=max`, `cpu=low` | the ARM at its maximum clock (the default; the Zero 2 W: 1000 MHz, throttled by the firmware at its own temperature limit) or at the firmware's starting clock (600 MHz) |
 | `volume=N` | the sound's volume on HDMI, percent (default: 10) |
+| `brightness=N` | the panel's backlight, percent (default: 100; its LED pin on GPIO12) |
+| `touch=auto`, `touch=off` | the panel's touch screen: used if its controller answers (the default), or not |
+| `touchcal=x0,x1,y0,y1,swap` | the touch's calibration: the readings at the panel's left and right edges, top and bottom; swap 1: its x from the controller's Y (Settings finds it) |
 | `clcheck=on`, `clcheck=off` | check each V3D job's control lists before it runs, and refuse a bad one (the default: on; [docs/development.md](docs/development.md#the-control-list-checker)) |
 
 With `devtools/run.sh`, pass these as `CMDLINE="output=panel" devtools/run.sh gpu`.
+
+**The user's settings** (`volume=`, `brightness=`, `touchcal=`) belong in
+`settings.txt` next to `cmdline.txt`: a `key=value` a line, `#` for comments.
+The RPi reads it at boot and a key there wins over `cmdline.txt`'s. The
+installer page writes `cmdline.txt` and never `settings.txt`, so an upgrade
+keeps them; Settings on the panel writes it.
 
 ## Host boards (`hosts/pico`, `hosts/esp32p4`)
 
@@ -531,6 +566,7 @@ source.
 | [FAAD2](https://github.com/knik0/faad2) 2.11.3 | `gpu/audio/faad2` | GPL-2.0-or-later | AAC decoding | the firmware |
 | [minimp3](https://github.com/lieff/minimp3) | `gpu/audio/minimp3` | CC0-1.0 | MP3 decoding | the firmware |
 | [Tremor](https://gitlab.xiph.org/xiph/tremor) (libvorbisidec) and [libogg](https://gitlab.xiph.org/xiph/ogg) | `gpu/audio/tremor` | BSD-3-Clause | Ogg Vorbis decoding | the firmware |
+| [LVGL](https://github.com/lvgl/lvgl) 9.4 | `third_party/circle/addon/lvgl/lvgl` (Circle's submodule, fetched by `devtools/build-gpu.sh`) | MIT | the Settings app on the panel (`gpu/ui`) | the firmware |
 | [Raspberry Pi userland](https://github.com/raspberrypi/userland) (its MMAL client) | `gpu/video/userland` (a copy), `third_party/userland` | BSD-3-Clause | talking to the VideoCore's video components | the firmware |
 | GCC runtime (`libgcc`), newlib's `libm` (Arm GNU Toolchain 15.2) | the toolchain | GPL-3.0 with the GCC Runtime Library Exception; newlib: BSD-style | runtime support linked into the firmware | the firmware |
 | [Raspberry Pi Pico SDK](https://github.com/raspberrypi/pico-sdk) | fetched by `hosts/pico` | BSD-3-Clause | the Pico host | Pico images |

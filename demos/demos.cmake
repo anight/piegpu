@@ -13,7 +13,7 @@
 #                       find (default engine/levels/keep.bsp)
 #   isles               the BSP engine in the sky: floating islands, a moving
 #                       platform, a jump pad, a portal, coins (engine/levels/isles.bsp)
-#   touch               the panel's touch screen: where it's touched, its readings
+#   touch               the panel's touch screen: a drawing board
 #   toy-NAME            Shadertoy-style: shaders/toy_NAME.frag; a game has
 #                       NAME.c (pong, snake, asteroids)
 #   media               an MP4 or an MP3 played by the RPi: the video decoded
@@ -103,8 +103,10 @@ function(pgpu_demo target app)
 			program(halo -a a_corner:float:2 -v triangles)
 		endif()
 
-	elseif(app STREQUAL "touch")		# the touch screen (the HUD alone draws)
+	elseif(app STREQUAL "touch")		# the touch screen: a drawing board
 		target_sources(${target} PRIVATE ${PGPU_DEMOS}/touch.c)
+		program(brush -a a_pos:float:2 -v triangles)
+		program(texview -a a_pos:float:2 -v triangles)
 
 	elseif(app MATCHES "^toy-(.+)$")	# toy.c: one full-screen quad, the picture is the shader
 		set(name ${CMAKE_MATCH_1})
