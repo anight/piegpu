@@ -1,6 +1,7 @@
 // aquarium: a fish. Its mesh lies along x (the nose at 0.5, the tail's tip at
 // -0.5); a wave runs down its body, wider towards the tail: that's how it
-// swims. Lit as the rest (aqua.vert), with the shine of its scales
+// swims. Lit as the rest (aqua.vert), with the shine of its scales. What's
+// past the nose waves: a shrimp's feelers (the fish have nothing there)
 attribute vec3 a_pos;
 attribute vec3 a_normal;
 attribute vec2 a_uv;
@@ -12,7 +13,7 @@ uniform vec4 u_time;		// seconds; the caustics' scroll (x, z); -
 uniform vec4 u_water;		// the fog: where it starts, its density; the tank's height; -
 uniform vec3 u_deep;
 uniform vec3 u_shallow;
-uniform vec4 u_swim;		// the wave's phase, how wide it is; -; -
+uniform vec4 u_swim;		// the wave's phase, how wide it is; how much the feelers wave; -
 
 varying vec2 v_uv;
 varying vec4 v_cuv;
@@ -26,6 +27,9 @@ void main ()
 	float phase = u_swim.x - along * 5.5;
 	vec3 local = a_pos;
 	local.z += u_swim.y * (sin (phase) * bend + 0.12 * sin (u_swim.x) * (1.0 - along));
+	float fore = max (-along, 0.0) * u_swim.z;
+	local.y += fore * sin (u_swim.x * 0.7);
+	local.z += fore * cos (u_swim.x) * a_pos.z * 3.0;
 	vec3 ln = a_normal;
 	ln.x += u_swim.y * cos (phase) * bend * 4.0 * a_normal.z;	// (the sides lean with the wave)
 

@@ -14,7 +14,9 @@
 #                       tools/make_tumble_sounds.py)
 #   aquarium            a tank of tropical fish: they swim by a wave down their
 #                       bodies, school, come for food and flee a knock on the
-#                       glass; caustics, shafts of light, bubbles (its caustics
+#                       glass; a starfish, two shrimps; caustics, shafts of
+#                       light, bubbles; antialiasing shown three ways, ten
+#                       seconds each: none, supersampled, the V3D's (its caustics
 #                       and sounds: aquarium_assets.c, made by
 #                       tools/make_aquarium_assets.py)
 #   walk                the BSP engine (engine/): a Quake-format level walked
@@ -110,8 +112,9 @@ function(pgpu_demo target app)
 		program(aqua -a a_pos:float:3 -a a_normal:float:3 -a a_uv:float:2 -a a_sway:float:1 -v triangles)
 		pgpu_glsl_program(TARGET ${target} NAME fish DIR ${PGPU_DEMO_SHADERS} FS ${PGPU_DEMO_SHADERS}/aqua.frag
 			ARGS -a a_pos:float:3 -a a_normal:float:3 -a a_uv:float:2 -v triangles)
-		program(bubbles -a a_seed:float:4 -v points)
-		program(shafts -a a_pos:float:3 -a a_uv:float:2 -v triangles)
+		program(bubbles -a a_seed:float:4 -v points --ms)	# (--ms: blended sample by sample
+		program(shafts -a a_pos:float:3 -a a_uv:float:2 -v triangles --ms)	# when the RPi antialiases)
+		program(texview -a a_pos:float:2 -v triangles)		# the supersampled picture, brought down
 		pad()
 
 	elseif(app STREQUAL "tumble")		# 2D physics: balls and boxes in a box the stick tilts
