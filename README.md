@@ -9,7 +9,9 @@ decoded by the VideoCore into textures that any draw can use. Sound (AAC,
 e.g. the MP4's, MP3 or Ogg Vorbis) is decoded by the RPi and played on HDMI
 or on a Bluetooth speaker, with the picture following it; short sound
 effects the host sends once are mixed in by the RPi, on channels the host
-plays them on.
+plays them on. Edges can be antialiased by the V3D's 4x multisampling. And
+the RPi can record what it shows and plays as an MP4 on its card: H.264 by
+the VideoCore's encoder, AAC by an encoder of its own.
 
 The host can be any microcontroller board capable of the link: I2S as the
 master (DATA, BCLK and FS out, the replies back on REPLY), a READY input and
@@ -45,16 +47,16 @@ Documentation ([docs/](docs/README.md)):
 
 | Directory | What |
 |---|---|
-| `gpu/` | the RPi's firmware: links (`link/`), outputs, touch and backlight (`display/`), renderer, video (`video/`), audio (`audio/`: the decoders FAAD2, minimp3 and Tremor, the outputs, the sound effects' mixer), Bluetooth for a speaker (`bt/`), Settings on the panel (`ui/`), SD card installer (`install/`) |
+| `gpu/` | the RPi's firmware: links (`link/`), outputs, touch, backlight and the HDMI mode (`display/`), renderer, video and the recorder (`video/`), audio (`audio/`: the decoders FAAD2, minimp3 and Tremor, an AAC encoder, the outputs, the sound effects' mixer), Bluetooth for a speaker (`bt/`), Settings on the panel (`ui/`), SD card installer (`install/`) |
 | `drivers/` | the RPi's V3D and ST7789 (DMA) drivers |
 | `libpgpu/` | the host library: protocol encoding, pgl (the GL ES API), MP4, MP3 and Ogg readers, HUD, self tests |
 | `transports/` | links for the host library: `pico-i2s`, `esp32p4-i2s`, `pc-usb` |
-| `hosts/` | builds per host: `pico`, `esp32p4`, `pc`, `web` (a page, WebAssembly) |
+| `hosts/` | builds per host: `pico` (with the Pico W's own programs: Wi-Fi setup, a Bluetooth keyboard and mouse; its stick and game controller), `esp32p4`, `pc`, `web` (a page, WebAssembly) |
 | `demos/` | the demos, for every host |
 | `engine/` | a small 3D engine for three of the demos: Quake-format levels (BSP), movement, lifts and doors, sounds; its levels and the tools that make them and the sounds |
 | `protocol/` | the wire format header, shared by both sides |
-| `devtools/` | Circle setup and builds per board, the RPi's USB device (serial port, GL interface, monitor), the run log, `run.sh` (boot an RPi over USB, logs, screenshots) |
-| `tools/` | `glslc` (GLSL compiler: Mesa's vc4, offline), `deqp` (the conformance tests) |
+| `devtools/` | Circle setup and builds per board, the RPi's USB device (serial port, GL interface, monitor), the run log, `run.sh` (boot an RPi over USB, logs, screenshots), `record.py` (a recording of the screen and the sound) |
+| `tools/` | `glslc` (GLSL compiler: Mesa's vc4, offline), `deqp` (the conformance tests), `aacenc` (the AAC encoder's tables, and its test on a PC) |
 | `patches/` | a local change to Mesa, for `tools/glslc` (Circle's are in its fork, below) |
 | `third_party/` | submodules: Circle (piegpu's fork; LVGL as its submodule), Mesa, VK-GL-CTS, the Raspberry Pi userland |
 | `web/installer/` | a page that installs piegpu on the RPi's SD card over USB and runs demos on it |
@@ -279,6 +281,16 @@ closes it and writes what changed of the first two pages to `settings.txt`.
   - `config.txt` has `hdmi_force_hotplug=1` (`devtools/config.txt`, and the
     installer's), so that HDMI stays on when the RPi boots without a
     monitor.
+  - The HDMI mode follows the monitor: the firmware sets one at boot only,
+    from its own lists (640x480 without a monitor then; 1024x768 for a
+    1024x600 monitor), and scales the screen to it, which made text
+    unreadable. So when a monitor's EDID has come, at boot or after it's
+    plugged in, the RPi asks the firmware for the monitor's own preferred
+    timing (`gpu/display/tv_service`; 0.35 s; `hdmi_signal=boot` leaves the
+    firmware's). Verified on a Zero 2 W with a 1024x600 monitor by what the
+    RPi sends (the mode read back is the EDID's); a real plug-in after a
+    boot without a monitor, sound over HDMI after the change and other
+    monitors not yet.
 - **PC:** the RPi's "USB" port (not "PWR IN"). The one cable carries:
   - power;
   - the RPi's log;
@@ -312,6 +324,7 @@ closes it and writes what changed of the first two pages to `settings.txt`.
 | `panel=auto` | the default: a panel if one answers on SDO (MISO) at boot |
 | `panel=yes`, `panel=none` | a panel is there (SDO not wired) or none is; without a panel and a monitor the screen stays on HDMI |
 | `hdmi_pixels=N` | cap the screen on HDMI to N pixels (default: the monitor's native resolution, up to 1920x1200) |
+| `hdmi_signal=boot` | keep the HDMI mode the firmware chose at boot (`config.txt`). Default (`monitor`): the RPi asks the firmware for the monitor's own preferred mode, at boot and when a monitor is plugged in, so the picture isn't scaled twice |
 | `cpu=max`, `cpu=low` | the ARM at its maximum clock (the default: 1000 MHz on all three boards, throttled by the firmware at its own temperature limit) or at its lowest (the Zero: 700 MHz, the Zero 2 W: 600 MHz). The rates between aren't offered: asked for 800 or 850 MHz, a Zero's firmware gave 900 |
 | `v3d=N` | the V3D's clock, MHz, within the firmware's range (the Zero and the Zero W: 250-300; the default: its maximum). It holds with `cpu=low` only: with the ARM at its maximum the firmware keeps the V3D at its maximum too (measured on both). The Zero 2 W's is 400 and stays there: its `config.txt` pins it (`v3d_freq`, `v3d_freq_min`) |
 | `volume=N` | the sound's volume, percent (default: 10) |
@@ -344,8 +357,8 @@ are in a third file, `speakers.txt` (below).
   (how fast it plays: an engine's note); the RPi mixes them into what it
   plays, the stream's sound or silence, so an effect is heard as soon as the
   output allows (HDMI: the 85 ms the VideoCore holds; a Bluetooth speaker:
-  its own buffer, not measured). The engine's demos and `antigrav` use them
-  (below).
+  its own buffer, not measured). The engine's demos, `antigrav`, `tumble`
+  and `aquarium` use them (below).
 - **The output:** a Bluetooth speaker while one is connected, else HDMI (a
   monitor with speakers). The volume and mute (Settings, `volume=`, `mute=`)
   apply to all of it.
@@ -391,6 +404,64 @@ Apache 2.0). The controller runs as it comes, without Broadcom's patch file.
   taken, the stream open 0.8 s later), the test sound sent to it (465
   packets, none dropped); a video with its sound from a PC (70 s: 59.8 fps,
   5361 packets, none dropped); a demo's sound effects from a Pico at 60 fps.
+
+### Antialiasing
+
+- **The V3D's 4x multisampling:** `pglSamples (4)` (the `MULTISAMPLE`
+  capability, [docs/protocol.md](docs/protocol.md) §10.1) has the RPi render
+  with four samples a pixel and average them as the picture is stored, on
+  the screen or into a texture; `pglSamples (1)` is without again. The
+  V3D's tiles are 32 pixels then instead of 64, so a frame costs more. A
+  program that blends is compiled with `glslc --ms` to blend each sample
+  with its own colour; without it the edges under what it draws go flat
+  (harmless for a HUD's letters).
+- **Supersampling** takes nothing of the RPi: the scene drawn twice as wide
+  and high into a texture, and that drawn over the screen through a linear
+  filter.
+- `aquarium` shows both and neither, ten seconds each. Measured there on a
+  Zero 2 W, the panel, 60 fps in all three: a frame's rendering 3.5 ms
+  without, 5.8 ms multisampled, 9.0 ms supersampled; the edges compared in
+  screenshots. Not tried: the Zero and the Zero W, a multisampled frame
+  drawn in several jobs, multisampling into a texture.
+
+### Recording the screen and the sound
+
+The RPi can record what it shows and plays as an MP4. For now it's a
+debugging tool, started from a PC over the RPi's USB serial port (the `ENC`
+line of the text console): no demo and nothing in the protocol starts it.
+
+- **The picture:** the frames shown go to the VideoCore's H.264 encoder
+  (`gpu/video/encode_test`: high profile, a key frame a second), which takes
+  the panel's RGB565 as it is.
+- **The sound:** what the output takes, the stream and the effects, before
+  the volume, through piegpu's own AAC encoder (`gpu/audio/aac_enc.c`: AAC
+  LC, stereo at 44.1 or 48 kHz; small: long blocks only, no psychoacoustic
+  model, the noise kept a fixed distance under each band's level).
+- **The file:** the RPi writes it to its card as it records
+  (`gpu/video/mp4_writer`: `RECnnn.MP4`, the frames with the times they
+  were shown, the index at the end), and it is fetched over USB:
+
+  ```bash
+  devtools/record.py 60 out.mp4 --card
+  ```
+
+  Without `--card` the stream and the sound come back over USB at the end
+  and ffmpeg makes the MP4 on the PC.
+- **Measured** on a Zero 2 W, the `aquarium` on the panel (320x240, 60 fps),
+  1000 kbit/s of video: a frame comes out of the encoder 3 ms after it went
+  in, 0.17 ms to hand it over; the sound's encoding 0.6 ms for 21 ms of
+  sound, 174 kbit/s, its noise 26 dB under the sound. A minute onto the
+  card: 8.9 MB, 59.6 fps, the picture and the sound within a frame of each
+  other; ffmpeg decodes it whole and Chromium plays it. The card's writes
+  stop the main loop (4 ms for 16 KB), so they are done in each frame's
+  wait for the panel; where rendering leaves little of that (9 ms a frame),
+  seconds of 55 to 57 fps.
+- **Not yet:** the sound judged by ear (a sharp click's noise spreads over
+  its block, 15 dB under it); the Zero and the Zero W; a card that fills up.
+  A recording that doesn't end (the power gone) has no index and can't be
+  played. How it works: [docs/development.md](docs/development.md#video)
+  (the recorder) and [its Audio part](docs/development.md#audio) (the AAC
+  encoder).
 
 ## The demos (`demos/`)
 
@@ -468,7 +539,8 @@ its own transport (`libpgpu/pgpu_link.h`; `transports/pico-i2s` and
 build makes one `.uf2` per program in `hosts/pico/build`:
 
 - `gpulink.uf2`: the self tests;
-- `gears.uf2`, `keep.uf2`, `toy-pong.uf2`, `jet-viewer.uf2` and so on: the demos.
+- `gears.uf2`, `keep.uf2`, `toy-pong.uf2`, `jet-viewer.uf2` and so on: the demos;
+- `wifi.uf2`, `keyboard.uf2`, `mouse.uf2`: the Pico W's own (above).
 
 The console is on UART0 (GP0/GP1, pins 1 and 2: a Debugprobe's UART bridge).
 Programming over SWD while one of these programs runs: stop its DMA first.
@@ -611,7 +683,8 @@ page, folded until its Show button opens it) are the command line above
 
 - where the GL commands come from;
 - the screen and the panel;
-- the HDMI mode;
+- the HDMI mode the firmware starts with (the RPi then asks for the
+  monitor's own, above, unless `hdmi_signal=boot`);
 - the USB monitor (off unless chosen).
 
 The page needs Chrome or Edge on a desktop (WebUSB, Web Serial, the File
@@ -748,8 +821,8 @@ source.
 | Software | Where | Licence | Used for | In what's distributed |
 |---|---|---|---|---|
 | [Circle](https://github.com/rsta2/circle) Step51.1 (piegpu's [fork](https://github.com/anight/circle/tree/piegpu)) | `third_party/circle` | GPL-3.0; its FatFs add-on ChaN's BSD-style licence, its VCHIQ add-on BSD-3-Clause or GPL-2.0 | the RPi firmware's base: drivers, USB gadget, VCHIQ, FatFs | the firmware |
-| Raspberry Pi firmware (`bootcode.bin`, `start.elf`, `fixup.dat`) | fetched into `third_party/circle/boot` | Broadcom's licence: binary redistribution ([LICENCE.broadcom](third_party/circle/boot/LICENCE.broadcom) there) | starting the RPi; the VideoCore's H.264 decoder, ISP and audio service | the card, the installer page |
-| [FAAD2](https://github.com/knik0/faad2) 2.11.3 | `gpu/audio/faad2` | GPL-2.0-or-later | AAC decoding | the firmware |
+| Raspberry Pi firmware (`bootcode.bin`, `start.elf`, `fixup.dat`) | fetched into `third_party/circle/boot` | Broadcom's licence: binary redistribution ([LICENCE.broadcom](third_party/circle/boot/LICENCE.broadcom) there) | starting the RPi; the VideoCore's H.264 decoder and encoder, ISP and audio service, and its TV and command services (the HDMI mode) | the card, the installer page |
+| [FAAD2](https://github.com/knik0/faad2) 2.11.3 | `gpu/audio/faad2` | GPL-2.0-or-later | AAC decoding; the Huffman tables of piegpu's AAC encoder (`gpu/audio/aac_enc_tables.h`) are made from its codebook tables (`tools/aacenc/gen_tables.c`) | the firmware |
 | [minimp3](https://github.com/lieff/minimp3) | `gpu/audio/minimp3` | CC0-1.0 | MP3 decoding | the firmware |
 | [Tremor](https://gitlab.xiph.org/xiph/tremor) (libvorbisidec) and [libogg](https://gitlab.xiph.org/xiph/ogg) | `gpu/audio/tremor` | BSD-3-Clause | Ogg Vorbis decoding | the firmware |
 | Bluedroid's SBC encoder (Broadcom, from Android; the copy in [BTstack](https://github.com/bluekitchen/btstack)'s `3rd-party/bluedroid/encoder`, with its marked changes) | `gpu/bt/sbc_encoder` | Apache-2.0 | the sound's encoding for a Bluetooth speaker | the firmware (the Zero W's, the Zero 2 W's) |
@@ -757,6 +830,9 @@ source.
 | [Raspberry Pi userland](https://github.com/raspberrypi/userland) (its MMAL client) | `gpu/video/userland` (a copy), `third_party/userland` | BSD-3-Clause | talking to the VideoCore's video components | the firmware |
 | GCC runtime (`libgcc`), newlib's `libm` (Arm GNU Toolchain 15.2) | the toolchain | GPL-3.0 with the GCC Runtime Library Exception; newlib: BSD-style | runtime support linked into the firmware | the firmware |
 | [Raspberry Pi Pico SDK](https://github.com/raspberrypi/pico-sdk) | fetched by `hosts/pico` | BSD-3-Clause | the Pico host | Pico images |
+| [BTstack](https://github.com/bluekitchen/btstack), [cyw43-driver](https://github.com/georgerobotics/cyw43-driver), [lwIP](https://savannah.nongnu.org/projects/lwip/) | in the Pico SDK (`lib/`) | BTstack and cyw43-driver: as Raspberry Pi licenses them for its Pico W boards (the SDK's `LICENSE.RP` files); lwIP: BSD-3-Clause | the Pico W's Bluetooth and Wi-Fi (`keyboard`, `mouse`, `wifi`) | those Pico images |
+| picosdl's Bluetooth HID host, stick and Gamepad QT drivers (the same author's) | `hosts/pico/bt`, `hosts/pico/input` | BSD-2-Clause; `hosts/pico/bt` carries BSD-3-Clause material (its README) | a keyboard, a mouse, the stick and the game controller on the Pico | Pico images |
+| QR Code generator (Project Nayuki, as LVGL carries it) | `hosts/pico/wifi/qrcodegen.c` | MIT | `wifi`'s QR codes | the `wifi` image |
 | [ESP-IDF](https://github.com/espressif/esp-idf) 5.5 | installed separately | Apache-2.0 | the ESP32-P4 host | P4 images |
 | [libusb](https://libusb.info) 1.0 | the system's | LGPL-2.1-or-later | the PC host's USB (linked dynamically) | — |
 | [Emscripten](https://emscripten.org) | installed separately | MIT or University of Illinois/NCSA | the installer page's demos (WebAssembly; its runtime code is in the output) | the installer page |
