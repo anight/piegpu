@@ -9,6 +9,11 @@
 #   antigrav            anti-gravity racing, after WipEout: six craft, a circuit
 #                       (its sounds: antigrav_sounds.c, made by
 #                       tools/make_antigrav_sounds.py)
+#   zerog               anti-gravity racing to fly yourself (zerog/): the stick's
+#                       craft among seven that fly themselves, a circuit with a
+#                       jump and a fork, weapons picked up on the way (its own
+#                       sounds: zerog/sounds.c, made by tools/make_zerog_sounds.py;
+#                       and antigrav's)
 #   tumble              2D physics: balls and boxes in a box the stick tilts,
 #                       each meeting heard (tumble_sounds.c, made by
 #                       tools/make_tumble_sounds.py)
@@ -45,7 +50,7 @@ set(PGPU_DEMO_SHADERS ${PGPU_DEMOS}/shaders)
 set(PGPU_LEVEL_walk base)			# the BSP engine's demos' levels (engine/levels)
 set(PGPU_LEVEL_keep keep)
 set(PGPU_LEVEL_isles isles)
-set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav tumble aquarium walk keep isles touch
+set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav zerog tumble aquarium walk keep isles touch
 	toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids media)
 
 if(NOT COMMAND pgpu_demo)
@@ -106,6 +111,17 @@ function(pgpu_demo target app)
 		program(scenery -a a_pos:float:3 -a a_uv:float:2 -a a_shade:float:1 -v triangles --ms)	# (--ms: the
 		program(craft -a a_pos:float:3 -a a_normal:float:3 -a a_uv:float:2 -v triangles)	# shadows, blended)
 		program(nightsky -a a_pos:float:2 -a a_dir:float:3 -v triangles)
+
+	elseif(app STREQUAL "zerog")		# anti-gravity racing to fly yourself
+		set(zerog ${PGPU_DEMOS}/zerog)
+		target_sources(${target} PRIVATE ${zerog}/zerog.c ${zerog}/art.c ${zerog}/race.c ${zerog}/track.c
+			${zerog}/sounds.c ${PGPU_DEMOS}/antigrav_sounds.c)
+		program(sky -a a_pos:float:2 -v triangles)
+		program(scenery -a a_pos:float:3 -a a_uv:float:2 -a a_shade:float:1 -v triangles --ms)	# (--ms: blended:
+		program(craft -a a_pos:float:3 -a a_normal:float:3 -a a_uv:float:2 -v triangles)	# the shadows,
+		program(nightsky -a a_pos:float:2 -a a_dir:float:3 -v triangles)
+		program(flare -a a_pos:float:3 -a a_uv:float:2 -a a_color:ubyte_norm:4 -v triangles --ms)	# the lights)
+		pad()
 
 	elseif(app STREQUAL "aquarium")	# a tank of tropical fish
 		target_sources(${target} PRIVATE ${PGPU_DEMOS}/aquarium.c ${PGPU_DEMOS}/aquarium_assets.c)

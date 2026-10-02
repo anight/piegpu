@@ -358,8 +358,8 @@ are in a third file, `speakers.txt` (below).
   (how fast it plays: an engine's note); the RPi mixes them into what it
   plays, the stream's sound or silence, so an effect is heard as soon as the
   output allows (HDMI: the 85 ms the VideoCore holds; a Bluetooth speaker:
-  its own buffer, not measured). The engine's demos, `antigrav`, `tumble`
-  and `aquarium` use them (below).
+  its own buffer, not measured). The engine's demos, `antigrav`, `zerog`,
+  `tumble` and `aquarium` use them (below).
 - **The output:** a Bluetooth speaker while one is connected, else HDMI (a
   monitor with speakers). The volume and mute (Settings, `volume=`, `mute=`)
   apply to all of it.
@@ -421,13 +421,23 @@ Apache 2.0). The controller runs as it comes, without Broadcom's patch file.
 - **Supersampling** takes nothing of the RPi: the scene drawn twice as wide
   and high into a texture, and that drawn over the screen through a linear
   filter.
-- `antigrav` is drawn with 4x MSAA (`m` on the console
+- `antigrav` and `zerog` are drawn with 4x MSAA (`m` on the console
   takes it off and puts it back). `aquarium` shows both and neither, ten
   seconds each. Measured there on a
   Zero 2 W, the panel, 60 fps in all three: a frame's rendering 3.5 ms
   without, 5.8 ms with 4x MSAA, 9.0 ms supersampled; the edges compared in
   screenshots. Not tried: the Zero and the Zero W, a multisampled frame
   drawn in several jobs, multisampling into a texture.
+- **What a frame costs with it**, measured with `zerog` on a Zero 2 W at
+  1024x600 (HDMI): an empty frame 3.4 ms; 4x MSAA itself 3 to 5 ms of a
+  frame of 11 to 14. A blended pixel (a `--ms` program) costs many times an
+  opaque one: two screens of blended light took a frame from 12 ms to 58,
+  so lights are kept small on the screen, and rings are thin bands, not
+  squares. A hidden pixel is not free (no early Z with MSAA): the ground
+  drawn again behind itself cost 1.0 ms each time, 1.9 ms where it's seen;
+  so what's never seen isn't drawn (the deck's underside is culled). The
+  nearer mipmap alone (`GL_LINEAR_MIPMAP_NEAREST`) instead of two mixed:
+  1.3 ms of 14 where rough textures fill the picture.
 
 ### Recording the screen and the sound
 
@@ -478,6 +488,7 @@ Every host builds them (`demos/demos.cmake`):
 | `aquarium` | a tank of tropical fish: five kinds that swim by a wave down their bodies, school, come for food and flee a knock on the glass; a starfish creeping over a rock, two shrimps walking the sand; caustics on the sand, shafts of light, swaying plants, bubbles, the pump's hum. It shows antialiasing, ten seconds each: none, 2x2 supersampled (drawn twice the size into a texture), hardware 4x MSAA (`pglSamples`) |
 | `tumble` | 2D physics: balls and boxes in a box that the stick tilts (rigid bodies, friction, stacking), each meeting heard; a finger on the panel adds a ball |
 | `antigrav` | anti-gravity racing, after WipEout: six craft, a circuit; heard from the craft followed (engines whose note is their speed, the wind, the crowd, pads, the countdown); antialiased in hardware (4x MSAA) |
+| `zerog` | anti-gravity racing to fly yourself (`demos/zerog`): the Pico's stick and game controller fly one of eight craft round a circuit with a jump, a fork (a shorter road through bends) and a tunnel; the others fly themselves, and the player's too until the stick is touched, all by one flight model (thrust, drag, grip, air brakes, the hover over the road, gravity where there is none). Speed pads; weapon pads give a rocket, a homing missile, mines, a shield or a turbo. Three views, a map, the sounds of `antigrav` and the weapons'; 4x MSAA. The stick: the nose, forward the engine, back the brakes; B the engine, Y and A the air brakes, X or the stick pressed fires, SELECT the view, START a pause. On a Pico 2 W with a Zero 2 W: 60 fps on the panel and on a 1024x600 HDMI screen (there a frame's rendering 9-13 ms; the Pico's CPU 33-45% busy; the next frame is made while the RPi renders the last). `zerog_sim` (`hosts/pc`) flies its races without a GPU, for tuning |
 | `walk` | the BSP engine (`engine/`): a Quake-format level walked through, doors that open, a lift |
 | `keep` | the engine outdoors: a castle at dusk, a moat of lava, a lift, nine gems to find |
 | `isles` | the engine in the sky: floating islands, a moving platform, a jump pad, a portal, coins |

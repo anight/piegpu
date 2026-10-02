@@ -218,4 +218,5 @@ def main ():
 	open (os.path.join (OUT, 'antigrav_sounds.h'), 'w').write ('\n'.join (h) + '\n')
 	print ('%d sounds, %d bytes' % (len (SOUNDS), total))
 
-main ()
+if __name__ == '__main__':
+	main ()
