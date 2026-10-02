@@ -50,6 +50,7 @@ CKernel::CKernel (void)
 	m_DevLink (&m_Interrupt, &m_Gadget),
 	m_Installer (&m_Interrupt, &m_Timer, &m_DevLink),
 	m_nHostLine (0),
+	m_bEncodeDump (FALSE),
 	m_VCHIQ (CMemorySystem::Get (), &m_Interrupt),
 	m_OutputMode (OutputAuto),
 	m_HostMode (HostAuto),
@@ -789,6 +790,18 @@ void CKernel::HostInput (void)
 			{
 				SoundTest ();
 			}
+			else if (strncmp (m_HostLine, "ENC", 3) == 0)	// debugging: the frames shown through
+			{						// the VideoCore's H.264 encoder
+				EncodeLine (m_HostLine + 3);
+			}
+			else if (strncmp (m_HostLine, "GETFILE ", 8) == 0)	// a file of the card, as a screenshot goes
+			{
+				FileLine (m_HostLine + 8, FALSE);
+			}
+			else if (strncmp (m_HostLine, "DELFILE ", 8) == 0)
+			{
+				FileLine (m_HostLine + 8, TRUE);
+			}
 #ifdef PGPU_WIRELESS
 			else if (strncmp (m_HostLine, "BT ", 3) == 0)	// debugging: Bluetooth by hand
 			{
@@ -1206,6 +1219,19 @@ TShutdownMode CKernel::Run (void)
 				{
 					m_bFrameSeen = TRUE;
 					m_nLastFrame = CTimer::GetClockTicks ();
+					if (   m_EncodeTest.IsRunning () && !m_SettingsApp.IsOpen ()
+					    && m_Renderer.GetWidth () == m_EncodeTest.GetWidth ()
+					    && m_Renderer.GetHeight () == m_EncodeTest.GetHeight ())
+					{
+						const void *pFrame = m_Renderer.GetOutput ()->GetShownFrame ();
+						if (pFrame == nullptr)
+						{
+							pFrame = m_Renderer.GetLastFrame ();
+						}
+						CleanAndInvalidateDataCacheRange ((uintptr) pFrame,	// written by the V3D
+							m_Renderer.GetWidth () * m_Renderer.GetHeight () * 2);
+						m_EncodeTest.Frame ((const u16 *) pFrame);
+					}
 					if (m_bOutputPending)
 					{
 						ApplyOutput ();
@@ -1220,6 +1246,27 @@ TShutdownMode CKernel::Run (void)
 		}
 
 		m_Commands.UpdateVideo ();
+		if (m_EncodeTest.Update () && m_bEncodeDump)	// over: the stream's start, as a screenshot goes
+		{
+			unsigned nBytes, nFrames, nUs, nSoundFrames, nRate;
+			const u8 *pStream = m_EncodeTest.GetStream (&nBytes);
+			const s16 *pSound = m_EncodeTest.GetSound (&nSoundFrames, &nRate);
+			nFrames = m_EncodeTest.GetFrames (&nUs);
+			CString Header;
+			Header.Format ("\n#H264 %u %u %u\n", nBytes, nFrames, nUs);	// (frames in so long: its rate)
+			m_DevLink.Write ((const char *) Header, Header.GetLength ());
+			if (WriteBase64 (pStream, nBytes))
+			{
+				m_DevLink.Write ("#END\n", 5);
+				Header.Format ("#SOUND %u %u s16le-stereo\n", nRate, nSoundFrames);
+				m_DevLink.Write ((const char *) Header, Header.GetLength ());
+				if (WriteBase64 ((const u8 *) pSound, nSoundFrames * 4))
+				{
+					m_DevLink.Write ("#END\n", 5);
+				}
+			}
+			m_DevLink.Update ();
+		}
 #ifdef PGPU_WIRELESS
 		m_Bluetooth.Update ();
 		if (m_Bluetooth.BondChanged ())		// paired (or no more; or another one used): kept
@@ -1393,6 +1440,113 @@ boolean CKernel::WriteBase64 (const u8 *p, unsigned nBytes)
 		}
 	}
 	return TRUE;
+}
+
+// the GETFILE and DELFILE host lines: a file of the card to the development
+// log ("#FILE name bytes", base64, "#END"; "#FILE name none" if there's none), or off the card
+void CKernel::FileLine (const char *pLine, boolean bDelete)
+{
+	CString Path, Header;
+	Path.Format ("SD:/%s", pLine);
+	FIL File;
+	if (strchr (pLine, '/') || strchr (pLine, ' ') || !m_Installer.MountCard ())
+	{
+		LOGWARN ("No card, or no name");
+		return;
+	}
+	if (bDelete)
+	{
+		LOGNOTE ("%s: %s", pLine, f_unlink (Path) == FR_OK ? "gone" : "not there");
+		return;
+	}
+	if (f_open (&File, Path, FA_READ) != FR_OK)
+	{
+		Header.Format ("\n#FILE %s none\n#END\n", pLine);
+		m_DevLink.Write ((const char *) Header, Header.GetLength ());
+		return;
+	}
+	Header.Format ("\n#FILE %s %u\n", pLine, (unsigned) f_size (&File));
+	m_DevLink.Write ((const char *) Header, Header.GetLength ());
+	static u8 Block[48 * 1024];			// (a multiple of 3: whole base64 lines)
+	UINT nRead = 0;
+	while (f_read (&File, Block, sizeof Block, &nRead) == FR_OK && nRead && WriteBase64 (Block, nRead))
+	{
+		m_DevLink.Update ();
+	}
+	f_close (&File);
+	m_DevLink.Write ("#END\n", 5);
+	m_DevLink.Update ();
+}
+
+// the ENC host line: "ENC [seconds [kbit/s [RGB|I420 [DUMP [frames a second]]]]]" (10 s,
+// 1000 kbit/s, RGB, no dump, 60): the frames shown from now on go to the
+// VideoCore's H.264 encoder, which is watched (gpu/video/encode_test.h);
+// with DUMP the stream follows at the end ("#H264 bytes frames microseconds", base64,
+// "#END"), and the sound played meanwhile ("#SOUND rate frames s16le-stereo", base64, "#END").
+// With FILE instead of DUMP they go into an MP4 file on the card as they
+// come: REC000.MP4, or the first number there's none of yet. "ENC END": that's enough
+void CKernel::EncodeLine (const char *pLine)
+{
+	if (strstr (pLine, "END"))
+	{
+		m_EncodeTest.End ();
+		return;
+	}
+	unsigned nSeconds = 10, nKbit = 1000, nRate = 60;
+	boolean bI420 = FALSE;
+	m_bEncodeDump = FALSE;
+	char *pEnd = (char *) pLine;
+	unsigned long n = strtoul (pLine, &pEnd, 10);
+	if (pEnd != pLine)
+	{
+		nSeconds = n;
+		pLine = pEnd;
+		n = strtoul (pLine, &pEnd, 10);
+		if (pEnd != pLine)
+		{
+			nKbit = n;
+			pLine = pEnd;
+		}
+	}
+	bI420 = strstr (pLine, "I420") != nullptr;
+	const char *pDump = strstr (pLine, "DUMP");
+	if (pDump)
+	{
+		m_bEncodeDump = TRUE;
+		n = strtoul (pDump + 4, &pEnd, 10);
+		nRate = pEnd != pDump + 4 ? n : nRate;
+	}
+	if (!m_Commands.GetVideo ()->IsInitialized ())
+	{
+		LOGWARN ("No MMAL: no encoder");
+		return;
+	}
+	if (!nSeconds || nSeconds > 600 || nKbit < 10 || nKbit > 25000 || !nRate || nRate > 120)
+	{
+		LOGWARN ("ENC [seconds [kbit/s [RGB|I420 [DUMP [frames a second]]]]]");
+		return;
+	}
+	CString Path;
+	if (strstr (pLine, "FILE"))
+	{
+		FILINFO Info;
+		unsigned n = 0;
+		if (!m_Installer.MountCard ())
+		{
+			LOGWARN ("No card: no file");
+			return;
+		}
+		do
+		{
+			Path.Format ("SD:/REC%03u.MP4", n);
+		}
+		while (f_stat (Path, &Info) == FR_OK && ++n < 1000);
+		LOGNOTE ("Recording into %s", (const char *) Path + 4);
+	}
+	m_Renderer.SetSlackRoutine (EncodeSlack, this);
+	m_EncodeTest.Start (m_Renderer.GetWidth (), m_Renderer.GetHeight (), nRate, nKbit * 1000, nSeconds, bI420,
+			    m_bEncodeDump ? nSeconds * (nKbit * 1000 / 8) * 5 / 4 + 256 * 1024 : 0,
+			    Path.GetLength () ? (const char *) Path : nullptr);
 }
 
 void CKernel::DumpScreenshot (void)

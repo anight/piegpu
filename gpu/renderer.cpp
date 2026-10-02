@@ -653,6 +653,10 @@ void CRenderer::Present (TRenderStats *pStats)
 	m_pOutput->Prepare (m_pFrameBuffer[m_nBuffer]);	// (while the frame before goes out)
 
 	unsigned nStart = CTimer::GetClockTicks ();
+	if (m_pSlack)
+	{
+		(*m_pSlack) (m_pSlackParam);
+	}
 	m_pOutput->WaitIdle ();
 	m_pOutput->Show (m_pFrameBuffer[m_nBuffer], PanelDone, this);	// (the panel: in step with its scan)
 	unsigned nWaitUs = CTimer::GetClockTicks () - nStart;

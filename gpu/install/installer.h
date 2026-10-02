@@ -55,6 +55,10 @@ public:
 	// be (said nothing to the host)
 	boolean WriteFile (const char *pName, const void *pData, unsigned nBytes);
 
+	// the card mounted, for someone else's files (FatFs, drive "SD:"); FALSE
+	// if there's none, or while the host sends a file
+	boolean MountCard (void)	{ return !m_bOpen && Mount (TRUE); }
+
 	// the card let go (before a restart)
 	void Unmount (void);
 

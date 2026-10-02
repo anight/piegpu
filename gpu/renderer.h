@@ -124,6 +124,12 @@ public:
 	void ResetBuffers (void);
 	COutput *GetOutput (void) const		{ return m_pOutput; }
 
+	/// \brief A routine called as a frame is about to be shown, before the
+	///	   wait for the output to have taken the one before: what it does
+	///	   meanwhile costs the frame nothing while that wait is longer
+	typedef void TSlackRoutine (void *pParam);
+	void SetSlackRoutine (TSlackRoutine *pRoutine, void *pParam)	{ m_pSlack = pRoutine; m_pSlackParam = pParam; }
+
 	/// \return Number of varyings of a shader variant
 	static unsigned GetVaryings (unsigned nShader);
 
@@ -184,6 +190,8 @@ private:
 
 private:
 	CV3D *m_pV3D;
+	TSlackRoutine *m_pSlack = nullptr;
+	void *m_pSlackParam = nullptr;
 	COutput *m_pOutput;
 	CGPIOPin m_PinFrame;
 

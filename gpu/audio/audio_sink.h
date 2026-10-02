@@ -71,6 +71,21 @@ public:
 	/// \return TRUE if this output has effects to play (it's to keep running)
 	boolean HasSounds (void) const;
 
+	/// \brief A recording's tap: what the output that plays the effects
+	///	   takes from now on goes into a ring of TapFrames too (with the
+	///	   effects, before the volume), to be read as it comes (ReadTap)
+	static const unsigned TapFrames = 2 * 48000;
+	static void StartTap (void);
+	static void StopTap (void);
+	/// \return Frames copied (L, R; up to nMaxFrames), in the order they were taken
+	static unsigned ReadTap (s16 *pFrames, unsigned nMaxFrames);
+	/// \return The frames' rate (0: no output took any yet)
+	static unsigned GetTapRate (void)	{ return s_nTapRate; }
+	/// \return When the first of them were taken (CTimer::GetClockTicks64 ())
+	static u64 GetTapStart (void)		{ return s_nTapStart; }
+	/// \return Frames lost because nobody read the ring
+	static unsigned GetTapLost (void)	{ return s_nTapLost; }
+
 protected:
 	/// \brief The reader's: the next frames, silence where the ring has none
 	/// \param pFromRing Frames of them that came from the ring
@@ -92,6 +107,10 @@ private:
 
 	static CSounds *s_pSounds;
 	static CAudioSink *volatile s_pSoundsSink;
+	static s16 *s_pTap;
+	static volatile boolean s_bTap;
+	static volatile unsigned s_nTapIn, s_nTapOut, s_nTapRate, s_nTapLost;
+	static volatile u64 s_nTapStart;
 };
 
 #endif

@@ -242,6 +242,54 @@ model is named below, the fact was measured on that one.
   too"). The MMAL sources are built with `-mstrict-align`: they read VCHIQ's
   messages in place, in Circle's coherent region, which is Device memory in 64
   bit, where unaligned accesses fault.
+- **The encoder, tried** (`gpu/video/encode_test.cpp`; the `ENC` host line,
+  text mode: `ENC [seconds [kbit/s [RGB|I420 [DUMP [frames a second]]]]]`):
+  the frames shown go to the firmware's H.264 encoder (`vc.ril.video_encode`:
+  high profile, a key frame a second with its SPS and PPS), a line a second
+  says what went in and came out, and with `DUMP` the stream follows
+  (`#H264 bytes frames microseconds`, base64, `#END`), then the sound played
+  meanwhile (`#SOUND rate frames s16le-stereo`: what the output that plays
+  the effects took, with them, before the volume: `CAudioSink`'s tap).
+  `devtools/record.py SECONDS OUT.mp4` does all that and has ffmpeg make an
+  MP4 of the two (the video as it is, at the rate the frames came at; the
+  sound as AAC). Its input takes the panel's frames
+  as they are (`RGB2`, RGB565; the list it gives: I420 YV12 NV12 NV21 RGB2
+  RGB3 BGR3 RGBA BGRA YUYV YVYU UYVY VYUY SAND I422 EGLI OPQV). Measured on
+  a Zero 2 W, the aquarium at 60 fps on the panel (320×240), 1000 kbit/s
+  asked: 596 frames in in 10 s, none without a buffer, 0.17 ms each to hand
+  over; 59.5 frames a second out, 999 kbit/s, a frame at most 3.3 KB, a key
+  frame at most 16.6 KB; a frame came out 3 ms after it went in (5 ms at
+  most); the renderer stayed at 60 fps. ffprobe on the PC: H.264 High, level
+  4.0, 320×240, no B frames, 596 frames; the colours right. 300 kbit/s asked
+  gave 298; 4000 asked gave 2846. Making I420 here (a plain loop) cost
+  4.0 ms a frame: no reason to. A recording of 12 s with a Bluetooth speaker
+  playing: 717 frames, 575488 frames of sound at 48 kHz (11.99 s); a feed
+  asked for at 2.0 s is heard at 2.007 s and its pellets are first seen in
+  frame 120 (2.009 s). Nothing is sent to the host yet.
+- **A recording on the card** (`ENC seconds kbit/s RGB FILE`;
+  `gpu/video/mp4_writer.cpp`; `devtools/record.py --card` fetches it with
+  the `GETFILE` host line, `DELFILE` removes it): the RPi writes the MP4
+  itself, as it records, `RECnnn.MP4`: the encoder's frames (their NAL units
+  behind their lengths, the parameter sets in `avcC`, each frame with the
+  time it was shown: the durations are what they were) and the sound as
+  16-bit PCM (`sowt`: there's no AAC encoder here; 192 KB a second of the
+  file's 317), in chunks of half a second, the index (`moov`) written when
+  it ends. A recording that doesn't end (the power gone) has no index and
+  can't be played. What costs: the card. Its driver (Circle's SDHOST)
+  writes in the caller's time, 2.7 ms and 83 us a KB (16 KB: 4 ms; 64 KB:
+  8 ms; from a sector's start or not), so the main loop stands still that
+  long; written between frames, that showed as 57 fps instead of 60. So
+  the blocks are small (16 KB) and one goes out as a frame is about to be
+  shown, in the wait for the panel to have taken the frame before
+  (`CRenderer::SetSlackRoutine`): a minute of the aquarium recorded at
+  59.6 fps (3577 frames; the renderer's seconds 57 to 61), 1161 writes of
+  3 ms, 38 ms the longest, 115 KB waiting at most (the ring: 8 MB), no
+  sound lost; closing the file 136 ms. Where the wait is short (the
+  supersampled mode: 9 ms of rendering) a 32 s recording had seconds of 55
+  to 57 fps. ffprobe: H.264 High 60.000 s, PCM 60.009 s; ffmpeg decodes it
+  whole; a feed heard at 4.159 s shows its pellets in the frame of 4.156 s.
+  Not tried: another core for the writes (the SDHOST driver's interrupt is
+  core 0's), players other than ffmpeg, the Zero's one core, a full card.
 
 ## Audio
 

@@ -35,6 +35,7 @@
 #include "renderer.h"
 #include "commands.h"
 #include "install/installer.h"
+#include "video/encode_test.h"
 
 enum TShutdownMode
 {
@@ -140,6 +141,9 @@ private:
 	void ShowPanelNotice (void);
 	static u32 GetThrottled (void);
 	void DumpScreenshot (void);
+	void EncodeLine (const char *pLine);
+	static void EncodeSlack (void *pParam)	{ ((CKernel *) pParam)->m_EncodeTest.FrameSlack (); }
+	void FileLine (const char *pLine, boolean bDelete);
 	void DumpAudio (void);
 	void SoundTest (void);
 	boolean WriteBase64 (const u8 *p, unsigned nBytes);
@@ -206,6 +210,8 @@ private:
 	unsigned		m_nSpeakerVolume;	// what it was given last, percent (~0: nothing yet)
 	unsigned		m_nVolumeSaveAt;	// its buttons changed the volume: settings.txt then (0: no)
 #endif
+	CEncodeTest		m_EncodeTest;		// debugging: the ENC host line
+	boolean			m_bEncodeDump;		// its stream to the development log at its end
 	CSettingsApp		m_SettingsApp;		// on the panel, a long press opens it (gpu/ui)
 	boolean			m_bPressing;		// the long press: held since, where
 	unsigned		m_nPressStart;

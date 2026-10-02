@@ -10,6 +10,46 @@
 
 CSounds *CAudioSink::s_pSounds = nullptr;
 CAudioSink *volatile CAudioSink::s_pSoundsSink = nullptr;
+s16 *CAudioSink::s_pTap = nullptr;
+volatile boolean CAudioSink::s_bTap = FALSE;
+volatile unsigned CAudioSink::s_nTapIn = 0;
+volatile unsigned CAudioSink::s_nTapOut = 0;
+volatile unsigned CAudioSink::s_nTapRate = 0;
+volatile unsigned CAudioSink::s_nTapLost = 0;
+volatile u64 CAudioSink::s_nTapStart = 0;
+
+void CAudioSink::StartTap (void)
+{
+	s_bTap = FALSE;
+	if (!s_pTap)
+	{
+		s_pTap = new s16[TapFrames * 2];
+	}
+	s_nTapIn = s_nTapOut = s_nTapRate = s_nTapLost = 0;
+	DataMemBarrier ();
+	s_bTap = s_pTap != nullptr;
+}
+
+void CAudioSink::StopTap (void)
+{
+	s_bTap = FALSE;
+}
+
+unsigned CAudioSink::ReadTap (s16 *pFrames, unsigned nMaxFrames)
+{
+	unsigned nOut = s_nTapOut, n = s_nTapIn - nOut;
+	DataMemBarrier ();
+	n = n < nMaxFrames ? n : nMaxFrames;
+	for (unsigned i = 0; i < n; i++, nOut++)
+	{
+		unsigned j = (nOut % TapFrames) * 2;
+		pFrames[2 * i] = s_pTap[j];
+		pFrames[2 * i + 1] = s_pTap[j + 1];
+	}
+	DataMemBarrier ();
+	s_nTapOut = nOut;
+	return n;
+}
 
 void CAudioSink::SetSounds (CSounds *pSounds, CAudioSink *pSink)
 {
@@ -113,6 +153,27 @@ void CAudioSink::Take (s16 *pBuffer, unsigned nFrames, unsigned *pFromRing, unsi
 	if (s_pSoundsSink == this && s_pSounds && s_pSounds->Mix (pBuffer, nFrames, m_nSampleRate))
 	{
 		nSound = nFrames;
+	}
+
+	// a recording's tap: this output's, of one rate from its first frames on
+	if (s_bTap && s_pSoundsSink == this && (!s_nTapRate || s_nTapRate == m_nSampleRate))
+	{
+		if (!s_nTapRate)
+		{
+			s_nTapStart = CTimer::GetClockTicks64 ();
+			s_nTapRate = m_nSampleRate;
+		}
+		unsigned nIn = s_nTapIn, nRoom = TapFrames - (nIn - s_nTapOut);
+		unsigned n = nRoom < nFrames ? nRoom : nFrames;
+		s_nTapLost += nFrames - n;
+		for (unsigned i = 0; i < n; i++, nIn++)
+		{
+			unsigned j = (nIn % TapFrames) * 2;
+			s_pTap[j] = pBuffer[2 * i];
+			s_pTap[j + 1] = pBuffer[2 * i + 1];
+		}
+		DataMemBarrier ();
+		s_nTapIn = nIn;
 	}
 
 	// the volume: from the last chunk's to the one asked for across this

@@ -48,6 +48,7 @@ public:
 
 	/// \brief Connect to the VideoCore's components (once, at boot)
 	boolean Initialize (void);
+	boolean IsInitialized (void) const	{ return m_bInitialized; }
 
 	// the commands (docs/protocol.md 7.12): 0 or a PGPU_ERR_* code
 	/// \param nFormat PGPU_VIDEO_ANNEXB, or PGPU_VIDEO_AVCC with pConfig the avcC
