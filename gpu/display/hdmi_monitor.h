@@ -8,9 +8,12 @@
 // directly. The firmware's EDID property tag can't be used: it keeps
 // answering with the EDID read at boot after the monitor is gone.
 //
-// The firmware doesn't change the HDMI mode after boot (config.txt has
-// hdmi_force_hotplug=1, so without a monitor at boot it's 640x480): the mode
-// being sent is read from the HDMI pixel valve (PV2).
+// The firmware doesn't change the HDMI mode by itself after boot (config.txt
+// has hdmi_force_hotplug=1, so without a monitor at boot it's 640x480), and
+// at boot it takes a mode of its lists, which a monitor's own may not be in
+// (1024x600: it sent 1024x768). The mode being sent is read from the HDMI
+// pixel valve (PV2); the monitor's own timing is kept here for the kernel to
+// ask the firmware for it (CKernel::MatchHDMIMode, tv_service.h).
 //
 #ifndef _hdmi_monitor_h
 #define _hdmi_monitor_h
@@ -24,6 +27,12 @@ struct THDMIState
 	unsigned nWidth, nHeight;	// the monitor's preferred mode (0: unknown)
 	unsigned nRefreshMilliHz;
 	char Name[14];			// the monitor's name, if it has one
+	// the preferred mode's timing (the EDID's first detailed one)
+	unsigned nClockHz;
+	unsigned nHFront, nHSync, nHBack;
+	unsigned nVFront, nVSync, nVBack;
+	boolean bHSyncPositive, bVSyncPositive, bInterlaced;
+	boolean bAudio;			// it takes sound (a CEA extension that says so): HDMI, not DVI
 	unsigned nSignalWidth;		// the mode sent (0: HDMI not active)
 	unsigned nSignalHeight;
 };
@@ -42,9 +51,13 @@ public:
 
 	const THDMIState &GetState (void) const	{ return m_State; }
 
+	/// \brief The mode sent may have changed: read it again
+	/// \param pTimings if not nullptr: the pixel valve's HORZA, HORZB, VERTA, VERTB
+	void SignalChanged (u32 *pTimings = nullptr);
+
 private:
 	boolean ReadHPD (void);
-	boolean ReadEDID (u8 *pBlock);
+	boolean ReadEDID (u8 *pBlock, unsigned nOffset = 0);
 	void Connected (boolean bNow);
 	boolean ParseEDID (const u8 *pBlock);
 	void ReadSignal (void);

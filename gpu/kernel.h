@@ -30,6 +30,7 @@
 #include "ui/settings_app.h"
 #include "display/hdmi_output.h"
 #include "display/hdmi_monitor.h"
+#include "display/tv_service.h"
 #include "display/gud_display.h"
 #include "display/offscreen_output.h"
 #include "renderer.h"
@@ -142,6 +143,8 @@ private:
 	static u32 GetThrottled (void);
 	void DumpScreenshot (void);
 	void EncodeLine (const char *pLine);
+	void TVLine (const char *pLine);
+	boolean MatchHDMIMode (void);
 	static void EncodeSlack (void *pParam)	{ ((CKernel *) pParam)->m_EncodeTest.FrameSlack (); }
 	void FileLine (const char *pLine, boolean bDelete);
 	void DumpAudio (void);
@@ -190,6 +193,9 @@ private:
 	CBacklight		m_Backlight;		// the panel's (PWM)
 	CHDMIOutput		m_HDMI;
 	CHDMIMonitor		m_Monitor;
+	CTVService		m_TV;			// the firmware's, for the HDMI mode
+	boolean			m_bHDMIFollows;		// the HDMI mode is made the monitor's own (hdmi_signal=monitor)
+	boolean			m_bRemakeHDMI;		// the HDMI mode changed: the framebuffer anew
 	COutput			*m_pScreen;		// the panel or HDMI: where the picture is
 	CGUDDisplay		m_GUD;			// a PC's desktop on the screen (a USB monitor)
 	COffscreenOutput	m_Offscreen;		// the GL frames' while the desktop shows

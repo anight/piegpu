@@ -35,6 +35,17 @@ CHDMIOutput::~CHDMIOutput (void)
 	delete m_pFrameBuffer;
 }
 
+void CHDMIOutput::Forget (void)
+{
+	if (m_pFrameBuffer)
+	{
+		CV3D::RemoveRegion ((const void *) (uintptr) m_pFrameBuffer->GetBuffer ());
+		delete m_pFrameBuffer;
+		m_pFrameBuffer = nullptr;
+	}
+	m_bFlipped = FALSE;
+}
+
 boolean CHDMIOutput::SetSize (unsigned nWidth, unsigned nHeight)
 {
 	if (m_pFrameBuffer && nWidth == m_nWidth && nHeight == m_nHeight)

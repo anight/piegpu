@@ -184,6 +184,30 @@ boolean CHDMIMonitor::ParseEDID (const u8 *pBlock)
 	unsigned nHTotal = m_State.nWidth + (d[3] | (d[4] & 0x0F) << 8);
 	unsigned nVTotal = m_State.nHeight + (d[6] | (d[7] & 0x0F) << 8);
 	m_State.nRefreshMilliHz = (unsigned) ((u64) nClockKHz * 1000000 / (nHTotal * nVTotal));
+	// the rest of its timing: the porches and the sync pulses, their polarities
+	m_State.nClockHz = nClockKHz * 1000;
+	m_State.nHFront = d[8] | (d[11] & 0xC0) << 2;
+	m_State.nHSync = d[9] | (d[11] & 0x30) << 4;
+	m_State.nHBack = nHTotal - m_State.nWidth - m_State.nHFront - m_State.nHSync;
+	m_State.nVFront = d[10] >> 4 | (d[11] & 0x0C) << 2;
+	m_State.nVSync = (d[10] & 0x0F) | (d[11] & 0x03) << 4;
+	m_State.nVBack = nVTotal - m_State.nHeight - m_State.nVFront - m_State.nVSync;
+	m_State.bInterlaced = !!(d[17] & 0x80);
+	boolean bSeparate = (d[17] & 0x18) == 0x18;		// (digital separate syncs: their polarities follow)
+	m_State.bVSyncPositive = bSeparate && (d[17] & 0x04);
+	m_State.bHSyncPositive = bSeparate && (d[17] & 0x02);
+	// sound: a CEA extension block whose flags say "basic audio"
+	m_State.bAudio = FALSE;
+	u8 More[128];
+	if (pBlock[126] && ReadEDID (More, 128) && More[0] == 0x02)
+	{
+		u8 uchMore = 0;
+		for (unsigned i = 0; i < 128; i++)
+		{
+			uchMore += More[i];
+		}
+		m_State.bAudio = uchMore == 0 && (More[3] & 0x40);
+	}
 
 	memset (m_State.Name, 0, sizeof m_State.Name);
 	for (unsigned n = 0; n < 4; n++)		// the name: display descriptor FC
@@ -198,24 +222,28 @@ boolean CHDMIMonitor::ParseEDID (const u8 *pBlock)
 		}
 	}
 
-	LOGNOTE ("Monitor \"%s\": %ux%u at %u.%03u Hz", m_State.Name, m_State.nWidth,
-		 m_State.nHeight, m_State.nRefreshMilliHz / 1000, m_State.nRefreshMilliHz % 1000);
+	LOGNOTE ("Monitor \"%s\": %ux%u at %u.%03u Hz (%u kHz; across %u + %u + %u + %u, sync %s; down %u + %u + %u + %u, "
+		 "sync %s%s), %s", m_State.Name, m_State.nWidth,
+		 m_State.nHeight, m_State.nRefreshMilliHz / 1000, m_State.nRefreshMilliHz % 1000, nClockKHz,
+		 m_State.nWidth, m_State.nHFront, m_State.nHSync, m_State.nHBack, m_State.bHSyncPositive ? "+" : "-",
+		 m_State.nHeight, m_State.nVFront, m_State.nVSync, m_State.nVBack, m_State.bVSyncPositive ? "+" : "-",
+		 m_State.bInterlaced ? ", interlaced" : "", m_State.bAudio ? "with sound" : "no sound");
 
 	return TRUE;
 }
 
-// EDID block 0 over DDC at 100 kHz (about 12 ms)
-boolean CHDMIMonitor::ReadEDID (u8 *pBlock)
+// an EDID block (128 bytes from nOffset) over DDC at 100 kHz (about 12 ms)
+boolean CHDMIMonitor::ReadEDID (u8 *pBlock, unsigned nOffset)
 {
 	u32 nDiv = read32 (BSC_DIV);		// the firmware's, restored afterwards
 	write32 (BSC_DIV, CMachineInfo::Get ()->GetClockRate (CLOCK_ID_CORE) / DDC_CLOCK);
 	write32 (BSC_S, BSC_S_CLKT | BSC_S_ERR | BSC_S_DONE);
 	write32 (BSC_A, DDC_ADDRESS);
 
-	// the offset (0), then 128 bytes
+	// the offset, then 128 bytes
 	write32 (BSC_DLEN, 1);
 	write32 (BSC_C, BSC_C_I2CEN | BSC_C_CLEAR);
-	write32 (BSC_FIFO, 0);
+	write32 (BSC_FIFO, nOffset);
 	write32 (BSC_C, BSC_C_I2CEN | BSC_C_ST);
 	unsigned nTimeout = 10000;
 	while (!(read32 (BSC_S) & BSC_S_DONE) && --nTimeout)
@@ -253,6 +281,18 @@ boolean CHDMIMonitor::ReadEDID (u8 *pBlock)
 	write32 (BSC_DIV, nDiv);
 
 	return n == 128;
+}
+
+void CHDMIMonitor::SignalChanged (u32 *pTimings)
+{
+	ReadSignal ();
+	if (pTimings)
+	{
+		pTimings[0] = read32 (PV2_BASE + 0x0C);
+		pTimings[1] = read32 (PV_HORZB);
+		pTimings[2] = read32 (PV2_BASE + 0x14);
+		pTimings[3] = read32 (PV_VERTB);
+	}
 }
 
 void CHDMIMonitor::ReadSignal (void)

@@ -51,6 +51,7 @@ CKernel::CKernel (void)
 	m_Installer (&m_Interrupt, &m_Timer, &m_DevLink),
 	m_nHostLine (0),
 	m_bEncodeDump (FALSE),
+	m_bRemakeHDMI (FALSE),
 	m_VCHIQ (CMemorySystem::Get (), &m_Interrupt),
 	m_OutputMode (OutputAuto),
 	m_HostMode (HostAuto),
@@ -111,6 +112,7 @@ boolean CKernel::Initialize (void)
 	m_bGUD = strcmp (m_Options.GetAppOptionString ("gud", "off"), "on") == 0;	// (off by default)
 	m_bJobCheck = strcmp (m_Options.GetAppOptionString ("clcheck", "on"), "off") != 0;
 	m_nHDMIPixels = m_Options.GetAppOptionDecimal ("hdmi_pixels", m_nHDMIPixels);
+	m_bHDMIFollows = strcmp (m_Options.GetAppOptionString ("hdmi_signal", "monitor"), "boot") != 0;
 	m_Commands.SetAudio (&m_Audio);
 	if (m_nHDMIPixels < 320 * 240 || m_nHDMIPixels > CRenderer::MaxPixels)
 	{
@@ -794,6 +796,16 @@ void CKernel::HostInput (void)
 			{						// the VideoCore's H.264 encoder
 				EncodeLine (m_HostLine + 3);
 			}
+			else if (strncmp (m_HostLine, "FW ", 3) == 0)	// debugging: a command to the firmware, as vcgencmd's
+			{
+				char Answer[512];
+				boolean bOK = m_TV.Command (m_HostLine + 3, Answer, sizeof Answer);
+				LOGNOTE ("%s: %s", m_HostLine + 3, bOK ? Answer : "(no answer)");
+			}
+			else if (strncmp (m_HostLine, "TV ", 3) == 0)	// debugging: the HDMI mode by hand
+			{
+				TVLine (m_HostLine + 3);
+			}
 			else if (strncmp (m_HostLine, "GETFILE ", 8) == 0)	// a file of the card, as a screenshot goes
 			{
 				FileLine (m_HostLine + 8, FALSE);
@@ -908,6 +920,14 @@ void CKernel::HDMISize (unsigned *pWidth, unsigned *pHeight)
 void CKernel::ApplyOutput (void)
 {
 	m_bOutputPending = FALSE;
+	boolean bRemake = m_bRemakeHDMI;
+	m_bRemakeHDMI = FALSE;
+	if (bRemake)
+	{
+		m_Renderer.GetOutput ()->WaitIdle ();
+		m_HDMI.Forget ();
+		m_Monitor.SignalChanged ();
+	}
 
 	COutput *pScreen;
 	unsigned nWidth, nHeight;
@@ -916,6 +936,7 @@ void CKernel::ApplyOutput (void)
 	boolean bDesktop = m_GUD.IsActive ();
 	COutput *pTarget = bDesktop ? &m_Offscreen : pScreen;
 	boolean bScreen =    pScreen != m_pScreen
+			  || bRemake
 			  || nWidth != m_Renderer.GetWidth ()
 			  || nHeight != m_Renderer.GetHeight ();
 	if (!bScreen && pTarget == m_Renderer.GetOutput ())
@@ -1105,7 +1126,12 @@ TShutdownMode CKernel::Run (void)
 			     : m_HostMode == HostI2S ? "I2S only (host=i2s)" : "USB when a PC streams, else I2S (host=auto)");
 	LOGNOTE ("USB: %s", m_bGUD ? "serial port, GL interface and monitor (GUD)" : "serial port and GL interface, no monitor (gud=off)");
 
+	m_TV.Initialize ();
 	m_Monitor.Initialize ();
+	if (MatchHDMIMode ())
+	{
+		m_HDMI.Forget ();		// (its framebuffer was of the mode before)
+	}
 	COutput *pOutput;
 	unsigned nWidth, nHeight;
 	ChooseOutput (&pOutput, &nWidth, &nHeight);
@@ -1320,6 +1346,10 @@ TShutdownMode CKernel::Run (void)
 		// the monitor plugged in or out: a new screen from the next frame
 		if (m_Monitor.Update ())
 		{
+			if (MatchHDMIMode ())		// (the monitor's EDID came: its own mode)
+			{
+				m_bRemakeHDMI = TRUE;
+			}
 			m_bOutputPending = TRUE;
 		}
 		// a PC's desktop on or off
@@ -1440,6 +1470,98 @@ boolean CKernel::WriteBase64 (const u8 *p, unsigned nBytes)
 		}
 	}
 	return TRUE;
+}
+
+// The HDMI mode made the monitor's own: the firmware sets one at boot only,
+// from its lists (640x480 without a monitor then; 1024x768 for a 1024x600
+// one), and scales our screen to it: a picture squeezed and stretched. Asked
+// through its services (tv_service.h), it takes the timing the monitor's
+// EDID gives as its custom mode (DMT 87) and turns HDMI on in it; the
+// framebuffer is made anew then. Not for a mode beyond what the HDMI block
+// sends (a 162 MHz pixel clock, 1920x1200), nor with hdmi_signal=boot.
+// \return TRUE if the mode was changed
+boolean CKernel::MatchHDMIMode (void)
+{
+	const THDMIState &M = m_Monitor.GetState ();
+	if (   !m_bHDMIFollows || !m_TV.IsThere () || !M.bConnected || !M.bEDID
+	    || (M.nSignalWidth == M.nWidth && M.nSignalHeight == M.nHeight))
+	{
+		return FALSE;
+	}
+	if (M.bInterlaced || M.nClockHz > 162000000 || M.nWidth > 1920 || M.nHeight > 1200)
+	{
+		LOGNOTE ("HDMI stays at %ux%u: the monitor's own mode is more than the RPi sends", M.nSignalWidth, M.nSignalHeight);
+		return FALSE;
+	}
+
+	CString Line;
+	char Answer[256];
+	Line.Format ("hdmi_timings %u %u %u %u %u %u %u %u %u %u 0 0 0 %u 0 %u 0", M.nWidth, M.bHSyncPositive ? 1 : 0,
+		     M.nHFront, M.nHSync, M.nHBack, M.nHeight, M.bVSyncPositive ? 1 : 0, M.nVFront, M.nVSync, M.nVBack,
+		     (M.nRefreshMilliHz + 500) / 1000, M.nClockHz);
+	if (!m_TV.Command (Line, Answer, sizeof Answer))
+	{
+		LOGWARN ("HDMI stays at %ux%u: the firmware didn't take the monitor's timing", M.nSignalWidth, M.nSignalHeight);
+		return FALSE;
+	}
+	unsigned nWasWidth = M.nSignalWidth, nWasHeight = M.nSignalHeight;
+	int nResult = m_TV.PowerOnExplicit (M.bAudio ? CTVService::ModeHDMI : CTVService::ModeDVI, CTVService::GroupDMT, 87);
+	unsigned nStart = CTimer::GetClockTicks ();
+	while (   nResult == 0 && (M.nSignalWidth != M.nWidth || M.nSignalHeight != M.nHeight)
+	       && CTimer::GetClockTicks () - nStart < 3000000)
+	{
+		m_Scheduler.MsSleep (50);
+		m_Monitor.SignalChanged ();
+	}
+	if (M.nSignalWidth != M.nWidth || M.nSignalHeight != M.nHeight)
+	{
+		LOGWARN ("HDMI is at %ux%u, not the monitor's %ux%u: the firmware said %d (%s)", M.nSignalWidth, M.nSignalHeight,
+			 M.nWidth, M.nHeight, nResult, Answer);
+		return nWasWidth != M.nSignalWidth || nWasHeight != M.nSignalHeight;
+	}
+	m_Scheduler.MsSleep (200);
+	LOGNOTE ("HDMI now sends the monitor's own %ux%u (%s; it was %ux%u), %u ms", M.nWidth, M.nHeight,
+		 M.bAudio ? "HDMI, with sound" : "DVI", nWasWidth, nWasHeight, (CTimer::GetClockTicks () - nStart) / 1000);
+
+	return TRUE;
+}
+
+// the TV host line (debugging): "TV P": HDMI on in the firmware's preferred
+// mode; "TV E dvi-or-hdmi group mode" (1 or 2; 1 CEA, 2 DMT; the mode's
+// number): in that one; "TV S": the mode sent now (the pixel valve's
+// registers); "TV R": the framebuffer anew; "TV M": the monitor's own mode, as
+// when it is plugged in
+void CKernel::TVLine (const char *pLine)
+{
+	char *pEnd;
+	if (pLine[0] == 'P')
+	{
+		LOGNOTE ("HDMI on, preferred: the firmware says %d", m_TV.PowerOnPreferred ());
+	}
+	else if (pLine[0] == 'E')
+	{
+		unsigned nHDMI = strtoul (pLine + 1, &pEnd, 10), nGroup = strtoul (pEnd, &pEnd, 10), nMode = strtoul (pEnd, &pEnd, 10);
+		LOGNOTE ("HDMI on, %s, group %u mode %u: the firmware says %d", nHDMI == 2 ? "HDMI" : "DVI", nGroup, nMode,
+			 m_TV.PowerOnExplicit (nHDMI, nGroup, nMode));
+	}
+	else if (pLine[0] == 'R')
+	{
+		m_bRemakeHDMI = m_bOutputPending = TRUE;
+		return;
+	}
+	else if (pLine[0] == 'M')			// as when a monitor's EDID has come
+	{
+		m_Monitor.SignalChanged ();
+		if (MatchHDMIMode ())
+		{
+			m_bRemakeHDMI = m_bOutputPending = TRUE;
+		}
+		return;
+	}
+	u32 T[4];
+	m_Monitor.SignalChanged (T);
+	LOGNOTE ("HDMI sends %ux%u: across %u + %u + %u + %u, down %u + %u + %u + %u", T[1] & 0xFFFF, T[3] & 0xFFFF,
+		 T[1] & 0xFFFF, T[1] >> 16, T[0] & 0xFFFF, T[0] >> 16, T[3] & 0xFFFF, T[3] >> 16, T[2] & 0xFFFF, T[2] >> 16);
 }
 
 // the GETFILE and DELFILE host lines: a file of the card to the development

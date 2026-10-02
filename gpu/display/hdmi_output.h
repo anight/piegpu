@@ -32,6 +32,10 @@ public:
 	/// \param nWidth a multiple of 16 (the framebuffer's pitch must be nWidth * 2)
 	boolean SetSize (unsigned nWidth, unsigned nHeight);
 
+	/// \brief The framebuffer let go (the HDMI mode changes under it): the
+	///	   next SetSize makes one again, whatever its size
+	void Forget (void);
+
 	unsigned GetBuffers (u16 **ppBuffers, unsigned nMax);
 
 	void Show (const void *pPixels, TDoneRoutine *pDone, void *pParam);

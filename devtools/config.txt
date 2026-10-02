@@ -37,12 +37,13 @@ disable_overscan=1
 # returned) once a 1920x1080 screen (1920x3240 in all) was set up.
 max_framebuffer_width=2048
 max_framebuffer_height=4096
-# HDMI mode: the firmware picks it at boot and the RPi can't change it later
-# (the gpu app sizes its screen from the EDID; the firmware scales). By
+# HDMI mode at boot: the firmware picks one of its lists (the gpu app then
+# asks it for the monitor's own, from the EDID, at boot and when a monitor is
+# plugged in: hdmi_signal=boot in cmdline.txt keeps what is set here). By
 # default it prefers TV (CEA) modes: for the 1024x600 monitor it sent 720x576
 # at 50 Hz (50 fps). hdmi_group=2 (monitor modes) gave 1024x768 at 60 Hz; the
-# custom mode below is the monitor's own 1024x600 at 60 Hz (measured 59.9 fps).
-# For another monitor, change or drop the two lines after hdmi_group.
+# custom mode below is that monitor's own 1024x600 at 60 Hz (measured 59.9
+# fps). For another monitor the two lines after hdmi_group can go.
 hdmi_group=2
 hdmi_mode=87
 hdmi_cvt=1024 600 60 6 0 0 0

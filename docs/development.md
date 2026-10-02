@@ -172,12 +172,38 @@ model is named below, the fact was measured on that one.
   host killed in the middle of a frame never sends it: after a second with no
   packets mid-frame the frame is dropped (`CCommands::AbandonFrame`) and the
   screen changes.
-- **HDMI mode:** the firmware chooses it at boot and doesn't change it later.
-  `config.txt` has `hdmi_force_hotplug=1`, so that HDMI stays on (640×480)
-  when the RPi boots without a monitor. By default the firmware prefers TV
-  modes: for a 1024×600 monitor it sent 720×576 at 50 Hz, capping frames at
-  50 fps. `hdmi_group=2` gave 1024×768 at 60 Hz; `hdmi_mode=87` with
-  `hdmi_cvt=1024 600 60` gives that monitor's own mode (measured: 59.9 fps).
+- **HDMI mode:** the firmware chooses it at boot and doesn't change it by
+  itself later. `config.txt` has `hdmi_force_hotplug=1`, so that HDMI stays
+  on (640×480) when the RPi boots without a monitor. By default the firmware
+  prefers TV modes: for a 1024×600 monitor it sent 720×576 at 50 Hz, capping
+  frames at 50 fps. `hdmi_group=2` gave 1024×768 at 60 Hz; `hdmi_mode=87`
+  with `hdmi_cvt=1024 600 60` gives that monitor's own mode (measured: 59.9
+  fps). Whenever the mode isn't the monitor's, the firmware scales our
+  screen to it and the monitor scales that to its glass: 1024×600 through
+  640×480 (a monitor plugged in after boot) made text unreadable.
+- **The monitor's own mode, asked for** (`CKernel::MatchHDMIMode`,
+  `gpu/display/tv_service.cpp`): the firmware has two services over VCHIQ
+  for this (what `vcgencmd` and `tvservice` use on Linux; their messages:
+  Circle's `addon/vc4/interface/vmcs_host`). When a monitor's EDID has come
+  (at boot, or 2 s after a hot plug) and the mode sent isn't its preferred
+  one, the general command `hdmi_timings` gives the firmware that mode's
+  timing as the EDID has it (its first detailed timing: porches, sync
+  widths and polarities, pixel clock) as the custom mode, and the TV
+  service turns HDMI on in it (`HDMI_ON_EXPLICIT`, DMT 87; as HDMI if the
+  EDID's CEA extension says the monitor takes sound, else as DVI); the
+  pixel valve shows the new mode 350 ms later, and the framebuffer is made
+  anew (`CHDMIOutput::Forget`). Not for an interlaced mode or one beyond a
+  162 MHz pixel clock or 1920×1200; `hdmi_signal=boot` on the kernel's
+  command line turns it off. Measured, a 1024×600 monitor (50.25 MHz; 1024 +
+  44 + 88 + 188 across, 600 + 3 + 6 + 16 down): at boot from the firmware's
+  1024×768, and from 640×480 (set by hand, as after a boot without a
+  monitor: the `TV` host line), the pixel valve read back the EDID's timing
+  each time, the game going on at 60 fps. The host lines for trying things:
+  `FW text` (a general command; `hdmi_cvt 1024 600 60 6 0 0 0` answers with
+  the timings it made), `TV P | E dvi-or-hdmi group mode | S | R | M`. Not
+  verified: the picture on the monitor's glass (only what the RPi sends);
+  sound over HDMI after the change; a real hot plug after a boot without a
+  monitor; other monitors.
 
 ### The touch screen and Settings
 
@@ -288,6 +314,9 @@ model is named below, the fact was measured on that one.
   supersampled mode: 9 ms of rendering) a 32 s recording had seconds of 55
   to 57 fps. ffprobe: H.264 High 60.000 s, PCM 60.009 s; ffmpeg decodes it
   whole; a feed heard at 4.159 s shows its pellets in the frame of 4.156 s.
+  (Those numbers are of the sound as PCM, 317 KB a second to the card; as
+  AAC it is 147: a minute is 8.9 MB instead of 19, 538 writes, the
+  renderer's seconds 58 to 61.) Chromium plays the file, picture and sound.
   Not tried: another core for the writes (the SDHOST driver's interrupt is
   core 0's), other players, the Zero's one core, a full card.
 
@@ -314,9 +343,6 @@ the ring, the volume, the pause): HDMI's (`CAudioOut`) and the speaker's
   4.4 a second, a door's grinding louder on its side; with a Pico as the
   host, 60 fps as before.
 - **Output** (`CAudioOut`): Circle's VCHIQ sound device
-  (Those numbers are of the sound as PCM, 317 KB a second to the card; as
-  AAC it is 147: a minute is 8.9 MB instead of 19, 538 writes, the
-  renderer's seconds 58 to 61.) Chromium plays the file, picture and sound.
   (`addon/vc4/sound`), destination HDMI, 16-bit stereo in chunks of 2048
   frames (43 ms at 48 kHz) from a 2 s ring; silence while the ring is empty.
   The chunks are handed over in VCHIQ's task, on core 0, when the main loop
@@ -343,6 +369,29 @@ the ring, the volume, the pause): HDMI's (`CAudioOut`) and the speaker's
   against ffmpeg: a stereo AAC file the same sample for sample (correlation
   1.00000, at most 245 of 32768 apart); FAAD2 drops the first unit's
   priming frames, so the frames of unit k start at unit k's pts.
+- **Encoding AAC** (`aac_enc.c`, for the recorder's MP4): our own, small:
+  AAC LC, a channel pair at 44.1 or 48 kHz, long blocks only (an MDCT of
+  2048 by way of a 512-point FFT; checked against the definition: 3e-7
+  off), no psychoacoustic model: each scale factor band's step is set from
+  its level so that the quantiser's noise stays a fixed distance under it
+  (27 dB up to 4 kHz, less above, 14 dB at the top; bands to 18.7 kHz),
+  mid/side when the channels are much alike, for each band the cheaper of
+  the two codebooks its largest number allows, no bit reservoir (an MP4
+  keeps each unit's size: a unit is as big as its sound asks, 1536 bytes at
+  most). Its Huffman tables (`aac_enc_tables.h`) are made from FAAD2's
+  decoding tables by `tools/aacenc/gen_tables.c`, which walks them and
+  checks that every value has a codeword and that the codewords fill the
+  code space. A unit is of the frames given the call before, so what the
+  n-th unit decodes to are the n-th 1024 frames: no delay to tell a player
+  of (ffmpeg: 0 frames late, from ADTS and from the MP4). On a PC
+  (`tools/aacenc/aac_enc_test.c`, `compare.py`; ffmpeg decodes): a minute
+  of the aquarium's sound: the noise 26.5 dB under the sound at 178 kbit/s; a full-scale tone 27.5 dB at 89; a chord apart in
+  the two channels 26 dB at 147; white noise 348 kbit/s (and the bands above
+  18.7 kHz gone); silence 4; clicks 15 dB: with long blocks only, a click's
+  noise is spread over its whole block (a pre-echo). No decoder's errors in
+  any. On the Zero 2 W: 0.59 ms a unit (0.97 at most), 47 units a second,
+  in the main loop; 174 kbit/s for the aquarium; a feed's pellets seen in
+  the frame of 0.508 s, heard at 0.519 s. Not listened to by anyone yet.
 - **Decoding MP3** (`mp3.c`): minimp3 (`gpu/audio/minimp3`, one header,
   vendored unchanged; CC0), MPEG-1, 2 and 2.5 audio layers 1 to 3, float
   out, mono doubled, to 16 bit as for AAC; its NEON code on the
@@ -369,29 +418,6 @@ the ring, the volume, the pause): HDMI's (`CAudioOut`) and the speaker's
   step's time the page's plus the frames before it (`CAudio::DecodePage`),
   and freed for the host when all of it is decoded; `MaxUnit` is 64 KB
   for it. A packet's sound overlaps the packet before, so a stream opened
-- **Encoding AAC** (`aac_enc.c`, for the recorder's MP4): our own, small:
-  AAC LC, a channel pair at 44.1 or 48 kHz, long blocks only (an MDCT of
-  2048 by way of a 512-point FFT; checked against the definition: 3e-7
-  off), no psychoacoustic model: each scale factor band's step is set from
-  its level so that the quantiser's noise stays a fixed distance under it
-  (27 dB up to 4 kHz, less above, 14 dB at the top; bands to 18.7 kHz),
-  mid/side when the channels are much alike, for each band the cheaper of
-  the two codebooks its largest number allows, no bit reservoir (an MP4
-  keeps each unit's size: a unit is as big as its sound asks, 1536 bytes at
-  most). Its Huffman tables (`aac_enc_tables.h`) are made from FAAD2's
-  decoding tables by `tools/aacenc/gen_tables.c`, which walks them and
-  checks that every value has a codeword and that the codewords fill the
-  code space. A unit is of the frames given the call before, so what the
-  n-th unit decodes to are the n-th 1024 frames: no delay to tell a player
-  of (ffmpeg: 0 frames late, from ADTS and from the MP4). On a PC
-  (`tools/aacenc/aac_enc_test.c`, `compare.py`; ffmpeg decodes): a minute
-  of the aquarium's sound: the noise 26.5 dB under the sound at 178 kbit/s; a full-scale tone 27.5 dB at 89; a chord apart in
-  the two channels 26 dB at 147; white noise 348 kbit/s (and the bands above
-  18.7 kHz gone); silence 4; clicks 15 dB: with long blocks only, a click's
-  noise is spread over its whole block (a pre-echo). No decoder's errors in
-  any. On the Zero 2 W: 0.59 ms a unit (0.97 at most), 47 units a second,
-  in the main loop; 174 kbit/s for the aquarium; a feed's pellets seen in
-  the frame of 0.508 s, heard at 0.519 s. Not listened to by anyone yet.
   at a page in the middle (a jump) gives the first packet no sound: the
   first page then only primes the decoder (its sound dropped: its pages
   are numbered on from the header pages' when it's the stream's start),
