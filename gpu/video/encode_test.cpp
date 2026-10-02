@@ -516,6 +516,15 @@ boolean CEncodeTest::Update (void)
 		boolean bGood = m_File.Close ();
 		unsigned nCloseUs = CTimer::GetClockTicks () - nCloseStart;
 		m_File.GetWrites (&nWrites, &nWriteUs, &nLongestUs, &nMostWaiting);
+		unsigned nUnits, nUnitUs, nUnitLongestUs;
+		u64 nUnitBytes;
+		m_File.GetSound (&nUnits, &nUnitBytes, &nUnitUs, &nUnitLongestUs);
+		if (nUnits)
+		{
+			LOGNOTE ("Its sound: AAC, %u units, %u kbit/s, %u us a unit to encode, at most %u us", nUnits,
+				 (unsigned) (nUnitBytes * 8 * m_File.GetRate () / ((u64) nUnits * 1024) / 1000), nUnitUs,
+				 nUnitLongestUs);
+		}
 		LOGNOTE ("The file: %s, %u KB, %u frames, %u lost frames of sound; the card: %u writes, %u ms each, "
 			 "at most %u ms, %u KB waiting at most; closing it %u ms", bGood ? "good" : "NO GOOD",
 			 (unsigned) (m_File.GetBytes () / 1024), nFrames, CAudioSink::GetTapLost (), nWrites,

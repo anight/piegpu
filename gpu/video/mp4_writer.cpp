@@ -2,6 +2,7 @@
 // mp4_writer.cpp
 //
 #include "mp4_writer.h"
+#include "../audio/aac_enc.h"
 #include <circle/logger.h>
 #include <circle/timer.h>
 #include <circle/util.h>
@@ -67,7 +68,11 @@ CMp4Writer::CMp4Writer (void)
 	m_pSizes (nullptr),
 	m_pVideoChunks (nullptr),
 	m_pSound (nullptr),
-	m_pSoundChunks (nullptr)
+	m_pSoundChunks (nullptr),
+	m_pAAC (nullptr),
+	m_pUnitFrames (nullptr),
+	m_pUnits (nullptr),
+	m_pUnitSizes (nullptr)
 {
 }
 
@@ -79,6 +84,8 @@ CMp4Writer::~CMp4Writer (void)
 	}
 	delete [] m_pRing;
 	delete [] m_pSound;
+	delete [] m_pUnitFrames;
+	delete [] m_pUnits;
 }
 
 template <class T> boolean CMp4Writer::Grow (T **ppArray, unsigned *pMax, unsigned nNeeded)
@@ -110,8 +117,10 @@ boolean CMp4Writer::Open (const char *pPath, unsigned nWidth, unsigned nHeight)
 	{
 		m_pRing = new u8[RingBytes];
 		m_pSound = new s16[ChunkFrames * 2 * 2];
+		m_pUnitFrames = new s16[AAC_ENC_FRAMES * 2];
+		m_pUnits = new u8[ChunkUnits * AAC_ENC_MAX_BYTES];
 	}
-	if (!m_pRing || !m_pSound)
+	if (!m_pRing || !m_pSound || !m_pUnitFrames || !m_pUnits)
 	{
 		return FALSE;
 	}
@@ -155,6 +164,11 @@ boolean CMp4Writer::Open (const char *pPath, unsigned nWidth, unsigned nHeight)
 	m_pVideoChunks = m_pSoundChunks = nullptr;
 	m_bInVideoChunk = FALSE;
 	m_nSoundWaiting = m_nSoundFrames = m_nRate = 0;
+	m_pAAC = nullptr;
+	m_pUnitSizes = nullptr;
+	m_nUnitFill = m_nUnitsWaiting = m_nUnitsBytes = m_nUnits = m_nUnitsMax = m_nBiggestUnit = 0;
+	m_nUnitsTotal = m_nEncodeUs = 0;
+	m_nEncodeLongestUs = 0;
 	m_nWrites = m_nLongestUs = m_nMostWaiting = 0;
 	m_nWriteUs = 0;
 	m_bFailed = FALSE;
@@ -292,7 +306,8 @@ void CMp4Writer::Video (const u8 *pData, unsigned nBytes, boolean bKey, u64 nTim
 
 void CMp4Writer::CutSound (void)
 {
-	if (!m_nSoundWaiting)
+	unsigned nSamples = m_pAAC ? m_nUnitsWaiting : m_nSoundWaiting;
+	if (!nSamples)
 	{
 		return;
 	}
@@ -302,11 +317,48 @@ void CMp4Writer::CutSound (void)
 		return;
 	}
 	m_pSoundChunks[m_nSoundChunks].nOffset = m_nOffset;
-	m_pSoundChunks[m_nSoundChunks++].nSamples = m_nSoundWaiting;
-	Put (m_pSound, m_nSoundWaiting * 4);
-	m_nSoundFrames += m_nSoundWaiting;
-	m_nSoundWaiting = 0;
+	m_pSoundChunks[m_nSoundChunks++].nSamples = nSamples;
+	if (m_pAAC)
+	{
+		Put (m_pUnits, m_nUnitsBytes);
+		m_nSoundFrames += m_nUnitsWaiting * AAC_ENC_FRAMES;
+		m_nUnitsWaiting = m_nUnitsBytes = 0;
+	}
+	else
+	{
+		Put (m_pSound, m_nSoundWaiting * 4);
+		m_nSoundFrames += m_nSoundWaiting;
+		m_nSoundWaiting = 0;
+	}
 	m_bInVideoChunk = FALSE;		// the video goes on in a chunk after it
+}
+
+// the encoder gives the unit of the frames it got the time before (what a
+// unit decodes to are its own frames: no delay to tell a player of)
+void CMp4Writer::EncodeUnit (const s16 *pFrames)
+{
+	unsigned nStart = CTimer::GetClockTicks ();
+	unsigned nBytes = aac_enc_frame (m_pAAC, pFrames, m_pUnits + m_nUnitsBytes);
+	unsigned nUs = CTimer::GetClockTicks () - nStart;
+	m_nEncodeUs += nUs;
+	m_nEncodeLongestUs = nUs > m_nEncodeLongestUs ? nUs : m_nEncodeLongestUs;
+	if (!nBytes)
+	{
+		return;
+	}
+	if (!Grow (&m_pUnitSizes, &m_nUnitsMax, m_nUnits + 1))
+	{
+		m_bFailed = TRUE;
+		return;
+	}
+	m_pUnitSizes[m_nUnits++] = nBytes;
+	m_nUnitsBytes += nBytes;
+	m_nUnitsTotal += nBytes;
+	m_nBiggestUnit = nBytes > m_nBiggestUnit ? nBytes : m_nBiggestUnit;
+	if (++m_nUnitsWaiting == ChunkUnits)
+	{
+		CutSound ();
+	}
 }
 
 void CMp4Writer::Sound (const s16 *pFrames, unsigned nFrames, unsigned nRate)
@@ -315,7 +367,25 @@ void CMp4Writer::Sound (const s16 *pFrames, unsigned nFrames, unsigned nRate)
 	{
 		return;
 	}
+	if (!m_nRate)
+	{
+		m_pAAC = aac_enc_open (nRate);		// (none for this rate: PCM)
+	}
 	m_nRate = nRate;
+	while (m_pAAC && nFrames)
+	{
+		unsigned n = AAC_ENC_FRAMES - m_nUnitFill;
+		n = n < nFrames ? n : nFrames;
+		memcpy (m_pUnitFrames + 2 * m_nUnitFill, pFrames, n * 4);
+		m_nUnitFill += n;
+		pFrames += 2 * n;
+		nFrames -= n;
+		if (m_nUnitFill == AAC_ENC_FRAMES)
+		{
+			EncodeUnit (m_pUnitFrames);
+			m_nUnitFill = 0;
+		}
+	}
 	while (nFrames)
 	{
 		unsigned n = 2 * ChunkFrames - m_nSoundWaiting;
@@ -466,12 +536,28 @@ void CMp4Writer::BuildIndex (CBoxes &B)
 		}
 		else
 		{
-			B.Begin ("sowt");			// 16-bit PCM, little endian
+			B.Begin (m_pAAC ? "mp4a" : "sowt");	// AAC; or 16-bit PCM, little endian
 			B.Zero (6); B.U16 (1);
 			B.Zero (8);
 			B.U16 (2); B.U16 (16);			// channels, bits
 			B.U32 (0);
 			B.U32 (m_nRate << 16);
+			if (m_pAAC)				// what the decoder is told: AAC LC, the rate, stereo
+			{
+				u8 Config[2];
+				aac_enc_config (m_pAAC, Config);
+				u32 nBitrate = m_nUnits ? (u32) (m_nUnitsTotal * 8 * m_nRate / ((u64) m_nUnits * AAC_ENC_FRAMES)) : 0;
+				B.BeginFull ("esds");
+				B.U8 (3); B.U8 (25); B.U16 (0); B.U8 (0);	// the stream's descriptor
+				B.U8 (4); B.U8 (17);				// its decoder's: MPEG-4 audio
+				B.U8 (0x40); B.U8 (0x15);
+				B.U8 (0); B.U16 (AAC_ENC_MAX_BYTES);		// a unit at most
+				B.U32 ((u32) ((u64) m_nBiggestUnit * 8 * m_nRate / AAC_ENC_FRAMES));
+				B.U32 (nBitrate);
+				B.U8 (5); B.U8 (2); B.Bytes (Config, 2);
+				B.U8 (6); B.U8 (1); B.U8 (2);
+				B.End ();
+			}
 			B.End ();
 		}
 		B.End ();
@@ -495,6 +581,10 @@ void CMp4Writer::BuildIndex (CBoxes &B)
 				B.U32 (n); B.U32 (m_pSizes[2 * i + 1]);
 				i += n;
 			}
+		}
+		else if (m_pAAC)
+		{
+			B.U32 (1); B.U32 (m_nUnits); B.U32 (AAC_ENC_FRAMES);
 		}
 		else
 		{
@@ -545,6 +635,14 @@ void CMp4Writer::BuildIndex (CBoxes &B)
 				B.U32 (m_pSizes[2 * i] & ~KEY_FRAME);
 			}
 		}
+		else if (m_pAAC)
+		{
+			B.U32 (0); B.U32 (m_nUnits);
+			for (unsigned i = 0; i < m_nUnits; i++)
+			{
+				B.U32 (m_pUnitSizes[i]);
+			}
+		}
 		else
 		{
 			B.U32 (4); B.U32 (m_nSoundFrames);	// every sample 4 bytes: a frame
@@ -577,6 +675,15 @@ boolean CMp4Writer::Close (void)
 
 	if (bGood)
 	{
+		if (m_pAAC)			// the unit being filled, with silence after; and the one the encoder holds
+		{
+			if (m_nUnitFill)
+			{
+				memset (m_pUnitFrames + 2 * m_nUnitFill, 0, (AAC_ENC_FRAMES - m_nUnitFill) * 4);
+				EncodeUnit (m_pUnitFrames);
+			}
+			EncodeUnit (nullptr);
+		}
 		CutSound ();
 		while (!m_bFailed && m_nIn > m_nOut)
 		{
@@ -600,6 +707,13 @@ boolean CMp4Writer::Close (void)
 	}
 	bGood = f_close (&m_File) == FR_OK && bGood;
 
+	if (m_pAAC)
+	{
+		aac_enc_close (m_pAAC);
+		m_pAAC = nullptr;
+	}
+	delete [] m_pUnitSizes;
+	m_pUnitSizes = nullptr;
 	delete [] m_pSizes;
 	delete [] m_pVideoChunks;
 	delete [] m_pSoundChunks;

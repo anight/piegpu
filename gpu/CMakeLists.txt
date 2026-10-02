@@ -97,7 +97,7 @@ target_compile_options(lvgl PRIVATE -w)
 
 file(GLOB libfaad audio/faad2/libfaad/*.c)
 file(GLOB tremor audio/tremor/*.c audio/tremor/libogg/*.c)
-add_library(audio_codecs STATIC ${libfaad} audio/faad2/compat/faad_circle.c audio/aac.c audio/mp3.c
+add_library(audio_codecs STATIC ${libfaad} audio/faad2/compat/faad_circle.c audio/aac.c audio/aac_enc.c audio/mp3.c
 	${tremor} audio/tremor/compat/tremor_circle.c audio/vorbis.c)
 target_link_libraries(audio_codecs PUBLIC circle_flags)
 target_include_directories(audio_codecs PRIVATE audio/faad2/compat ${CIRCLE_INCLUDE_DIRS} audio/faad2 audio/faad2/libfaad

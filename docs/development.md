@@ -271,10 +271,10 @@ model is named below, the fact was measured on that one.
   the `GETFILE` host line, `DELFILE` removes it): the RPi writes the MP4
   itself, as it records, `RECnnn.MP4`: the encoder's frames (their NAL units
   behind their lengths, the parameter sets in `avcC`, each frame with the
-  time it was shown: the durations are what they were) and the sound as
-  16-bit PCM (`sowt`: there's no AAC encoder here; 192 KB a second of the
-  file's 317), in chunks of half a second, the index (`moov`) written when
-  it ends. A recording that doesn't end (the power gone) has no index and
+  time it was shown: the durations are what they were) and the sound as AAC
+  (the encoder below; at a rate it doesn't take, as 16-bit PCM, `sowt`: 192
+  KB a second, and fewer players take it), in chunks of half a second, the
+  index (`moov`) written when it ends. A recording that doesn't end (the power gone) has no index and
   can't be played. What costs: the card. Its driver (Circle's SDHOST)
   writes in the caller's time, 2.7 ms and 83 us a KB (16 KB: 4 ms; 64 KB:
   8 ms; from a sector's start or not), so the main loop stands still that
@@ -289,7 +289,7 @@ model is named below, the fact was measured on that one.
   to 57 fps. ffprobe: H.264 High 60.000 s, PCM 60.009 s; ffmpeg decodes it
   whole; a feed heard at 4.159 s shows its pellets in the frame of 4.156 s.
   Not tried: another core for the writes (the SDHOST driver's interrupt is
-  core 0's), players other than ffmpeg, the Zero's one core, a full card.
+  core 0's), other players, the Zero's one core, a full card.
 
 ## Audio
 
@@ -314,6 +314,9 @@ the ring, the volume, the pause): HDMI's (`CAudioOut`) and the speaker's
   4.4 a second, a door's grinding louder on its side; with a Pico as the
   host, 60 fps as before.
 - **Output** (`CAudioOut`): Circle's VCHIQ sound device
+  (Those numbers are of the sound as PCM, 317 KB a second to the card; as
+  AAC it is 147: a minute is 8.9 MB instead of 19, 538 writes, the
+  renderer's seconds 58 to 61.) Chromium plays the file, picture and sound.
   (`addon/vc4/sound`), destination HDMI, 16-bit stereo in chunks of 2048
   frames (43 ms at 48 kHz) from a 2 s ring; silence while the ring is empty.
   The chunks are handed over in VCHIQ's task, on core 0, when the main loop
@@ -366,6 +369,29 @@ the ring, the volume, the pause): HDMI's (`CAudioOut`) and the speaker's
   step's time the page's plus the frames before it (`CAudio::DecodePage`),
   and freed for the host when all of it is decoded; `MaxUnit` is 64 KB
   for it. A packet's sound overlaps the packet before, so a stream opened
+- **Encoding AAC** (`aac_enc.c`, for the recorder's MP4): our own, small:
+  AAC LC, a channel pair at 44.1 or 48 kHz, long blocks only (an MDCT of
+  2048 by way of a 512-point FFT; checked against the definition: 3e-7
+  off), no psychoacoustic model: each scale factor band's step is set from
+  its level so that the quantiser's noise stays a fixed distance under it
+  (27 dB up to 4 kHz, less above, 14 dB at the top; bands to 18.7 kHz),
+  mid/side when the channels are much alike, for each band the cheaper of
+  the two codebooks its largest number allows, no bit reservoir (an MP4
+  keeps each unit's size: a unit is as big as its sound asks, 1536 bytes at
+  most). Its Huffman tables (`aac_enc_tables.h`) are made from FAAD2's
+  decoding tables by `tools/aacenc/gen_tables.c`, which walks them and
+  checks that every value has a codeword and that the codewords fill the
+  code space. A unit is of the frames given the call before, so what the
+  n-th unit decodes to are the n-th 1024 frames: no delay to tell a player
+  of (ffmpeg: 0 frames late, from ADTS and from the MP4). On a PC
+  (`tools/aacenc/aac_enc_test.c`, `compare.py`; ffmpeg decodes): a minute
+  of the aquarium's sound: the noise 26.5 dB under the sound at 178 kbit/s; a full-scale tone 27.5 dB at 89; a chord apart in
+  the two channels 26 dB at 147; white noise 348 kbit/s (and the bands above
+  18.7 kHz gone); silence 4; clicks 15 dB: with long blocks only, a click's
+  noise is spread over its whole block (a pre-echo). No decoder's errors in
+  any. On the Zero 2 W: 0.59 ms a unit (0.97 at most), 47 units a second,
+  in the main loop; 174 kbit/s for the aquarium; a feed's pellets seen in
+  the frame of 0.508 s, heard at 0.519 s. Not listened to by anyone yet.
   at a page in the middle (a jump) gives the first packet no sound: the
   first page then only primes the decoder (its sound dropped: its pages
   are numbered on from the header pages' when it's the stream's start),

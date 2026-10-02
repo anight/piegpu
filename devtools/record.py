@@ -6,8 +6,8 @@ serial port at the end, and ffmpeg (needed here) makes the file: the video as
 it is, the sound as AAC.
 
 With --card the RPi makes the MP4 itself, on its SD card as it records
-(RECnnn.MP4: the sound as PCM, there being no AAC encoder there), and the
-file is fetched from the card as it is; ffmpeg isn't needed.
+(RECnnn.MP4: the sound as AAC too, by its own encoder), and the file is
+fetched from the card as it is; ffmpeg isn't needed.
 
 usage: devtools/record.py SECONDS OUT.mp4 [--kbit N] [--port DEV] [--keep] [--card]
   --kbit: the video's bit rate (default 1000)
