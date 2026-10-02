@@ -1137,48 +1137,6 @@ int run (const Scene& scene)
 				new_perf = true;
 			}
 		}
-#if 1	// KIT_BENCH (temporary)
-		static int bench_frames;
-		if (++bench_frames == 120)
-		{
-			auto run = [] (const char* what, Mesh& mesh, const Draw& how, int vertices)
-			{
-				draw (mesh, how);
-				glFinish ();
-				const absolute_time_t b0 = get_absolute_time ();
-				for (int i = 0; i < 200; i++)
-				{
-					Draw each = how;
-					each.model = how.model * translation ((float) (i % 7), 0, 0);
-					draw (mesh, each);
-				}
-				const absolute_time_t b1 = get_absolute_time ();
-				glFinish ();
-				const absolute_time_t b2 = get_absolute_time ();
-				std::printf ("BENCH %s (%d vertices): %u us a draw to send, %u us with the RPi's work\n", what, vertices,
-					     (unsigned) (absolute_time_diff_us (b0, b1) / 200), (unsigned) (absolute_time_diff_us (b0, b2) / 200));
-			};
-			for (int size : {1, 20, 200})
-			{
-				Mesh plain, indexed;
-				for (int t = 0; t < size; t++)
-					for (int k = 0; k < 3; k++)
-					{
-						plain.add ((float) (t % 5 + k), (float) (t / 5 + (k == 2)), 0, 0, 0, -1, Material (0x4208, 255, 255, 0, false));
-						const int n = indexed.add ((float) (t % 5 + k), (float) (t / 5 + (k == 2)), 0, 0, 0, -1, Material (0x4208, 255, 255, 0, false));
-						indexed.indices.push_back ((uint16_t) n);
-					}
-				Draw how;
-				how.model = translation (0, 0, 2000);
-				run ("arrays", plain, how, size * 3);
-				run ("indexed", indexed, how, size * 3);
-				how.blend = ALPHA;
-				run ("arrays, blended", plain, how, size * 3);
-				plain.free ();
-				indexed.free ();
-			}
-		}
-#endif
 		const absolute_time_t update_start = get_absolute_time ();
 		scene.update (elapsed);
 		const absolute_time_t draw_start = get_absolute_time ();
