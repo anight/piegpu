@@ -273,7 +273,7 @@ The host library (`libpgpu/`, board independent) has two layers:
 - `GL_POINT_SMOOTH`, `GL_LINE_SMOOTH` and the multisample enables are stored,
   but have no effect (GL sees no multisample buffer). Antialiasing is pgl's
   own call: `pglSamples (4)` has the RPi render with four samples a pixel
-  (the V3D's 4x multisampling: tiles of 32 pixels instead of 64) and average
+  (hardware 4x MSAA, the V3D's multisampling: tiles of 32 pixels instead of 64) and average
   them as the picture is stored. A program that blends is compiled with
   `glslc --ms` to blend each sample with its own colour (four times the
   blending code a pixel); without it the pixel's samples blend with the first

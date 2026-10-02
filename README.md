@@ -9,7 +9,8 @@ decoded by the VideoCore into textures that any draw can use. Sound (AAC,
 e.g. the MP4's, MP3 or Ogg Vorbis) is decoded by the RPi and played on HDMI
 or on a Bluetooth speaker, with the picture following it; short sound
 effects the host sends once are mixed in by the RPi, on channels the host
-plays them on. Edges can be antialiased by the V3D's 4x multisampling. And
+plays them on. Edges can be antialiased in hardware: 4x MSAA (the V3D's
+multisampling, four samples a pixel). And
 the RPi can record what it shows and plays as an MP4 on its card: H.264 by
 the VideoCore's encoder, AAC by an encoder of its own.
 
@@ -407,9 +408,11 @@ Apache 2.0). The controller runs as it comes, without Broadcom's patch file.
 
 ### Antialiasing
 
-- **The V3D's 4x multisampling:** `pglSamples (4)` (the `MULTISAMPLE`
-  capability, [docs/protocol.md](docs/protocol.md) §10.1) has the RPi render
-  with four samples a pixel and average them as the picture is stored, on
+- **Hardware antialiasing is 4x MSAA** (multisample antialiasing, the V3D's
+  own): `pglSamples (4)` (the `MULTISAMPLE` capability,
+  [docs/protocol.md](docs/protocol.md) §10.1) has the RPi render with four
+  samples a pixel (coverage and depth per sample, the fragment shader run
+  once a pixel) and average them as the picture is stored, on
   the screen or into a texture; `pglSamples (1)` is without again. The
   V3D's tiles are 32 pixels then instead of 64, so a frame costs more. A
   program that blends is compiled with `glslc --ms` to blend each sample
@@ -418,11 +421,11 @@ Apache 2.0). The controller runs as it comes, without Broadcom's patch file.
 - **Supersampling** takes nothing of the RPi: the scene drawn twice as wide
   and high into a texture, and that drawn over the screen through a linear
   filter.
-- `antigrav` is drawn with the V3D's multisampling (`m` on the console
+- `antigrav` is drawn with 4x MSAA (`m` on the console
   takes it off and puts it back). `aquarium` shows both and neither, ten
   seconds each. Measured there on a
   Zero 2 W, the panel, 60 fps in all three: a frame's rendering 3.5 ms
-  without, 5.8 ms multisampled, 9.0 ms supersampled; the edges compared in
+  without, 5.8 ms with 4x MSAA, 9.0 ms supersampled; the edges compared in
   screenshots. Not tried: the Zero and the Zero W, a multisampled frame
   drawn in several jobs, multisampling into a texture.
 
@@ -472,9 +475,9 @@ Every host builds them (`demos/demos.cmake`):
 | Demo | What |
 |---|---|
 | `gears`, `breakout`, `flight` | the classic gears; a 3D Breakout that plays itself; a biplane over a cloud deck |
-| `aquarium` | a tank of tropical fish: five kinds that swim by a wave down their bodies, school, come for food and flee a knock on the glass; a starfish creeping over a rock, two shrimps walking the sand; caustics on the sand, shafts of light, swaying plants, bubbles, the pump's hum. It shows antialiasing, ten seconds each: none, 2x2 supersampled (drawn twice the size into a texture), the V3D's 4x multisampling (`pglSamples`) |
+| `aquarium` | a tank of tropical fish: five kinds that swim by a wave down their bodies, school, come for food and flee a knock on the glass; a starfish creeping over a rock, two shrimps walking the sand; caustics on the sand, shafts of light, swaying plants, bubbles, the pump's hum. It shows antialiasing, ten seconds each: none, 2x2 supersampled (drawn twice the size into a texture), hardware 4x MSAA (`pglSamples`) |
 | `tumble` | 2D physics: balls and boxes in a box that the stick tilts (rigid bodies, friction, stacking), each meeting heard; a finger on the panel adds a ball |
-| `antigrav` | anti-gravity racing, after WipEout: six craft, a circuit; heard from the craft followed (engines whose note is their speed, the wind, the crowd, pads, the countdown); antialiased by the V3D |
+| `antigrav` | anti-gravity racing, after WipEout: six craft, a circuit; heard from the craft followed (engines whose note is their speed, the wind, the crowd, pads, the countdown); antialiased in hardware (4x MSAA) |
 | `walk` | the BSP engine (`engine/`): a Quake-format level walked through, doors that open, a lift |
 | `keep` | the engine outdoors: a castle at dusk, a moat of lava, a lift, nine gems to find |
 | `isles` | the engine in the sky: floating islands, a moving platform, a jump pad, a portal, coins |
