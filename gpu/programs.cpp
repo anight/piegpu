@@ -238,7 +238,7 @@ u32 CPrograms::Load (TProgram *p, u32 *pDetail)
 		u32 nIndices = b[nVariantWords + 2 * v + 1];
 		unsigned nFS = nIndices & 0xFF, nVS = (nIndices >> 8) & 0xFF, nCS = (nIndices >> 16) & 0xFF;
 		CHECK (   PGPU_VK_PRIM (nKey) <= PGPU_PRIM_POINTS
-		       && PGPU_VK_BLEND (nKey) <= PGPU_BLEND_GENERIC
+		       && PGPU_VK_BLEND (nKey) <= PGPU_BLEND_GENERIC_MS
 		       && nFS < p->nShaders && nVS < p->nShaders && nCS < p->nShaders
 		       && PGPU_SHADER_STAGE (p->pShaders[nFS].nInfo) == PGPU_STAGE_FS
 		       && PGPU_SHADER_STAGE (p->pShaders[nVS].nInfo) == PGPU_STAGE_VS

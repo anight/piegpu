@@ -52,7 +52,9 @@ enum pgpu_prim_class { PGPU_PRIM_TRIANGLES, PGPU_PRIM_LINES, PGPU_PRIM_POINTS };
 enum pgpu_blend_mode
 {
 	PGPU_BLEND_PLAIN,		/* no blending, colour mask all on */
-	PGPU_BLEND_GENERIC		/* blending and colour mask from PGPU_U_BLEND uniforms */
+	PGPU_BLEND_GENERIC,		/* blending and colour mask from PGPU_U_BLEND uniforms */
+	PGPU_BLEND_GENERIC_MS		/* the same for each of a pixel's four samples (a multisampled job);
+					   a program without it blends with the first sample's colour */
 };
 
 /* variant shader indices word: FS | VS << 8 | CS << 16 */

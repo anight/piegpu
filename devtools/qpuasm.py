@@ -41,7 +41,7 @@ MUL_OPS = {'nop': 0, 'fmul': 1, 'mul24': 2, 'v8muld': 3, 'v8min': 4, 'v8max': 5}
 
 # write addresses (both files unless noted)
 WADDR = {'r0': 32, 'r1': 33, 'r2': 34, 'r3': 35, 'r5': 37, 'nop': 39,
-         'tlbs': 43, 'tlbz': 44, 'tlbc': 46, 'sfu_recip': 52, 'sfu_rsqrt': 53, 'sfu_exp': 54, 'sfu_log': 55,
+         'tlbs': 43, 'tlbz': 44, 'tlbm': 45, 'tlbc': 46, 'sfu_recip': 52, 'sfu_rsqrt': 53, 'sfu_exp': 54, 'sfu_log': 55,
          'tmu0_s': 56, 'tmu0_t': 57}
 TMU_DSTS = {'tmu0_s', 'tmu0_t'}
 SFU_DSTS = {'sfu_recip', 'sfu_rsqrt', 'sfu_exp', 'sfu_log'}
@@ -163,7 +163,7 @@ class Op:
         if self.dst is not None:
             if self.dst in SFU_DSTS:
                 res.add('r4')
-            elif self.dst in ('tlbs', 'tlbz', 'tlbc'):
+            elif self.dst in ('tlbs', 'tlbz', 'tlbm', 'tlbc'):
                 res.add('@tlb')
             elif self.dst in TMU_DSTS:
                 res.add('@tmu')

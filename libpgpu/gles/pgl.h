@@ -88,6 +88,14 @@ bool pglVideoResize (GLuint texture, unsigned stream, unsigned width, unsigned h
    (it changes when a monitor is plugged in or out: pgpu_get_display). A
    viewport and scissor box covering the whole screen follow it */
 void pglGetScreenSize (unsigned *width, unsigned *height);
+/* antialiasing by the RPi: 4 samples a pixel (1: none, as at the start) for
+   what is drawn from now on, the screen or a texture; they are averaged as
+   the picture is stored, so nothing else changes (glReadPixels, textures and
+   GL_SAMPLES see single samples). The RPi renders what was drawn so far when
+   it changes: once a frame is fine, between every two draws is not. Blending
+   takes each sample's colour in programs compiled for it (glslc --ms);
+   in others the pixel's samples blend with the first one's */
+void pglSamples (unsigned samples);
 /* the last ERROR reply of the RPi (code, opcode, detail; docs/protocol.md 9),
    for finding out what a GL error from the RPi was about */
 void pglGetRPiError (uint32_t error[3]);

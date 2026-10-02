@@ -159,11 +159,12 @@ static boolean CheckBinning (u32 nStart, u32 nEnd)
 		case V3D_TILE_BINNING_MODE_CONFIG: {
 			u32 nAlloc = Get32 (p + 1), nAllocBytes = Get32 (p + 5), nState = Get32 (p + 9);
 			unsigned nTilesX = p[13], nTilesY = p[14];
+			unsigned nMost = p[15] & 1 ? 2 * TILES_MAX : TILES_MAX;	// (multisampled: tiles of 32 pixels)
 			if (bConfig)
 			{
 				return Fail (List, nStart, p, "a second binning mode");
 			}
-			if (!nTilesX || !nTilesY || nTilesX > TILES_MAX || nTilesY > TILES_MAX)
+			if (!nTilesX || !nTilesY || nTilesX > nMost || nTilesY > nMost)
 			{
 				return Fail (List, nStart, p, "%u x %u tiles", nTilesX, nTilesY);
 			}
@@ -349,10 +350,12 @@ static boolean CheckRendering (u32 nStart, u32 nEnd)
 			{
 				return Fail (List, nStart, p, "%u x %u pixels", nWidth, nHeight);
 			}
-			if ((nFlags & 3) || nFormat > 2 || nTiling > 2)
+			// (multisampled: four samples a pixel, and the store averaging them)
+			boolean bMultisample = !!(nFlags & 1);
+			if ((nFlags & 2) || nFormat > 2 || nTiling > 2 || (nFlags >> 4 & 3) != (bMultisample ? 1 : 0))
 			{
-				return Fail (List, nStart, p, "mode flags %04X (multisample, 64-bit colour, format "
-					     "or tiling not this renderer's)", nFlags);
+				return Fail (List, nStart, p, "mode flags %04X (64-bit colour, format, tiling or "
+					     "decimation not this renderer's)", nFlags);
 			}
 			u32 nBytes = ImageBytes (nWidth, nHeight, nFormat == 1 ? 4 : 2, nTiling);
 			if (!CV3D::InRegion (nBuffer, nBytes))
@@ -360,8 +363,9 @@ static boolean CheckRendering (u32 nStart, u32 nEnd)
 				return Fail (List, nStart, p, "target %08X, %u x %u (%u bytes): not the V3D's",
 					     nBuffer, nWidth, nHeight, nBytes);
 			}
-			nTilesX = (nWidth + V3D_TILE_SIZE-1) / V3D_TILE_SIZE;
-			nTilesY = (nHeight + V3D_TILE_SIZE-1) / V3D_TILE_SIZE;
+			unsigned nTile = bMultisample ? V3D_TILE_SIZE / 2 : V3D_TILE_SIZE;
+			nTilesX = (nWidth + nTile-1) / nTile;
+			nTilesY = (nHeight + nTile-1) / nTile;
 			bMode = TRUE;
 			} break;
 

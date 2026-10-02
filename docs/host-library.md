@@ -271,7 +271,13 @@ The host library (`libpgpu/`, board independent) has two layers:
   the two nearest values (GL ES 2.0 4.1.7). pgl keeps it off (the RPi's
   `DITHER` capability); without it, the V3D truncates, as GL does.
 - `GL_POINT_SMOOTH`, `GL_LINE_SMOOTH` and the multisample enables are stored,
-  but have no effect (there is no multisample buffer).
+  but have no effect (GL sees no multisample buffer). Antialiasing is pgl's
+  own call: `pglSamples (4)` has the RPi render with four samples a pixel
+  (the V3D's 4x multisampling: tiles of 32 pixels instead of 64) and average
+  them as the picture is stored. A program that blends is compiled with
+  `glslc --ms` to blend each sample with its own colour (four times the
+  blending code a pixel); without it the pixel's samples blend with the first
+  one's colour, which flattens the edges under what it draws.
 - **Mesa's limits** (glslc compiles with Mesa's `vc4`): at most 8 attributes
   including aliased ones (`attribute_location.bind_aliasing.max_cond_*`); the
   V3D loses triangles with vertices far outside the viewport

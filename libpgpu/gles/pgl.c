@@ -257,6 +257,7 @@ static struct
 
 	/* sent to the RPi (reset by pglInit) */
 	uint32_t sent_caps;
+	bool samples4, sent_samples4;		/* pglSamples */
 	uint32_t sent_units[UNITS];
 	bool sent_units_valid[UNITS];
 	sent_array_t sent_attribs[ATTRIBS];
@@ -527,6 +528,7 @@ bool pglInit (void)
 	   is what GL does without dithering */
 	pgpu_disable (PGPU_CAP_DITHER);
 	S.sent_caps = 0;
+	S.samples4 = S.sent_samples4 = false;
 	texture_take (TEX_DEFAULT_2D);
 	S.textures[TEX_DEFAULT_2D].target = TEX_2D;
 	texture_take (TEX_DEFAULT_CUBE);
@@ -633,6 +635,11 @@ void pglGetScreenSize (unsigned *width, unsigned *height)
 	screen_update ();
 	*width = S.width;
 	*height = S.height;
+}
+
+void pglSamples (unsigned samples)
+{
+	S.samples4 = samples >= 4;
 }
 
 void pglSwapBuffers (void)
@@ -1176,6 +1183,11 @@ static void validate_caps (void)
 		pgpu_disable (S.sent_caps & ~caps);
 	}
 	S.sent_caps = caps;
+	if (S.samples4 != S.sent_samples4)	/* (a packet of its own: an RPi that doesn't know it refuses this one only) */
+	{
+		S.samples4 ? pgpu_enable (PGPU_CAP_MULTISAMPLE) : pgpu_disable (PGPU_CAP_MULTISAMPLE);
+		S.sent_samples4 = S.samples4;
+	}
 }
 
 /* ---- buffers ----------------------------------------------------------------------------- */

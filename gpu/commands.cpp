@@ -834,6 +834,13 @@ u32 CCommands::Dispatch (u32 nOpcode, const u32 *p, unsigned nLength, u32 *pDeta
 		{
 			return PGPU_ERR_ENUM;
 		}
+		// a job is multisampled or not as a whole: what is collected
+		// renders as it was drawn
+		if (   (p[0] & PGPU_CAP_MULTISAMPLE)
+		    && !(S.nEnables & PGPU_CAP_MULTISAMPLE) == (nOpcode == PGPU_OP_ENABLE))
+		{
+			FlushJob (FALSE);
+		}
 		if (nOpcode == PGPU_OP_ENABLE)
 		{
 			S.nEnables |= p[0];
@@ -1674,6 +1681,7 @@ void CCommands::FlushJob (boolean bForce)
 		nLoadColor = m_bJobClearColor ? 0 : T.nColorBus;
 		bLoadZS = !m_bJobClearZS && F.bDepthStencil && ZSOf (F).bValid;
 	}
+	T.bMultisample = !!(m_State.nEnables & PGPU_CAP_MULTISAMPLE);
 
 	if (!m_pRenderer->RenderJob (T, nLoadColor, bLoadZS, m_JobClear, &m_FrameStats))
 	{
@@ -1976,11 +1984,16 @@ u32 CCommands::ConfigBits (boolean bFaces, boolean bShaderWritesZ) const
 	return nBits | CGeometry::DepthBits (S, bShaderWritesZ);
 }
 
-// the fragment shader ending needed: plain, or blending and colour mask from uniforms
+// the fragment shader ending needed: plain, or blending and colour mask from
+// uniforms (multisampled: of each sample)
 u32 CCommands::BlendMode (void) const
 {
-	return   (m_State.nEnables & PGPU_CAP_BLEND) || (m_State.nColorMask & 0xF) != 0xF
-	       ? PGPU_BLEND_GENERIC : PGPU_BLEND_PLAIN;
+	if (!(m_State.nEnables & PGPU_CAP_BLEND) && (m_State.nColorMask & 0xF) == 0xF)
+	{
+		return PGPU_BLEND_PLAIN;
+	}
+
+	return m_State.nEnables & PGPU_CAP_MULTISAMPLE ? PGPU_BLEND_GENERIC_MS : PGPU_BLEND_GENERIC;
 }
 
 // viewport transform and clip window, in target pixels (the panel's rows top down)
@@ -2219,8 +2232,13 @@ u32 CCommands::ProgramDraw (u32 nMode, unsigned nFirst, unsigned nCount,
 	}
 	unsigned nPrim =   nMode == PGPU_POINTS ? PGPU_PRIM_POINTS
 			 : nMode <= PGPU_LINE_STRIP ? PGPU_PRIM_LINES : PGPU_PRIM_TRIANGLES;
-	const TProgramVariant *pVariant = CPrograms::FindVariant (pProgram, nPrim, BlendMode (),
-								  !m_State.bFlipY);
+	u32 nBlend = BlendMode ();
+	const TProgramVariant *pVariant = CPrograms::FindVariant (pProgram, nPrim, nBlend, !m_State.bFlipY);
+	if (!pVariant && nBlend == PGPU_BLEND_GENERIC_MS)
+	{
+		// not compiled for it: all of a pixel's samples blend with its first one's colour
+		pVariant = CPrograms::FindVariant (pProgram, nPrim, PGPU_BLEND_GENERIC, !m_State.bFlipY);
+	}
 	if (!pVariant)
 	{
 		*pDetail = 2;

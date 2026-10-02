@@ -256,7 +256,8 @@ enum pgpu_error
 #define PGPU_CAP_POLYGON_OFFSET_FILL	(1u << 14)
 #define PGPU_CAP_STENCIL_TEST		(1u << 15)
 #define PGPU_CAP_DITHER			(1u << 16)	/* panel: RGB565 dithered (default on) */
-#define PGPU_CAP_ALL			0x1FFFFu
+#define PGPU_CAP_MULTISAMPLE		(1u << 17)	/* four samples a pixel (a job's: as its first draw finds it) */
+#define PGPU_CAP_ALL			0x3FFFFu
 
 /* compare functions (same order as the V3D depth-test field) */
 enum pgpu_func

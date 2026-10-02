@@ -686,7 +686,8 @@ that 1 bit. The next packet may follow directly after the CRC word.
 | | | 14 | POLYGON_OFFSET_FILL |
 | | | 15 | STENCIL_TEST |
 | | | 16 | DITHER (the panel's RGB565 output is dithered; enabled by default, as in GL; applies to a whole job, with the state when it renders) |
-| | | 17–31 | reserved, must be 0 |
+| | | 17 | MULTISAMPLE (four samples a pixel in the tile buffer, averaged as a tile is stored: antialiased edges. A job has it or not as a whole: changing it renders what was drawn so far. Blended draws use a program's `GENERIC_MS` ending if it has one) |
+| | | 18–31 | reserved, must be 0 |
 
 ### 10.2 Compare functions (depth, alpha)
 

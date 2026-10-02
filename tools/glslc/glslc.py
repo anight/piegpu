@@ -52,7 +52,7 @@ PRIMS = {'triangles': 0, 'lines': 1, 'points': 2}
 VK_POINT_SIZE = 1 << 16
 VERT_ATTRIB_GENERIC0 = 15	# Mesa's gl_vert_attrib: generic attribute 0 (inputs_read bit)
 VK_TEXTURE_TARGET = 1 << 17
-BLEND_PLAIN, BLEND_GENERIC = 0, 1	# fragment shader endings (protocol/pgpu_program.h)
+BLEND_PLAIN, BLEND_GENERIC, BLEND_GENERIC_MS = 0, 1, 2	# fragment shader endings (protocol/pgpu_program.h)
 U_BLEND = 35				# uniform kind: blend coefficient (data 0-47)
 STAGES = {'fs': 0, 'vs': 1, 'cs': 2}
 
@@ -154,11 +154,16 @@ def vpm_writes(code):
 #            for the source (k0-k5) and the destination (k6-k11) factor,
 #            result = Sc Fs + Dc Fd (the equation's sign is in the k),
 #            channels R, G, B, A; D is the tile buffer's colour (colour load)
+#   generic, multisampled (--ms): the same four times, for the pixel's four
+#            samples: the colour loads give them in turn, the writes to
+#            tlb_color_ms take them in turn (as Mesa's vc4: the loads first).
+#            Without it a multisampled job gets the generic one: the pixel's
+#            samples blend with the first one's colour (edges under it go flat)
 
 W_TLB_COLOR_ALL, W_NOP = 46, 39
 
 
-def fs_ending(code, stream, generic):
+def fs_ending(code, stream, blend):
     ends = [i for i, w in enumerate(code)
             if w >> 60 != 15 and W_TLB_COLOR_ALL in ((w >> 38) & 63, (w >> 32) & 63)]
     if len(ends) != 1:
@@ -187,7 +192,8 @@ def fs_ending(code, stream, generic):
 
     p = qpuasm.Program('ending')
     uniforms = []
-    if not generic:
+    samples = 4 if blend == BLEND_GENERIC_MS else 1
+    if blend == BLEND_PLAIN:
         # BGRA -> RGBA: bytes 2, 1, 0, 3 as floats, packed again
         p.mov('ra0', src)
         for byte, pack in (('8c', '8a'), ('8b', '8b'), ('8a', '8c'), ('8d', '8d')):
@@ -195,36 +201,43 @@ def fs_ending(code, stream, generic):
             p.mov('r3.' + pack, 'r1')
     else:
         p.mov('ra0', src)			# source, BGRA
-        p.sig('colorload')			# r4: tile buffer colour, R in byte 0
         S = {'r': 'ra1', 'g': 'ra2', 'b': 'ra3', 'a': 'ra4'}
         D = {'r': 'rb1', 'g': 'rb2', 'b': 'rb3', 'a': 'rb4'}
         for ch, byte in (('r', '8c'), ('g', '8b'), ('b', '8a'), ('a', '8d')):
             p.fmax(S[ch], 'ra0.' + byte, 'ra0.' + byte)
-        for ch, byte in (('r', '8a'), ('g', '8b'), ('b', '8c'), ('a', '8d')):
-            p.fmax(D[ch], 'r4.' + byte, 'r4.' + byte)
-        p.mov('r1', D['a'])			# (1.0 and rb4 would both need the B port)
-        p.fsub('r0', 1.0, 'r1')
-        p.fmin('ra5', S['a'], 'r0')		# SRC_ALPHA_SATURATE
-        k = 0
-        for ch, pack in (('r', '8a'), ('g', '8b'), ('b', '8c'), ('a', '8d')):
-            terms = [S['a'], D['a'], S[ch], D[ch], 'ra5']
-            for side in (0, 1):
-                p.mov('r0', p.unif('k%d' % k))
-                uniforms.append(k)
-                k += 1
-                tmp = ('r1', 'r2')
-                for n, x in enumerate(terms):
-                    p.fmul(tmp[n % 2], p.unif('k%d' % k), x)
+        for sample in range(samples):
+            p.sig('colorload')			# r4: tile buffer colour (the next sample's), R in byte 0
+            for ch, byte in (('r', '8a'), ('g', '8b'), ('b', '8c'), ('a', '8d')):
+                p.fmax(D[ch], 'r4.' + byte, 'r4.' + byte)
+            p.mov('r1', D['a'])			# (1.0 and rb4 would both need the B port)
+            p.fsub('r0', 1.0, 'r1')
+            p.fmin('ra5', S['a'], 'r0')		# SRC_ALPHA_SATURATE
+            k = 0
+            for ch, pack in (('r', '8a'), ('g', '8b'), ('b', '8c'), ('a', '8d')):
+                terms = [S['a'], D['a'], S[ch], D[ch], 'ra5']
+                for side in (0, 1):
+                    p.mov('r0', p.unif('k%d_%d' % (k, sample)))
                     uniforms.append(k)
                     k += 1
-                    p.fadd('r0', 'r0', tmp[n % 2])
-                if side == 0:
-                    p.fmul('ra6', 'r0', S[ch])	# Sc Fs
-                else:
-                    p.fmul('r1', 'r0', D[ch])	# Dc Fd
-                    p.fadd('r0', 'ra6', 'r1')
-            p.mov('r3.' + pack, 'r0')
-    p.alu('mov', 'tlbc', 'r3', cond=cond_name)
+                    tmp = ('r1', 'r2')
+                    for n, x in enumerate(terms):
+                        p.fmul(tmp[n % 2], p.unif('k%d_%d' % (k, sample)), x)
+                        uniforms.append(k)
+                        k += 1
+                        p.fadd('r0', 'r0', tmp[n % 2])
+                    if side == 0:
+                        p.fmul('ra6', 'r0', S[ch])	# Sc Fs
+                    else:
+                        p.fmul('r1', 'r0', D[ch])	# Dc Fd
+                        p.fadd('r0', 'ra6', 'r1')
+                p.mov('r3.' + pack, 'r0')
+            if samples > 1:
+                p.mov('ra%d' % (7 + sample), 'r3')
+    if samples > 1:
+        for sample in range(samples):
+            p.alu('mov', 'tlbm', 'ra%d' % (7 + sample), cond=cond_name)
+    else:
+        p.alu('mov', 'tlbc', 'r3', cond=cond_name)
     ending = p.encode()
 
     new_code = code[:i] + [w] + ending + code[i + 1:]
@@ -239,6 +252,8 @@ def main():
     ap.add_argument('--fs')
     ap.add_argument('-a', '--attrib', action='append', default=[], help='NAME:TYPE:SIZE')
     ap.add_argument('-v', '--variant', action='append', default=[], help='PRIM')
+    ap.add_argument('--ms', action='store_true',
+                    help='also the blending ending for multisampled jobs (each of the four samples)')
     ap.add_argument('-o', '--output', help='C header')
     ap.add_argument('--pgl', help='the program for pgl\'s run-time compiler (text)')
     ap.add_argument('--check', action='store_true',
@@ -292,7 +307,7 @@ def cache_key(args):
                  os.path.join(HERE, '..', '..', 'devtools', 'qpuasm.py')]):
         h.update(open(path, 'rb').read())
         h.update(b'\0')
-    h.update(repr((bool(args.vs), bool(args.fs), args.attrib, sorted(args.bind), args.variant)).encode())
+    h.update(repr((bool(args.vs), bool(args.fs), args.attrib, sorted(args.bind), args.variant, args.ms)).encode())
     return h.hexdigest()
 
 
@@ -616,9 +631,8 @@ def compile_program(args):
 
         # the fragment shader with its two endings
         fs = used['fs']
-        for blend in (BLEND_PLAIN, BLEND_GENERIC):
-            code, stream = fs_ending([int(w, 16) for w in fs['code']], fs['stream'],
-                                     blend == BLEND_GENERIC)
+        for blend in (BLEND_PLAIN, BLEND_GENERIC, BLEND_GENERIC_MS)[:3 if args.ms else 2]:
+            code, stream = fs_ending([int(w, 16) for w in fs['code']], fs['stream'], blend)
             o = dict(fs, code=['%016x' % w for w in code], stream=stream)
             k = shader_key(o)
             if k not in shader_index:

@@ -15,7 +15,13 @@
 #define COPY_CL_SIZE		(12 * 1024)	// 11 bytes a tile, 2048x2048
 #define TILE_ALLOC_SIZE		(4 * 1024 * 1024)
 #define OVERFLOW_SIZE		(1 * 1024 * 1024)
-#define MAX_TILES		(32 * 32)
+#define MAX_TILES		(64 * 64)	// 2048 x 2048 in tiles of 32 pixels (multisampled; else of 64)
+#define BIN_MULTISAMPLE		(1 << 0)	// tile binning mode config
+#define MODE_MULTISAMPLE	(1 << 0)	// tile rendering mode config: four samples a pixel ...
+#define MODE_DECIMATE_4X	(1 << 4)	// ... averaged by the tile's store (as in Mesa's vc4_packet.h)
+#define CONFIG_OVERSAMPLE_4X	(1 << 6)	// configuration bits: the rasteriser makes the four samples
+#define CONFIG_EARLY_Z		(1 << 16)	// ... and no early Z then (as Mesa's vc4: HW-2905, and
+						// "bad rendering" it saw without it)
 
 // Load/Store Tile Buffer General (as in Mesa's vc4_packet.h)
 #define LOADSTORE_BUFFER_NONE		0		// bits 0-2
@@ -71,8 +77,8 @@ boolean CRenderer::Initialize (COutput *pOutput)
 	m_nWidth = m_pOutput->GetWidth ();
 	m_nHeight = m_pOutput->GetHeight ();
 	assert (m_nWidth <= MaxWidth && m_nHeight <= MaxHeight && m_nWidth * m_nHeight <= MaxPixels);
-	assert (   ((MaxWidth + V3D_TILE_SIZE-1) / V3D_TILE_SIZE)
-		 * ((MaxHeight + V3D_TILE_SIZE-1) / V3D_TILE_SIZE) <= MAX_TILES);
+	assert (   ((MaxWidth + V3D_TILE_SIZE / 2 - 1) / (V3D_TILE_SIZE / 2))
+		 * ((MaxHeight + V3D_TILE_SIZE / 2 - 1) / (V3D_TILE_SIZE / 2)) <= MAX_TILES);
 
 	m_pBinCL = (u8 *) CV3D::Alloc (BIN_CL_SIZE);
 	m_pRenderCL = (u8 *) CV3D::Alloc (RENDER_CL_SIZE);
@@ -296,14 +302,19 @@ void CRenderer::GetPanelTarget (TRenderTarget *pTarget, u32 *pPreviousBus) const
 	pTarget->nModeFlags = 0;			// BGR565 dithered, raster
 	pTarget->nLoadStore = LOADSTORE_BUFFER_COLOR | LOADSTORE_TILING_RASTER | LOADSTORE_FORMAT_BGR565;
 	pTarget->nZSBus = CV3D::BusAddress (m_pDepthBuffer);
+	pTarget->bMultisample = FALSE;
 	*pPreviousBus = CV3D::BusAddress (m_pFrameBuffer[Previous ()]);
 }
 
 boolean CRenderer::RenderJob (const TRenderTarget &rTarget, u32 nLoadColorBus, boolean bLoadZS,
 			      const TJobClear &rClear, TRenderStats *pStats)
 {
-	unsigned nTilesX = (rTarget.nWidth + V3D_TILE_SIZE-1) / V3D_TILE_SIZE;
-	unsigned nTilesY = (rTarget.nHeight + V3D_TILE_SIZE-1) / V3D_TILE_SIZE;
+	// multisampled, a tile is 32 x 32 pixels (the tile buffer holds four
+	// samples of each); the general loads and stores (the picture so far,
+	// depth and stencil for the next job) are a sample a pixel
+	unsigned nTile = rTarget.bMultisample ? V3D_TILE_SIZE / 2 : V3D_TILE_SIZE;
+	unsigned nTilesX = (rTarget.nWidth + nTile-1) / nTile;
+	unsigned nTilesY = (rTarget.nHeight + nTile-1) / nTile;
 	assert (nTilesX * nTilesY <= MAX_TILES);
 
 	CV3D::Flush (m_pVertexPool, m_nVertexBytes);
@@ -337,7 +348,7 @@ boolean CRenderer::RenderJob (const TRenderTarget &rTarget, u32 nLoadColorBus, b
 	Bin.Add32 (CV3D::BusAddress (m_pTileState));
 	Bin.Add8 (nTilesX);
 	Bin.Add8 (nTilesY);
-	Bin.Add8 (0x04);			// auto-initialise tile state data array
+	Bin.Add8 (0x04 | (rTarget.bMultisample ? BIN_MULTISAMPLE : 0));	// auto-initialise tile state data array
 
 	Bin.Add8 (V3D_START_TILE_BINNING);
 
@@ -367,10 +378,15 @@ boolean CRenderer::RenderJob (const TRenderTarget &rTarget, u32 nLoadColorBus, b
 
 		if (S.nConfigBits != Last.nConfigBits)
 		{
+			u32 nBits = S.nConfigBits;
+			if (rTarget.bMultisample)
+			{
+				nBits = (nBits & ~CONFIG_EARLY_Z) | CONFIG_OVERSAMPLE_4X;
+			}
 			Bin.Add8 (V3D_CONFIGURATION_BITS);
-			Bin.Add8 (S.nConfigBits & 0xFF);
-			Bin.Add8 ((S.nConfigBits >> 8) & 0xFF);
-			Bin.Add8 ((S.nConfigBits >> 16) & 0xFF);
+			Bin.Add8 (nBits & 0xFF);
+			Bin.Add8 ((nBits >> 8) & 0xFF);
+			Bin.Add8 ((nBits >> 16) & 0xFF);
 		}
 		if (   S.nClipX != Last.nClipX || S.nClipY != Last.nClipY
 		    || S.nClipWidth != Last.nClipWidth || S.nClipHeight != Last.nClipHeight)
@@ -488,7 +504,7 @@ boolean CRenderer::RenderJob (const TRenderTarget &rTarget, u32 nLoadColorBus, b
 	Render.Add32 (rTarget.nColorBus);
 	Render.Add16 (rTarget.nWidth);
 	Render.Add16 (rTarget.nHeight);
-	Render.Add16 (rTarget.nModeFlags);
+	Render.Add16 (rTarget.nModeFlags | (rTarget.bMultisample ? MODE_MULTISAMPLE | MODE_DECIMATE_4X : 0));
 
 	Render.Add8 (V3D_TILE_COORDINATES);	// dummy store to clear the tile buffer
 	Render.Add8 (0);

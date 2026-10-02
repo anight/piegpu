@@ -71,6 +71,7 @@ struct TRenderTarget
 	u16 nModeFlags;			// TILE_RENDERING_MODE_CONFIG flags: colour and memory format
 	u16 nLoadStore;			// LOAD_TILE_BUFFER_GENERAL bits for the colour buffer
 	u32 nZSBus;			// depth and stencil storage (T-format), 0: none
+	boolean bMultisample;		// four samples a pixel in the tile buffer, averaged as a tile is stored
 };
 
 struct TJobClear
