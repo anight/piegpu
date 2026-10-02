@@ -484,7 +484,7 @@ Every host builds them (`demos/demos.cmake`):
 | `touch` | the panel's touch screen: a drawing board with a calibration |
 | `toy-NAME` | Shadertoy-style shaders (`tunnel`, `spheres`, `clouds`, `voronoi`) and games in a shader (`pong`, `snake`, `asteroids`) |
 | `media` | an MP4, an MP3 or an Ogg Vorbis file played by the RPi: the video into a texture, the sound with it |
-| `jet-NAME` | the Jet demos (`demos/jet`): a model viewer and CubeCoders' example scenes |
+| `jet-NAME` | the Jet scenes (`demos/jet`): CubeCoders' sixteen JetExamples, from a cube to a two-minute film, and a model viewer, written again for OpenGL ES and antialiased (4x MSAA) |
 | `selftest`, `linktest` | the link, the protocol and pgl tested; the link at full speed both ways |
 | `wifi` | the Pico 2 W only (`hosts/pico/wifi`): Wi-Fi asked of a phone (below) |
 | `keyboard`, `mouse` | the Pico 2 W only (`hosts/pico/keyboard`, `mouse`): a Bluetooth keyboard, or a mouse, found, paired with and used (below) |
@@ -841,9 +841,10 @@ source.
 | [ESP-IDF](https://github.com/espressif/esp-idf) 5.5 | installed separately | Apache-2.0 | the ESP32-P4 host | P4 images |
 | [libusb](https://libusb.info) 1.0 | the system's | LGPL-2.1-or-later | the PC host's USB (linked dynamically) | — |
 | [Emscripten](https://emscripten.org) | installed separately | MIT or University of Illinois/NCSA | the installer page's demos (WebAssembly; its runtime code is in the output) | the installer page |
-| [Jet](https://github.com/CubeCoders/Jet) | `demos/jet/Jet` | MIT | the Jet demos' renderer | Jet demo images |
-| JetExamples scenes (CubeCoders) | `demos/jet/examples` | MIT | the Jet demos | Jet demo images |
-| picojet (its model viewer, runtime pieces, asset converter) | `demos/jet`, `demos/assets` | BSD-2-Clause | the Jet demos, the demos' models | demo images |
+| [JetExamples](https://github.com/CubeCoders/JetExamples) scenes (CubeCoders), ported; what they take of [Jet](https://github.com/CubeCoders/Jet) (its light, particles, primitives) | `demos/jet` | MIT | the Jet scenes | Jet scene images |
+| JetExamples' data: its own artwork (MIT), a crate texture (Cpt_Flash, CC0), the Utah teapot (FreeGLUT's data, its permissive licence) | `demos/jet/assets` | as named | the Jet scenes | Jet scene images |
+| The car of `jet-neon-car` (the "Nascar Intel Edition" model and livery) | `demos/jet/assets/car*.hpp` | none stated: supplied to JetExamples without a licence of its own | `jet-neon-car` | its image |
+| picojet (its model viewer, asset converter) | `demos/jet/scenes/viewer.cpp`, `demos/assets` | BSD-2-Clause | the Jet viewer, the demos' models | demo images |
 | Meshes and textures: radio, column, biplane | `demos/assets` | CC0 (opengameart.org) | flight, the Jet viewer | demo images |
 | Meshes and textures: cube, f117, f22, efa, sphere, crab, the pikuma texture | `demos/assets` | not stated: shipped with Gustavo Pezzi's pikuma.com 3D graphics course, kept under the terms they arrived with | the Jet viewer, flight | demo images |
 | [Mesa](https://mesa3d.org) 26.2.3 (patched: `patches/mesa-vc4-dump.patch`) | `third_party/mesa` | MIT (mostly; per file) | `tools/glslc`: GLSL to QPU code, on the PC | — (its output: the demos' shader binaries) |

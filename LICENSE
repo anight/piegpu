@@ -45,15 +45,17 @@ them all, with what each is used for):
   gpu/video/userland/       The MMAL client of the Raspberry Pi userland,
                             BSD-3-Clause, with its LICENCE file.
 
-  demos/jet/Jet/            Jet, MIT, Copyright (c) 2026 CubeCoders Limited,
-                            with its LICENSE file.
-
-  demos/jet/examples/       Scenes from CubeCoders' JetExamples, MIT, with
-                            their LICENSE file.
-
-  demos/jet/viewer/,        From picojet, BSD-2-Clause, Copyright (c) 2026,
-  demos/jet/runtime/        Andrei Nigmatulin (the parts demos/jet/README.md
-  (parts)                   names as picojet's).
+  demos/jet/                Scenes of CubeCoders' JetExamples, written again for
+                            piegpu's OpenGL, with what they take of Jet: MIT,
+                            Copyright (c) 2026 CubeCoders Limited, with their
+                            LICENSE files (LICENSE-JetExamples, LICENSE-Jet).
+                            assets/: JetExamples' data (its own artwork: MIT;
+                            the crate's texture: Cpt_Flash, CC0; the teapot:
+                            FreeGLUT's data). The car of jet-neon-car
+                            (assets/car.hpp, car_model.hpp) came to
+                            JetExamples without a licence of its own.
+                            scenes/viewer.cpp: from picojet, BSD-2-Clause,
+                            Copyright (c) 2026, Andrei Nigmatulin.
 
   demos/assets/             Meshes and textures converted by picojet's tools:
                               radio, column, biplane: opengameart.org, CC0;

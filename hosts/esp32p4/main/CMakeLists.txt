@@ -1,7 +1,7 @@
-# the app (PGPU_APP: demos/demos.cmake, or jet-NAME: demos/jet/jet.cmake):
+# the app (PGPU_APP: demos/demos.cmake, or jet-NAME: demos/jet/scenes.cmake):
 # its main () is called by app_main
 include(${CMAKE_CURRENT_LIST_DIR}/../../../demos/demos.cmake)
-include(${CMAKE_CURRENT_LIST_DIR}/../../../demos/jet/jet.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/../../../demos/jet/scenes.cmake)
 
 idf_component_register(SRCS app_main.c sdcard.c REQUIRES pgpu esp_driver_gpio esp_driver_sdmmc esp_driver_uart sdmmc fatfs esp_timer)
 
@@ -20,7 +20,7 @@ if(NOT CMAKE_BUILD_EARLY_EXPANSION)
 		target_compile_definitions(${COMPONENT_LIB} PRIVATE PGPU_SDCARD="/sdcard"
 			PGPU_MEDIA_PATH="${PGPU_MEDIA_FILE}" PGPU_MEDIA_READER=1)
 	elseif(PGPU_APP MATCHES "^jet-(.+)$")
-		jet_demo(${COMPONENT_LIB} ${CMAKE_MATCH_1})
+		jet_scene(${COMPONENT_LIB} ${CMAKE_MATCH_1})
 	else()
 		pgpu_demo(${COMPONENT_LIB} ${PGPU_APP})
 	endif()

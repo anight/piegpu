@@ -68,12 +68,11 @@ endforeach()
 # linktest keeps two copies of its texture: 64 KB each here (256 KB by default)
 target_compile_definitions(linktest PRIVATE LINKTEST_SIZE=128)
 
-# ---- Jet examples on the GPU (demos/jet/jet.cmake): jet-NAME ---------------------
-option(JET_PROFILE "print where the Pico's frame time goes (jet-*)" OFF)
-include(${DEMOS}/jet/jet.cmake)
-foreach(scene ${JET_APPS})
+# ---- the Jet scenes, in OpenGL (demos/jet/scenes.cmake): jet-NAME -------------
+include(${DEMOS}/jet/scenes.cmake)
+foreach(scene ${JET_SCENES})
 	pico_host_executable(jet-${scene})
-	jet_demo(jet-${scene} ${scene})
+	jet_scene(jet-${scene} ${scene})
 endforeach()
 
 # ---- wifi: Wi-Fi for the Pico W, asked of a phone (wifi/) ---------------------------

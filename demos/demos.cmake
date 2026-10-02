@@ -36,8 +36,8 @@
 #                       PGPU_MEDIA_EMBED (default: a 720p test pattern made
 #                       with ffmpeg), linked in, or a file (PGPU_MEDIA_PATH)
 #
-# The Jet demos (demos/jet) are C++ with their own runtime: demos/jet/jet.cmake
-# (hosts/pico and hosts/esp32p4).
+# The Jet scenes (demos/jet) are C++ with a helper of their own: demos/jet/scenes.cmake
+# (every host).
 include(${CMAKE_CURRENT_LIST_DIR}/../libpgpu/pgpu_sources.cmake)
 
 set(PGPU_DEMOS ${CMAKE_CURRENT_LIST_DIR})

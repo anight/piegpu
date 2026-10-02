@@ -1,64 +1,124 @@
-# Jet on piegpu
+# The Jet scenes
 
-picojet's demos (`~/picojet`) running on the Pico with the RPi's V3D doing
-the pixel work: Jet still transforms, lights, culls and sorts on the Pico, and
-where it would rasterise, the GPU draws instead. The Pico keeps no framebuffer.
+CubeCoders' [JetExamples](https://github.com/CubeCoders/JetExamples) (all
+sixteen of them, at 57b05a2 of 2026-09-25) and picojet's model viewer, each
+written again as a piegpu OpenGL ES program. Jet, the software renderer the
+originals are made for, is not here: a scene's meshes are vertex buffers on
+the RPi, the V3D's vertex shaders move and light them, a depth buffer sorts
+them, and every scene is antialiased in hardware (4x MSAA). What is kept of
+the originals is what makes a scene itself: its geometry, colours, numbers
+and timeline, so that the picture at a given moment is the original's.
 
-| Program | Scene | Source |
+| Program | Scene | What it shows |
 |---|---|---|
-| `jet-template-cube` | Rotating cube | JetExamples |
-| `jet-particles` | Particle Lab | JetExamples |
-| `jet-textured-boxes` | Textured crate | JetExamples |
-| `jet-texture-features` | Texture Lab | JetExamples |
-| `jet-postfx-crt` | CRT / Arcade | JetExamples |
-| `jet-lod-billboards` | Woodland | JetExamples |
-| `jet-sprite-controls` | Air Mail | JetExamples |
-| `jet-tropical-island` | Tropical island | JetExamples |
-| `jet-sprites-blending` | After Hours | JetExamples |
-| `jet-viewer` | Model viewer | picojet's `app/main.cpp`, as a scene |
+| `jet-template-cube` | Rotating cube | a cube |
+| `jet-lighting-teapot` | Utah teapot lighting | flat, Gouraud and Phong (per pixel, a glossy highlight) |
+| `jet-depth-teapot` | Depth comparison | painter's order against the depth buffer |
+| `jet-postfx-cel` | Cel / Teapot | the light cut into four bands |
+| `jet-textured-boxes` | Textured crate | affine and perspective texturing, nearest and bilinear |
+| `jet-texture-features` | Texture Lab | wrap, clamp, zero addressing; colour key; palette cycling; texture LOD |
+| `jet-postfx-crt` | CRT | a picture tube's lines over the picture |
+| `jet-particles` | Particles | additive sparks, a water spray, a pool of 200, distance culling |
+| `jet-lod-billboards` | Woodland | a mesh, a simpler one, then a billboard, by distance |
+| `jet-sprite-controls` | Air Mail | a sprite flipped, inverted, echoed; film bars and a fade |
+| `jet-sprites-blending` | Courtyard | mirrored meshes under a translucent floor, additive light meshes, halos |
+| `jet-tropical-island` | Tropical island | water that mirrors the scene, a lens flare |
+| `jet-mesh-instancing` | Repeat | fifteen meshes against one mesh drawn fifteen times |
+| `jet-neon-car` | Neon car | an OBJ model, Phong paint, environment-mapped glass |
+| `jet-matter` | Matter | an exhibition of ten rooms, three minutes |
+| `jet-neon-film` | ESP 88 | a film in twelve cuts, two minutes: a neon city in the rain, a car chase |
+| `jet-viewer` | Model viewer | picojet's nine textured models, one after another |
 
-## Sources
-
-- `Jet/`: Jet (github.com/CubeCoders/Jet) at b412c8793098, as picojet has it:
-  MIT, Copyright (c) 2026 CubeCoders Limited (`Jet/LICENSE`). `Renderer.cpp`
-  is kept for reference and not built. `Scene.cpp` has three hooks, marked
-  "piegpu" under `JET_GPU`: the clear, the CRT effect and the sprite pass.
-- `examples/`: nine JetExamples scenes as vendored by picojet (c09f5e566dd6),
-  unchanged: MIT, CubeCoders (`examples/LICENSE`).
-- `runtime/`: `Runtime.hpp` is upstream's contract (plus a caption line);
-  `esp_heap_caps.h`, `esp_system.h` are picojet's; `Runtime.cpp`,
-  `Display.hpp` and `JetConfigGpu.hpp` are written for the GPU after picojet's.
-- `viewer/`: picojet's model viewer; its `firmware/JetConfig.hpp` is picojet's
-  `app/JetConfig.hpp`. Models in `../assets/` (see the note in each header).
+Any host builds them (`scenes.cmake`: `jet_scene (target name)`): the Pico
+(`hosts/pico`: `jet-NAME.uf2`), the ESP32-P4 (`-DPGPU_APP=jet-NAME`), a PC
+(`hosts/pc`: `jet-NAME_host`). `h` on the console hides the numbers.
 
 ## How
 
-`gpu/JetGpu.cpp` replaces Jet's `Renderer.cpp`:
+- `kit.hpp`, `kit.cpp`: what the scenes share. Meshes (a vertex of 28 bytes:
+  place, normal, colour, texture coordinates, the material's light
+  coefficients), a camera and a light in Jet's conventions (integer units and
+  degrees, the camera looking along +z, faces clockwise seen from outside),
+  textures from the originals' RGB565 and paletted bitmaps, a 2D layer for
+  their captions and sprites (quads of a kind gathered into one draw), a
+  render target, and the program's loop. The scene is 480 x 320, as the
+  originals are made, drawn as large as fits on the real screen.
+- `../shaders/kit_*`: `kit_mesh` lights per vertex with Jet's formula (a
+  squared Lambert term, a view-facing specular one, ambient per channel,
+  blow-out above full), textures with or without perspective, keys colours
+  out, fades a texture with distance; `kit_phong` does the light per pixel
+  with Jet's glossy highlight and cel bands; `kit_sprite` is the 2D layer;
+  `kit_water` is Jet's screen-space water (the scene is drawn into a
+  texture, at half size, and mirrored about the waterline with a ripple);
+  `kit_paper`, `kit_ribbon` and `kit_neon` shape Matter's landscape and
+  ribbons and the film's neon tubes in the vertex shader, where the
+  originals move vertices on the CPU every frame.
+- A draw is what costs a small host (each is a few packets on the link), so
+  the kit sends a state or a uniform only when it changes, and keeps one
+  frame in flight: the host makes the next frame while the RPi renders this
+  one. The film goes further: the things of a cut live in a few vertex
+  buffers by kind, filled block by block as the city is built (nothing of a
+  street stays in the host's memory; the RPi has names for 250 buffers), and
+  neighbours that stand alike go out as one draw: 20 to 60 draws a frame
+  for a street of some 400 things.
+- `scenes/`: a file a scene. `assets/`: the originals' data (bitmaps,
+  meshes, the car's model) as arrays, generated by
+  `tools/import_assets.py JETEXAMPLES assets` from a JetExamples checkout.
+- `tools/compare.py` runs a scene to a moment on the RPi (a PC build with
+  `JET_SHOT=SECONDS:FILE` steps its timeline as the original's capture tool
+  does and reads the picture back) and puts it beside the original's own
+  render of that moment. All seventeen were checked this way, in each of
+  their modes.
 
-- `Rasterizer::drawTriangle` lights each vertex with Jet's own formula (squared
-  Lambert, view-facing specular, per-channel ambient, blow-out above 255) and
-  adds the triangle to a batch; batches are GL draws in Jet's order (the
-  examples use painter's order, no depth buffer). `shaders/jet.*` interpolate,
-  texture (colour key, wrap/clamp/zero addressing, texture LOD) and blend.
-- Textures are cached per `Texture` and sent again when they change (Jet has
-  no notice of that: textures in RAM are sampled each frame; those in flash
-  are const and not looked at - reading them costs ~3 ms a frame through the
-  XIP cache); palette textures when their offset moves.
-- Sprites are quads (flips, mirrors, scale, alpha or additive); the gradient
-  background is a one-texel-wide texture; the CRT scanlines are one quad.
-- `WATER_REFLECT` is `shaders/jetwater.*`: Jet's row mirror with its ripple,
-  reading the previous frame. A scene with water is drawn into one of two
-  textures and then onto the panel, so the next frame can mirror it (copying
-  the panel into a texture costs the RPi's ARM about 15 ms a frame). Sprites
-  are drawn after that, on the panel: the water never mirrors them (the lens
-  flare), as upstream, which composites sprites at scanout.
-- Pick queries (the lens flare's occlusion) are answered per triangle on the
-  Pico, closest wins, as Jet does.
+## Where they differ from the originals
 
-The runtime keeps one frame in flight: the Pico builds the next frame while
-the RPi renders this one. `cmake -DJET_PROFILE=ON` prints where the Pico's
-frame time goes (update, render, drawTriangle, texture checks, GL draws, wait).
+- A depth buffer instead of Jet's painter's order (except where the order
+  is the scene's subject: `depth-teapot`), so where the original's sorting
+  goes wrong (Matter's leaves, overlapping palm fronds) the picture here is
+  the correct one. Coplanar decals the original paints in order are moved a
+  unit off their plane.
+- Antialiased, at the screen's resolution; the originals render half as
+  wide and double their pixels.
+- Colours are not rounded to RGB565 between steps: faint additive light
+  (the courtyard's cones) comes out in its colour, not greenish.
+- Textures are perspective-correct in the film and the car (the originals'
+  affine mapping swims on large near faces); `textured-boxes` shows both, as
+  the original does.
+- Jet's ground grids face down and are never seen in the originals: they
+  are left out (Matter) or drawn culled (`particles`). Jet doesn't apply an
+  object's scale: Matter's pistons and slats only move, here too.
+- The film's junction cut: the original culls the boulevard's blocks by a
+  centre it doesn't turn with the block, so blocks come and go; here they
+  stay.
+- `mesh-instancing` reports the bytes of its vertex and index buffers.
 
-Not done: PHONG is lit per vertex, perspective-incorrect (affine) texturing
-is drawn perspective-correct, and the post-effects the examples don't use
-(FXAA, bloom, motion blur, chromatic aberration, pixelate) are not ported.
+## Measured
+
+A Pico 2 W and a Zero 2 W, the 1024 x 600 HDMI screen, 4x MSAA: 60 frames a
+second in eleven scenes (the cube, the three teapots, both texture scenes,
+particles, the woodland, the instances, the car, the viewer) and in all ten
+rooms of Matter; `tropical-island` 52 to 60, `sprite-controls` 46 to 54,
+`postfx-crt` 60 and 37 with its lines on, `sprites-blending` 21 to 38; the
+film 25 to 60 by the cut (the river 25 to 36, the rain district 37, the
+street cuts 34 to 57, the cockpit's close-up and the flight over the city
+60; the credits, over the river with the picture dimmed, were 18 to 26
+before the reflection was drawn at half size, not measured since). Where it
+is less than 60 the GPU is the limit (blending with four samples a pixel
+at that size); the host's own time is 1 to 15 ms a frame. Not tried: the
+320 x 240 panel, the ESP32-P4 (the scenes build for it), a Zero.
+
+## Sources and licences
+
+- The scenes are ports of JetExamples (MIT, Copyright (c) 2026 CubeCoders
+  Limited: `LICENSE-JetExamples`); they carry over Jet's lighting formula,
+  particle system, primitives and effects as the scenes need them (Jet: MIT,
+  Copyright (c) 2026 CubeCoders Limited: `LICENSE-Jet`).
+- `assets/`: JetExamples' data. Its own artwork and meshes are under its
+  MIT licence; the crate's texture is Cpt_Flash's "2D Wooden Box" (CC0,
+  opengameart.org); the teapot is FreeGLUT's Utah teapot data (its permissive
+  licence is in JetExamples' `fg_teapot_data.h`). **The car** (`car.hpp`,
+  `car_model.hpp`: the "Nascar Intel Edition" model and its livery) was
+  supplied to JetExamples without a licence of its own, and JetExamples says
+  its code licence doesn't establish one.
+- `scenes/viewer.cpp` is picojet's model viewer (BSD-2-Clause); its models
+  are in `../assets` (their notes say where each is from).

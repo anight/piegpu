@@ -3,7 +3,7 @@
 # GLSL compiled at run time (tools/glslc). For tests: libpgl.a for dEQP
 # (tools/deqp), gltest_host (self test 8), compile_test.
 cmake_minimum_required(VERSION 3.13)
-project(pgpu_pc C ASM)	# ASM: the media demo links its file in (demos/media_file.S.in)
+project(pgpu_pc C CXX ASM)	# ASM: the media demo links its file in (demos/media_file.S.in); C++: the Jet scenes
 set(CMAKE_C_STANDARD 11)
 
 set(ROOT ${CMAKE_CURRENT_LIST_DIR}/../..)
@@ -62,6 +62,18 @@ foreach(app gears breakout flight antigrav tumble aquarium walk keep isles touch
 		${CMAKE_BINARY_DIR}/glsl)
 	target_link_libraries(${app}_host pgl)
 	pgpu_demo(${app}_host ${app})
+endforeach()
+# the Jet scenes (demos/jet): jet-NAME_host. With JET_SHOT=SECONDS:FILE in the
+# environment a scene is run to that moment and its picture written to FILE,
+# to be compared with the original's (demos/jet/tools/compare.py)
+include(${ROOT}/demos/jet/scenes.cmake)
+foreach(scene ${JET_SCENES})
+	add_executable(jet-${scene}_host $<TARGET_OBJECTS:pgpu_hud>)
+	target_include_directories(jet-${scene}_host PRIVATE ${PGPU_COMPAT_INCLUDE_DIR} ${ROOT}/libpgpu/hud
+		${CMAKE_BINARY_DIR}/glsl)
+	target_link_libraries(jet-${scene}_host pgl)
+	target_compile_definitions(jet-${scene}_host PRIVATE JET_SHOT=1)
+	jet_scene(jet-${scene}_host ${scene})
 endforeach()
 # media_host plays the file PGPU_MEDIA names (an MP4, an Ogg or an MP3), else the one
 # linked in
