@@ -250,7 +250,7 @@ int main (void)
 		if (perf_frame (absolute_time_diff_us (wait_start, get_absolute_time ()), &m))
 		{
 			hud_begin ();
-			hud_perf (vp[2] - hud_perf_width (0.5f) - 2, 2, 0.5f, &m);	/* half size, top right */
+			hud_perf (vp[2] - hud_perf_width (hud_perf_scale (vp[3])) - 2, 2, hud_perf_scale (vp[3]), &m);
 			hud_end ();
 			if (++windows % 5 == 0)
 			{

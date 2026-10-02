@@ -1644,7 +1644,7 @@ int main (void)
 			hud_begin ();
 			if (numbers)
 			{
-				hud_perf (vp[2] - hud_perf_width (0.5f) - 2, 2, 0.5f, &perf);
+				hud_perf (vp[2] - hud_perf_width (hud_perf_scale (vp[3])) - 2, 2, hud_perf_scale (vp[3]), &perf);
 			}
 			/* which antialiasing: on a dark strip (the sand under it is as bright as the letters) */
 			float high_t = (HUD_CHAR_H + 4) * hs, wide_t = (strlen (aa_name[aa]) * HUD_CHAR_W + 8) * hs;

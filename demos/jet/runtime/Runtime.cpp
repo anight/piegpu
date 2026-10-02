@@ -59,11 +59,12 @@ void hud (const perf_t& perf)
 	unsigned screen_w, screen_h;
 	pglGetScreenSize (&screen_w, &screen_h);
 	hud_begin ();
-	hud_perf (screen_w - hud_perf_width (0.5f) - 2, 2, 0.5f, &perf);	// half size, top right
+	float ps = hud_perf_scale ((int) screen_h);		// half size on the panel; top right
+	hud_perf (screen_w - hud_perf_width (ps) - 2, 2, ps, &perf);
 	std::snprintf (s, sizeof s, "%s", caption ? caption : PICOJET_EXAMPLE_NAME);
 	for (char* p = s; *p; p++)
 		*p = (char) std::toupper ((unsigned char) *p);	// the HUD font is upper case
-	hud_text_scaled (4, screen_h - 12, s, HUD_RGBA (255, 255, 255, 200), 0.5f);
+	hud_text_scaled (4, screen_h - 24 * ps, s, HUD_RGBA (255, 255, 255, 200), ps);
 	hud_end ();
 }
 

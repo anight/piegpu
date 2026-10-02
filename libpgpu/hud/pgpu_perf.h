@@ -29,6 +29,12 @@ bool perf_frame (uint32_t wait_us, perf_t *m);
    scale 1 (as glxgears' HUD) or 0.5: the frame rate, the loads, the render
    and panel times, the host's link */
 void hud_perf (float x, float y, float scale, const perf_t *m);
+/* the scale to draw it at on a screen of so many lines: half size on the
+   panel (240), full size from 600, more on a large monitor */
+static inline float hud_perf_scale (int height)
+{
+	return height >= 1000 ? 1.5f : height >= 600 ? 1.0f : 0.5f;
+}
 float hud_perf_width (float scale);
 
 /* the link's numbers (bytes a second each way, its use, the host's time held

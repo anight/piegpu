@@ -2563,7 +2563,7 @@ int main (void)
 					hud_text_scaled (x0, floorf (y0 + (i + 1.5f) * lh), s, c->hud, hs);
 				}
 			}
-			hud_perf (vp[2] - hud_perf_width (0.5f) - 2, 2, 0.5f, &perf);
+			hud_perf (vp[2] - hud_perf_width (hud_perf_scale (vp[3])) - 2, 2, hud_perf_scale (vp[3]), &perf);
 			hud_end ();
 			last_phase = phase;
 		}

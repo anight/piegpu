@@ -487,7 +487,7 @@ static void hud_update (bool new_perf, const perf_t *perf)
 		hud_rect (6 + 8 * HUD_CHAR_W + 2 + i * 14, 24, 10, 10,
 			  i < G.lives ? HUD_RGBA (110, 230, 255, 255) : HUD_RGBA (60, 60, 70, 255));
 	}
-	hud_perf (vp[2] - hud_perf_width (0.5f) - 2, 2, 0.5f, perf);
+	hud_perf (vp[2] - hud_perf_width (hud_perf_scale (vp[3])) - 2, 2, hud_perf_scale (vp[3]), perf);
 
 	const char *message = NULL;
 	char level_text[16];

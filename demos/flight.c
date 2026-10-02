@@ -535,7 +535,7 @@ int main (void)
 			hud_text_scaled (4, 12, s, HUD_RGBA (255, 230, 120, 255), 0.5f);
 			snprintf (s, sizeof s, "BANK %2d%c", (int) lroundf (fabsf (bank)), bank > 0.5f ? 'R' : bank < -0.5f ? 'L' : ' ');
 			hud_text_scaled (4, 21, s, HUD_RGBA (235, 235, 235, 255), 0.5f);
-			hud_perf (vp[2] - hud_perf_width (0.5f) - 2, 2, 0.5f, &perf);
+			hud_perf (vp[2] - hud_perf_width (hud_perf_scale (vp[3])) - 2, 2, hud_perf_scale (vp[3]), &perf);
 			hud_end ();
 		}
 		hud_draw ();

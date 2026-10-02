@@ -132,7 +132,7 @@ int main (void)
 			hud_text_scaled (4, 4, s, pilot_on ? HUD_RGBA (120, 220, 255, 255) : HUD_RGBA (255, 220, 80, 255), hs);
 			snprintf (s, sizeof s, "FACES %u  DRAWS %u  LEAVES %u", r.stats.faces, r.stats.draws, r.stats.leaves);
 			hud_text_scaled (4, 4 + HUD_CHAR_H * hs * 1.2f, s, HUD_RGBA (220, 220, 220, 255), hs * 0.667f);
-			hud_perf (vp[2] - hud_perf_width (0.5f) - 2, 2, 0.5f, &perf);
+			hud_perf (vp[2] - hud_perf_width (hud_perf_scale (vp[3])) - 2, 2, hud_perf_scale (vp[3]), &perf);
 			hud_end ();
 		}
 		hud_draw ();

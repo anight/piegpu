@@ -721,7 +721,7 @@ int main (void)
 			hud_rect (0, 0, 12 + 9 * HUD_CHAR_W, 22, HUD_RGBA (0, 0, 20, 140));
 			hud_text (6, 4, s, HUD_RGBA (255, 230, 120, 255));
 			hud_text_scaled (6, 26, by_itself ? "BY ITSELF" : "PLAYED   ", HUD_RGBA (200, 205, 215, 255), 0.5f);
-			hud_perf (vp[2] - hud_perf_width (0.5f) - 2, 2, 0.5f, &perf);
+			hud_perf (vp[2] - hud_perf_width (hud_perf_scale (vp[3])) - 2, 2, hud_perf_scale (vp[3]), &perf);
 			hud_end ();
 		}
 		hud_draw ();
