@@ -103,8 +103,8 @@ function(pgpu_demo target app)
 	elseif(app STREQUAL "antigrav")	# anti-gravity racing, after WipEout
 		target_sources(${target} PRIVATE ${PGPU_DEMOS}/antigrav.c ${PGPU_DEMOS}/antigrav_sounds.c)
 		program(sky -a a_pos:float:2 -v triangles)
-		program(scenery -a a_pos:float:3 -a a_uv:float:2 -a a_shade:float:1 -v triangles)
-		program(craft -a a_pos:float:3 -a a_normal:float:3 -a a_uv:float:2 -v triangles)
+		program(scenery -a a_pos:float:3 -a a_uv:float:2 -a a_shade:float:1 -v triangles --ms)	# (--ms: the
+		program(craft -a a_pos:float:3 -a a_normal:float:3 -a a_uv:float:2 -v triangles)	# shadows, blended)
 		program(nightsky -a a_pos:float:2 -a a_dir:float:3 -v triangles)
 
 	elseif(app STREQUAL "aquarium")	# a tank of tropical fish

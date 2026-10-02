@@ -37,6 +37,10 @@
  * only; the screen is cleared to the haze it meets there), so the V3D's early
  * Z leaves what's hidden unshaded; the stars are in the sky's own pass, and
  * the scenery's shader has no dither.
+ *
+ * The edges are antialiased by the RPi: four samples a pixel (pglSamples;
+ * the console's "m" takes it off and puts it back). It costs the early Z
+ * (the V3D has none with it), so what's hidden is shaded too.
  */
 #include <math.h>
 #include <stdio.h>
@@ -2265,8 +2269,19 @@ int main (void)
 	bool new_perf = true;
 	int last_phase = -1;
 
+	bool smooth = true;				/* the RPi's four samples a pixel */
+	printf ("antigrav: antialiased (4 samples a pixel); m: without, and with again\n");
 	while (true)
 	{
+		for (int c; (c = getchar_timeout_us (0)) != PICO_ERROR_TIMEOUT; )
+		{
+			if (c == 'm' || c == 'M')
+			{
+				smooth = !smooth;
+				printf ("antigrav: %s\n", smooth ? "antialiased" : "not antialiased");
+			}
+		}
+		pglSamples (smooth ? 4 : 1);
 		if (screen_update ("antigrav", vp))
 		{
 			float aspect = (float) vp[2] / vp[3];

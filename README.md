@@ -418,7 +418,9 @@ Apache 2.0). The controller runs as it comes, without Broadcom's patch file.
 - **Supersampling** takes nothing of the RPi: the scene drawn twice as wide
   and high into a texture, and that drawn over the screen through a linear
   filter.
-- `aquarium` shows both and neither, ten seconds each. Measured there on a
+- `antigrav` is drawn with the V3D's multisampling (`m` on the console
+  takes it off and puts it back). `aquarium` shows both and neither, ten
+  seconds each. Measured there on a
   Zero 2 W, the panel, 60 fps in all three: a frame's rendering 3.5 ms
   without, 5.8 ms multisampled, 9.0 ms supersampled; the edges compared in
   screenshots. Not tried: the Zero and the Zero W, a multisampled frame
@@ -472,7 +474,7 @@ Every host builds them (`demos/demos.cmake`):
 | `gears`, `breakout`, `flight` | the classic gears; a 3D Breakout that plays itself; a biplane over a cloud deck |
 | `aquarium` | a tank of tropical fish: five kinds that swim by a wave down their bodies, school, come for food and flee a knock on the glass; a starfish creeping over a rock, two shrimps walking the sand; caustics on the sand, shafts of light, swaying plants, bubbles, the pump's hum. It shows antialiasing, ten seconds each: none, 2x2 supersampled (drawn twice the size into a texture), the V3D's 4x multisampling (`pglSamples`) |
 | `tumble` | 2D physics: balls and boxes in a box that the stick tilts (rigid bodies, friction, stacking), each meeting heard; a finger on the panel adds a ball |
-| `antigrav` | anti-gravity racing, after WipEout: six craft, a circuit; heard from the craft followed (engines whose note is their speed, the wind, the crowd, pads, the countdown) |
+| `antigrav` | anti-gravity racing, after WipEout: six craft, a circuit; heard from the craft followed (engines whose note is their speed, the wind, the crowd, pads, the countdown); antialiased by the V3D |
 | `walk` | the BSP engine (`engine/`): a Quake-format level walked through, doors that open, a lift |
 | `keep` | the engine outdoors: a castle at dusk, a moat of lava, a lift, nine gems to find |
 | `isles` | the engine in the sky: floating islands, a moving platform, a jump pad, a portal, coins |
