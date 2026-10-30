@@ -24,6 +24,9 @@
 #   invaders            the 1978 arcade game, after Taito's (invaders/: its rules
 #                       and timings from its disassembly, a one-bit screen sent
 #                       as it changes; sounds made by tools/make_invaders_sounds.py)
+#   chomp               the 1980 maze game, after Namco's (chomp/: its rules from
+#                       "The Pac-Man Dossier", a palette-coloured screen sent as it
+#                       changes, sprites drawn by code; tools/make_chomp_sounds.py)
 #   tumble              2D physics: balls and boxes in a box the stick tilts,
 #                       each meeting heard (tumble_sounds.c, made by
 #                       tools/make_tumble_sounds.py)
@@ -60,7 +63,7 @@ set(PGPU_DEMO_SHADERS ${PGPU_DEMOS}/shaders)
 set(PGPU_LEVEL_walk base)			# the BSP engine's demos' levels (engine/levels)
 set(PGPU_LEVEL_keep keep)
 set(PGPU_LEVEL_isles isles)
-set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav zerog xonix invaders tumble aquarium walk keep isles lanternfall touch
+set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav zerog xonix invaders chomp tumble aquarium walk keep isles lanternfall touch
 	toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids media)
 
 if(NOT COMMAND pgpu_demo)
@@ -153,8 +156,16 @@ function(pgpu_demo target app)
 	elseif(app STREQUAL "invaders")	# the 1978 arcade game, after Taito's
 		set(invaders ${PGPU_DEMOS}/invaders)
 		target_sources(${target} PRIVATE ${invaders}/invaders.c ${invaders}/game.c ${invaders}/art.c
-			${invaders}/bot.c ${invaders}/sounds.c)
+			${invaders}/bot.c ${invaders}/sounds.c ${PGPU_DEMOS}/arcade_font.c)
 		program(invaders -a a_pos:float:2 -a a_pixel:float:2 -v triangles)
+		pad()
+
+	elseif(app STREQUAL "chomp")		# the 1980 maze game, after Namco's
+		set(chomp ${PGPU_DEMOS}/chomp)
+		target_sources(${target} PRIVATE ${chomp}/chomp.c ${chomp}/game.c ${chomp}/art.c ${chomp}/bot.c
+			${chomp}/sounds.c ${PGPU_DEMOS}/arcade_font.c)
+		program(chomp_maze -a a_pos:float:2 -a a_pixel:float:2 -v triangles)
+		program(chomp_sprite -a a_pos:float:2 -a a_uv:float:2 -a a_color:ubyte_norm:4 -v triangles)
 		pad()
 
 	elseif(app STREQUAL "tumble")		# 2D physics: balls and boxes in a box the stick tilts

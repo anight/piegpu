@@ -56,7 +56,7 @@ target_link_libraries(linktest_host pgl)
 # pgpu is in pgl already); frames paced by pgpu_wait_frame (the PC transport:
 # a PING after each frame)
 include(${ROOT}/demos/demos.cmake)
-foreach(app gears breakout flight antigrav zerog xonix invaders tumble aquarium walk keep isles lanternfall touch toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids media)
+foreach(app gears breakout flight antigrav zerog xonix invaders chomp tumble aquarium walk keep isles lanternfall touch toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids media)
 	add_executable(${app}_host $<TARGET_OBJECTS:pgpu_hud>)
 	target_include_directories(${app}_host PRIVATE ${PGPU_COMPAT_INCLUDE_DIR} ${ROOT}/libpgpu/hud
 		${CMAKE_BINARY_DIR}/glsl)
@@ -93,7 +93,14 @@ add_executable(xonix_sim ${ROOT}/demos/xonix/sim.c ${ROOT}/demos/xonix/game.c ${
 # invaders_host likewise; invaders_sim: the bot plays whole games without a GPU (demos/invaders/sim.c)
 target_compile_definitions(invaders_host PRIVATE INVADERS_RAW_TERMINAL=1)
 add_executable(invaders_sim ${ROOT}/demos/invaders/sim.c ${ROOT}/demos/invaders/game.c ${ROOT}/demos/invaders/art.c
-	${ROOT}/demos/invaders/bot.c)
+	${ROOT}/demos/invaders/bot.c ${ROOT}/demos/arcade_font.c)
+target_include_directories(invaders_sim PRIVATE ${ROOT}/demos)
+# chomp_host likewise; chomp_sim: the bot plays whole games without a GPU (demos/chomp/sim.c)
+target_compile_definitions(chomp_host PRIVATE CHOMP_RAW_TERMINAL=1)
+add_executable(chomp_sim ${ROOT}/demos/chomp/sim.c ${ROOT}/demos/chomp/game.c ${ROOT}/demos/chomp/art.c
+	${ROOT}/demos/chomp/bot.c ${ROOT}/demos/arcade_font.c)
+target_include_directories(chomp_sim PRIVATE ${ROOT}/demos)
+target_link_libraries(chomp_sim m)
 # lanternfall_host likewise; with LF_SHOT=WIDTHxHEIGHT:PREFIX:SECONDS,... it writes pictures of itself playing;
 # lanternfall_sim plays it without a GPU: is each scene's way open? (demos/lanternfall/sim.c)
 target_compile_definitions(lanternfall_host PRIVATE ENGINE_RAW_TERMINAL=1 LF_SHOT=1)
