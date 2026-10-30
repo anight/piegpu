@@ -56,7 +56,7 @@ target_link_libraries(linktest_host pgl)
 # pgpu is in pgl already); frames paced by pgpu_wait_frame (the PC transport:
 # a PING after each frame)
 include(${ROOT}/demos/demos.cmake)
-foreach(app gears breakout flight antigrav zerog tumble aquarium walk keep isles lanternfall touch toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids media)
+foreach(app gears breakout flight antigrav zerog xonix tumble aquarium walk keep isles lanternfall touch toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids media)
 	add_executable(${app}_host $<TARGET_OBJECTS:pgpu_hud>)
 	target_include_directories(${app}_host PRIVATE ${PGPU_COMPAT_INCLUDE_DIR} ${ROOT}/libpgpu/hud
 		${CMAKE_BINARY_DIR}/glsl)
@@ -87,6 +87,9 @@ target_compile_definitions(zerog_host PRIVATE ZEROG_SHOT=1)
 target_compile_definitions(walk_host PRIVATE ENGINE_RAW_TERMINAL=1)
 target_compile_definitions(keep_host PRIVATE ENGINE_RAW_TERMINAL=1)
 target_compile_definitions(isles_host PRIVATE ENGINE_RAW_TERMINAL=1)
+# xonix_host likewise (the arrows); xonix_sim plays it without a GPU, by the bot (demos/xonix/sim.c)
+target_compile_definitions(xonix_host PRIVATE XONIX_RAW_TERMINAL=1)
+add_executable(xonix_sim ${ROOT}/demos/xonix/sim.c ${ROOT}/demos/xonix/game.c ${ROOT}/demos/xonix/bot.c)
 # lanternfall_host likewise; with LF_SHOT=WIDTHxHEIGHT:PREFIX:SECONDS,... it writes pictures of itself playing;
 # lanternfall_sim plays it without a GPU: is each scene's way open? (demos/lanternfall/sim.c)
 target_compile_definitions(lanternfall_host PRIVATE ENGINE_RAW_TERMINAL=1 LF_SHOT=1)

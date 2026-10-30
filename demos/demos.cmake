@@ -18,6 +18,9 @@
 #                       Wren, her lantern and Ody the golem through six drowned
 #                       scenes to the peak; its own levels (lanternfall/levels,
 #                       made by lanternfall/tools), shaders, sounds and music
+#   xonix               Xonix: the sea claimed for the land a trail at a time,
+#                       the balls bouncing about (xonix/: the rules, a bot that
+#                       plays by itself; sounds made by tools/make_xonix_sounds.py)
 #   tumble              2D physics: balls and boxes in a box the stick tilts,
 #                       each meeting heard (tumble_sounds.c, made by
 #                       tools/make_tumble_sounds.py)
@@ -54,7 +57,7 @@ set(PGPU_DEMO_SHADERS ${PGPU_DEMOS}/shaders)
 set(PGPU_LEVEL_walk base)			# the BSP engine's demos' levels (engine/levels)
 set(PGPU_LEVEL_keep keep)
 set(PGPU_LEVEL_isles isles)
-set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav zerog tumble aquarium walk keep isles lanternfall touch
+set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav zerog xonix tumble aquarium walk keep isles lanternfall touch
 	toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids media)
 
 if(NOT COMMAND pgpu_demo)
@@ -135,6 +138,13 @@ function(pgpu_demo target app)
 		program(bubbles -a a_seed:float:4 -v points --ms)	# (--ms: blended sample by sample
 		program(shafts -a a_pos:float:3 -a a_uv:float:2 -v triangles --ms)	# when the RPi antialiases)
 		program(texview -a a_pos:float:2 -v triangles)		# the supersampled picture, brought down
+		pad()
+
+	elseif(app STREQUAL "xonix")		# Xonix: claim the sea, mind the balls
+		set(xonix ${PGPU_DEMOS}/xonix)
+		target_sources(${target} PRIVATE ${xonix}/xonix.c ${xonix}/game.c ${xonix}/bot.c ${xonix}/sounds.c)
+		program(xonix_field -a a_pos:float:2 -a a_cell:float:2 -v triangles)
+		program(xonix_sprite -a a_pos:float:2 -a a_local:float:2 -a a_color:ubyte_norm:4 -v triangles)
 		pad()
 
 	elseif(app STREQUAL "tumble")		# 2D physics: balls and boxes in a box the stick tilts
