@@ -56,7 +56,7 @@ target_link_libraries(linktest_host pgl)
 # pgpu is in pgl already); frames paced by pgpu_wait_frame (the PC transport:
 # a PING after each frame)
 include(${ROOT}/demos/demos.cmake)
-foreach(app gears breakout flight antigrav zerog xonix invaders chomp tumble aquarium walk keep isles lanternfall touch toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids media)
+foreach(app gears breakout flight antigrav zerog xonix invaders chomp rockfall tumble aquarium walk keep isles lanternfall touch toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids media)
 	add_executable(${app}_host $<TARGET_OBJECTS:pgpu_hud>)
 	target_include_directories(${app}_host PRIVATE ${PGPU_COMPAT_INCLUDE_DIR} ${ROOT}/libpgpu/hud
 		${CMAKE_BINARY_DIR}/glsl)
@@ -101,6 +101,10 @@ add_executable(chomp_sim ${ROOT}/demos/chomp/sim.c ${ROOT}/demos/chomp/game.c ${
 	${ROOT}/demos/chomp/bot.c ${ROOT}/demos/arcade_font.c)
 target_include_directories(chomp_sim PRIVATE ${ROOT}/demos)
 target_link_libraries(chomp_sim m)
+# rockfall_host likewise; rockfall_sim: each cave tried by the bot without a GPU (demos/rockfall/sim.c)
+target_compile_definitions(rockfall_host PRIVATE ROCKFALL_RAW_TERMINAL=1)
+add_executable(rockfall_sim ${ROOT}/demos/rockfall/sim.c ${ROOT}/demos/rockfall/game.c ${ROOT}/demos/rockfall/caves.c
+	${ROOT}/demos/rockfall/bot.c)
 # lanternfall_host likewise; with LF_SHOT=WIDTHxHEIGHT:PREFIX:SECONDS,... it writes pictures of itself playing;
 # lanternfall_sim plays it without a GPU: is each scene's way open? (demos/lanternfall/sim.c)
 target_compile_definitions(lanternfall_host PRIVATE ENGINE_RAW_TERMINAL=1 LF_SHOT=1)

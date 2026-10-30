@@ -5,7 +5,7 @@
 #   . ~/esp/esp-idf-v5.5/export.sh
 #   idf.py -B build-gears -DPGPU_APP=gears build flash monitor
 #
-# PGPU_APP: selftest (default), gears, breakout, flight, antigrav, zerog, xonix, invaders, chomp, tumble, walk, keep, isles, lanternfall, touch, toy-NAME (demos/demos.cmake),
+# PGPU_APP: selftest (default), gears, breakout, flight, antigrav, zerog, xonix, invaders, chomp, rockfall, tumble, walk, keep, isles, lanternfall, touch, toy-NAME (demos/demos.cmake),
 # jet-NAME (demos/jet/scenes.cmake), or pincheck (the pins alone, before wiring the RPi: main/pincheck.c)
 cmake_minimum_required(VERSION 3.16)
 
