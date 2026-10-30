@@ -30,6 +30,9 @@
 #   rockfall            the 1984 cave game, after First Star's (rockfall/: its engine
 #                       as documented, caves of its own made the original's way, a
 #                       tile map through a palette; tools/make_rockfall_sounds.py)
+#   stacker             the falling-blocks game as the 1989 NES version plays it
+#                       (stacker/: its rules from TetrisWiki and a study of the ROM;
+#                       Korobeiniki arranged by tools/make_stacker_sounds.py)
 #   tumble              2D physics: balls and boxes in a box the stick tilts,
 #                       each meeting heard (tumble_sounds.c, made by
 #                       tools/make_tumble_sounds.py)
@@ -66,7 +69,7 @@ set(PGPU_DEMO_SHADERS ${PGPU_DEMOS}/shaders)
 set(PGPU_LEVEL_walk base)			# the BSP engine's demos' levels (engine/levels)
 set(PGPU_LEVEL_keep keep)
 set(PGPU_LEVEL_isles isles)
-set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav zerog xonix invaders chomp rockfall tumble aquarium walk keep isles lanternfall touch
+set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav zerog xonix invaders chomp rockfall stacker tumble aquarium walk keep isles lanternfall touch
 	toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids media)
 
 if(NOT COMMAND pgpu_demo)
@@ -176,6 +179,13 @@ function(pgpu_demo target app)
 		target_sources(${target} PRIVATE ${rockfall}/rockfall.c ${rockfall}/game.c ${rockfall}/caves.c
 			${rockfall}/art.c ${rockfall}/bot.c ${rockfall}/sounds.c ${PGPU_DEMOS}/arcade_font.c)
 		program(rockfall -a a_pos:float:2 -a a_pixel:float:2 -v triangles)
+		pad()
+
+	elseif(app STREQUAL "stacker")	# the falling-blocks game as the NES's plays it
+		set(stacker ${PGPU_DEMOS}/stacker)
+		target_sources(${target} PRIVATE ${stacker}/stacker.c ${stacker}/game.c ${stacker}/bot.c
+			${stacker}/sounds.c ${PGPU_DEMOS}/arcade_font.c)
+		program(stacker -a a_pos:float:2 -a a_pixel:float:2 -v triangles)
 		pad()
 
 	elseif(app STREQUAL "tumble")		# 2D physics: balls and boxes in a box the stick tilts
