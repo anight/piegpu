@@ -325,6 +325,7 @@ closes it and writes what changed of the first two pages to `settings.txt`.
 | `panel=auto` | the default: a panel if one answers on SDO (MISO) at boot |
 | `panel=yes`, `panel=none` | a panel is there (SDO not wired) or none is; without a panel and a monitor the screen stays on HDMI |
 | `hdmi_pixels=N` | cap the screen on HDMI to N pixels (default: the monitor's native resolution, up to 1920x1200) |
+| `hdmi_size=WxH` | the screen on HDMI while no monitor is connected (default 320x240): with `output=hdmi`, a host draws at that size unseen, as for a recording |
 | `hdmi_signal=boot` | keep the HDMI mode the firmware chose at boot (`config.txt`). Default (`monitor`): the RPi asks the firmware for the monitor's own preferred mode, at boot and when a monitor is plugged in, so the picture isn't scaled twice |
 | `cpu=max`, `cpu=low` | the ARM at its maximum clock (the default: 1000 MHz on all three boards, throttled by the firmware at its own temperature limit) or at its lowest (the Zero: 700 MHz, the Zero 2 W: 600 MHz). The rates between aren't offered: asked for 800 or 850 MHz, a Zero's firmware gave 900 |
 | `v3d=N` | the V3D's clock, MHz, within the firmware's range (the Zero and the Zero W: 250-300; the default: its maximum). It holds with `cpu=low` only: with the ARM at its maximum the firmware keeps the V3D at its maximum too (measured on both). The Zero 2 W's is 400 and stays there: its `config.txt` pins it (`v3d_freq`, `v3d_freq_min`) |

@@ -60,6 +60,7 @@ CKernel::CKernel (void)
 	m_nARMClock (0),
 	m_bPanelPresent (TRUE),
 	m_nHDMIPixels (CRenderer::MaxPixels),
+	m_nHDMIBlind {320, 240},
 	m_Panel (&m_Interrupt),
 	m_Touch (&m_Panel),
 	m_pScreen (nullptr),
@@ -117,6 +118,16 @@ boolean CKernel::Initialize (void)
 	if (m_nHDMIPixels < 320 * 240 || m_nHDMIPixels > CRenderer::MaxPixels)
 	{
 		m_nHDMIPixels = CRenderer::MaxPixels;
+	}
+	const char *pBlind = m_Options.GetAppOptionString ("hdmi_size", "320x240");	// the screen with no monitor
+	char *pBlindEnd;							// (output=hdmi: drawn unseen)
+	unsigned nBlind[2] = {(unsigned) strtoul (pBlind, &pBlindEnd, 10), 0};
+	nBlind[1] = *pBlindEnd == 'x' ? (unsigned) strtoul (pBlindEnd + 1, &pBlindEnd, 10) : 0;
+	if (   nBlind[0] >= 16 && nBlind[1] >= 16 && nBlind[0] <= CRenderer::MaxWidth && nBlind[1] <= CRenderer::MaxHeight
+	    && nBlind[0] * nBlind[1] <= CRenderer::MaxPixels)
+	{
+		m_nHDMIBlind[0] = nBlind[0] & ~15;
+		m_nHDMIBlind[1] = nBlind[1] & ~1;
 	}
 	m_DevLink.RegisterRebootHandler (CRunLog::Restarting);
 
@@ -897,7 +908,13 @@ void CKernel::HDMISize (unsigned *pWidth, unsigned *pHeight)
 	const THDMIState &M = m_Monitor.GetState ();
 	unsigned nWidth = M.bEDID ? M.nWidth : M.nSignalWidth;
 	unsigned nHeight = M.bEDID ? M.nHeight : M.nSignalHeight;
-	if (!M.bConnected || nWidth < 16 || nHeight < 16)
+	if (!M.bConnected)				/* (no monitor: as hdmi_size says) */
+	{
+		*pWidth = m_nHDMIBlind[0];
+		*pHeight = m_nHDMIBlind[1];
+		return;
+	}
+	if (nWidth < 16 || nHeight < 16)
 	{
 		*pWidth = m_HDMI.GetWidth ();
 		*pHeight = m_HDMI.GetHeight ();

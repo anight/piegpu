@@ -188,6 +188,7 @@ private:
 	unsigned		m_nARMClock;		// the rate last logged, Hz
 	boolean			m_bPanelPresent;
 	unsigned		m_nHDMIPixels;		// the largest screen on HDMI (default: native)
+	unsigned		m_nHDMIBlind[2];	// the screen on HDMI with no monitor there (default 320x240)
 	CPanelOutput		m_Panel;
 	CTouch			m_Touch;		// the panel's touch screen (on its SPI)
 	CBacklight		m_Backlight;		// the panel's (PWM)
