@@ -1,0 +1,100 @@
+{
+ "version": "0.1.0.130",
+ "built": "2026-10-30T00:21:16Z",
+ "boards": {
+  "zero": {
+   "kernel": "kernel.img",
+   "build": {
+    "version": "0.1.0.130",
+    "git": "97b2f89",
+    "built": "2026-10-30T00:21:14Z",
+    "config": "RASPPI=1,AArch32,Circle_Step51.1-12-gf3f7a45f,GCC_15.2.1"
+   },
+   "files": [
+    {
+     "name": "bootcode.bin",
+     "size": 52624,
+     "crc32": "cc0ff6c2"
+    },
+    {
+     "name": "start.elf",
+     "size": 3023264,
+     "crc32": "dd0b80b1"
+    },
+    {
+     "name": "fixup.dat",
+     "size": 7365,
+     "crc32": "a58a8811"
+    },
+    {
+     "name": "kernel.img",
+     "size": 1497080,
+     "crc32": "90d3a009"
+    }
+   ]
+  },
+  "zerow": {
+   "kernel": "kernel.img",
+   "build": {
+    "version": "0.1.0.130",
+    "git": "97b2f89",
+    "built": "2026-10-30T00:21:14Z",
+    "config": "RASPPI=1,AArch32,wireless,Circle_Step51.1-12-gf3f7a45f,GCC_15.2.1"
+   },
+   "files": [
+    {
+     "name": "bootcode.bin",
+     "size": 52624,
+     "crc32": "cc0ff6c2"
+    },
+    {
+     "name": "start.elf",
+     "size": 3023264,
+     "crc32": "dd0b80b1"
+    },
+    {
+     "name": "fixup.dat",
+     "size": 7365,
+     "crc32": "a58a8811"
+    },
+    {
+     "name": "kernel.img",
+     "size": 1546240,
+     "crc32": "fe62f4a3"
+    }
+   ]
+  },
+  "zero2": {
+   "kernel": "kernel8.img",
+   "build": {
+    "version": "0.1.0.130",
+    "git": "97b2f89",
+    "built": "2026-10-30T00:21:15Z",
+    "config": "RASPPI=3,AArch64,wireless,Circle_Step51.1-12-gf3f7a45f,GCC_15.2.1"
+   },
+   "files": [
+    {
+     "name": "bootcode.bin",
+     "size": 52624,
+     "crc32": "cc0ff6c2"
+    },
+    {
+     "name": "start.elf",
+     "size": 3023264,
+     "crc32": "dd0b80b1"
+    },
+    {
+     "name": "fixup.dat",
+     "size": 7365,
+     "crc32": "a58a8811"
+    },
+    {
+     "name": "kernel8.img",
+     "size": 1605152,
+     "crc32": "f657ac3b"
+    }
+   ]
+  }
+ },
+ "git": "97b2f89"
+}
