@@ -21,6 +21,9 @@
 #   xonix               Xonix: the sea claimed for the land a trail at a time,
 #                       the balls bouncing about (xonix/: the rules, a bot that
 #                       plays by itself; sounds made by tools/make_xonix_sounds.py)
+#   invaders            the 1978 arcade game, after Taito's (invaders/: its rules
+#                       and timings from its disassembly, a one-bit screen sent
+#                       as it changes; sounds made by tools/make_invaders_sounds.py)
 #   tumble              2D physics: balls and boxes in a box the stick tilts,
 #                       each meeting heard (tumble_sounds.c, made by
 #                       tools/make_tumble_sounds.py)
@@ -57,7 +60,7 @@ set(PGPU_DEMO_SHADERS ${PGPU_DEMOS}/shaders)
 set(PGPU_LEVEL_walk base)			# the BSP engine's demos' levels (engine/levels)
 set(PGPU_LEVEL_keep keep)
 set(PGPU_LEVEL_isles isles)
-set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav zerog xonix tumble aquarium walk keep isles lanternfall touch
+set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav zerog xonix invaders tumble aquarium walk keep isles lanternfall touch
 	toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids media)
 
 if(NOT COMMAND pgpu_demo)
@@ -145,6 +148,13 @@ function(pgpu_demo target app)
 		target_sources(${target} PRIVATE ${xonix}/xonix.c ${xonix}/game.c ${xonix}/bot.c ${xonix}/sounds.c)
 		program(xonix_field -a a_pos:float:2 -a a_cell:float:2 -v triangles)
 		program(xonix_sprite -a a_pos:float:2 -a a_local:float:2 -a a_color:ubyte_norm:4 -v triangles)
+		pad()
+
+	elseif(app STREQUAL "invaders")	# the 1978 arcade game, after Taito's
+		set(invaders ${PGPU_DEMOS}/invaders)
+		target_sources(${target} PRIVATE ${invaders}/invaders.c ${invaders}/game.c ${invaders}/art.c
+			${invaders}/bot.c ${invaders}/sounds.c)
+		program(invaders -a a_pos:float:2 -a a_pixel:float:2 -v triangles)
 		pad()
 
 	elseif(app STREQUAL "tumble")		# 2D physics: balls and boxes in a box the stick tilts
