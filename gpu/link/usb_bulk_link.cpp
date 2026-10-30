@@ -2,6 +2,7 @@
 // usb_bulk_link.cpp
 //
 #include "usb_bulk_link.h"
+#include <circle/synchronize.h>
 #include <circle/timer.h>
 #include <circle/util.h>
 
@@ -189,7 +190,11 @@ void CUSBBulkLink::OnStreamReceived (size_t nLength)
 	m_bRxReceiving = FALSE;
 	if (nLength)				// (not a zero-length packet alone)
 	{
-		m_nRxLength[(m_nRxRead + m_nRxFull) % RxBuffers] = nLength;
+		// the lines the DMA wrote: the ARM may have fetched some of them
+		// meanwhile (a read of the buffer before prefetches the next), stale
+		unsigned nBuffer = (m_nRxRead + m_nRxFull) % RxBuffers;
+		CleanAndInvalidateDataCacheRange ((uintptr) m_pRx[nBuffer], (nLength + 63) & ~63u);
+		m_nRxLength[nBuffer] = nLength;
 		m_nRxFull++;
 		m_bActive = TRUE;
 	}
