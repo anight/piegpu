@@ -54,6 +54,23 @@ bool hid_report_to_mouse(const uint8_t *descriptor, uint16_t descriptor_len,
                          const uint8_t *report, uint16_t report_len,
                          mouse_report_t *out);
 
+// A game controller's report (added in piegpu): its stick (the Generic Desktop
+// X and Y, else Z and Rz), its hat, its buttons. Axes are scaled to -1 .. 1 by
+// the field's logical minimum and maximum, right and down positive; the hat is 0 .. 7 clockwise from up, -1 centred or absent.
+typedef struct {
+    float    x, y;
+    int8_t   hat;
+    uint32_t buttons;       // bit n: button n + 1 (the Button page's usage)
+    bool     has_stick, has_hat;
+} gamepad_report_t;
+
+// Reduce a HID Input report to a game controller's fields. False if it has none
+// of a stick, a hat or a Button-page field (a keyboard's report): `out` is then
+// zero (hat -1).
+bool hid_report_to_gamepad(const uint8_t *descriptor, uint16_t descriptor_len,
+                           const uint8_t *report, uint16_t report_len,
+                           gamepad_report_t *out);
+
 // Where a keyboard keeps its lock LEDs inside its Output report.
 typedef struct {
     bool     found;

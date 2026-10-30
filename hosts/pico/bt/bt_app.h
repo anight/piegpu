@@ -25,14 +25,19 @@ const char *bt_link_kind_name(bt_link_kind_t kind);
 // mouse. One device at a time; each kind is remembered on its own. Set before
 // bt_app_setup. The reports of whatever is connected are decoded both ways (a
 // keyboard with a trackpad gives both): kbd_decode.h, mouse_decode.h.
+// Or a game controller (added for the games): found by its class or appearance
+// as a peripheral of any kind (cheap controllers often call themselves keyboards:
+// their keyboard mode), its reports also read for a controller's fields
+// (gamepad_decode.h).
 typedef enum {
     BT_DEVICE_KEYBOARD = 0,
     BT_DEVICE_MOUSE,
+    BT_DEVICE_GAMEPAD,
 } bt_device_t;
 
 void bt_app_look_for(bt_device_t device);
 bt_device_t bt_app_looking_for(void);
-const char *bt_app_device_name(void);     // "keyboard", "mouse"
+const char *bt_app_device_name(void);     // "keyboard", "mouse", "game controller"
 
 // -- called by the transports, implemented by bt_app.c ---------------------
 

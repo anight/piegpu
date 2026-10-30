@@ -35,6 +35,7 @@
 #include "hid_report.h"
 #include "kbd_decode.h"
 #include "mouse_decode.h"
+#include "gamepad_decode.h"
 
 #define LE_SCAN_WINDOW_MS 6000
 
@@ -50,14 +51,20 @@
                           (((uint32_t) 'B') << 8)  | ((uint32_t) '1'))
 #define TLV_TAG_MOUSE    ((((uint32_t) 'P') << 24) | (((uint32_t) 'M') << 16) | \
                           (((uint32_t) 'S') << 8)  | ((uint32_t) '1'))
+#define TLV_TAG_GAMEPAD  ((((uint32_t) 'P') << 24) | (((uint32_t) 'G') << 16) | \
+                          (((uint32_t) 'P') << 8)  | ((uint32_t) '1'))
 
 // What the search takes, and the tag its device is remembered under.
 static bt_device_t wanted = BT_DEVICE_KEYBOARD;
 
 void bt_app_look_for(bt_device_t device) { wanted = device; }
 bt_device_t bt_app_looking_for(void) { return wanted; }
-const char *bt_app_device_name(void) { return wanted == BT_DEVICE_MOUSE ? "mouse" : "keyboard"; }
-static uint32_t stored_tag(void) { return wanted == BT_DEVICE_MOUSE ? TLV_TAG_MOUSE : TLV_TAG_KEYBOARD; }
+const char *bt_app_device_name(void) {
+    return wanted == BT_DEVICE_MOUSE ? "mouse" : wanted == BT_DEVICE_GAMEPAD ? "game controller" : "keyboard";
+}
+static uint32_t stored_tag(void) {
+    return wanted == BT_DEVICE_MOUSE ? TLV_TAG_MOUSE : wanted == BT_DEVICE_GAMEPAD ? TLV_TAG_GAMEPAD : TLV_TAG_KEYBOARD;
+}
 
 typedef struct {
     uint8_t   kind;        // bt_link_kind_t
@@ -383,6 +390,7 @@ void bt_app_link_up(bt_link_kind_t kind) {
     passkey[0] = 0;
     kbd_decode_reset();
     mouse_decode_reset();
+    gamepad_decode_reset();
 
     if (pending_kind == kind) {
         save_stored_keyboard(kind, pending_addr, pending_addr_type);
@@ -406,6 +414,7 @@ void bt_app_link_down(bt_link_kind_t kind, const char *reason) {
     passkey[0] = 0;
     kbd_decode_reset();
     mouse_decode_reset();
+    gamepad_decode_reset();
 
     // A drop from a working link is usually the keyboard idling out, so retry
     // the same device quickly before falling back to a full search.
@@ -491,6 +500,7 @@ void bt_app_setup(void) {
     gap_set_local_name("piegpu");
 
     kbd_decode_init(&on_key_event, &bt_app_set_keyboard_leds);
+    gamepad_decode_reset();
 
     bt_le_init();
     bt_classic_init();

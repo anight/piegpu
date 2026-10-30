@@ -52,7 +52,7 @@ Documentation ([docs/](docs/README.md)):
 | `drivers/` | the RPi's V3D and ST7789 (DMA) drivers |
 | `libpgpu/` | the host library: protocol encoding, pgl (the GL ES API), MP4, MP3 and Ogg readers, HUD, self tests |
 | `transports/` | links for the host library: `pico-i2s`, `esp32p4-i2s`, `pc-usb` |
-| `hosts/` | builds per host: `pico` (with the Pico W's own programs: Wi-Fi setup, a Bluetooth keyboard and mouse; its stick and game controller), `esp32p4`, `pc`, `web` (a page, WebAssembly) |
+| `hosts/` | builds per host: `pico` (with the Pico W's own programs: Wi-Fi setup, a Bluetooth keyboard and mouse; its stick and game controllers, the Gamepad QT and a Bluetooth one), `esp32p4`, `pc`, `web` (a page, WebAssembly) |
 | `demos/` | the demos, for every host |
 | `engine/` | a small 3D engine for three of the demos: Quake-format levels (BSP), movement, lifts and doors, sounds; its levels and the tools that make them and the sounds |
 | `protocol/` | the wire format header, shared by both sides |
@@ -520,6 +520,18 @@ pickups, the wind, lava. The sounds are made from nothing by
 `engine/tools/make_sounds.py` (no samples from anywhere: 250 KB in the host's
 flash); the levels by `engine/tools/make_*.py` and ericw-tools' compilers.
 
+On a Pico 2 W the demos with a pad (`pad()` in `demos/demos.cmake`: the
+games, `walk`, `keep`, `isles` and others) also take a Bluetooth game
+controller (`PGPU_PAD_BLUETOOTH`, on by default: the keyboard's HID host in
+`hosts/pico/bt`, looking for a controller). Put it in its pairing mode once;
+the first one found is paired and remembered in the flash, as the keyboard
+is, and reconnected at the next start. The buttons are read as Android lays
+them out: A and B, X and Y as the Gamepad QT's, SELECT and START, the stick
+pressed; its stick and its hat steer. A cheap controller with a GAME/KEY
+switch wants GAME (in KEY it sends media keys); in a keyboard mode its
+arrows, WASD, Enter, Space, z, x, y and Esc are taken. Tried with one such
+controller over Classic (stacker at 59.8 fps); not yet with an LE one.
+
 `wifi` gives the Pico W its Wi-Fi network without a keyboard. With none kept
 it's an access point with a name and a password made up at the start, shown
 on the screen as a QR code ("SCAN TO SETUP WIFI": a phone's camera offers to
@@ -853,8 +865,8 @@ source.
 | [Raspberry Pi userland](https://github.com/raspberrypi/userland) (its MMAL client) | `gpu/video/userland` (a copy), `third_party/userland` | BSD-3-Clause | talking to the VideoCore's video components | the firmware |
 | GCC runtime (`libgcc`), newlib's `libm` (Arm GNU Toolchain 15.2) | the toolchain | GPL-3.0 with the GCC Runtime Library Exception; newlib: BSD-style | runtime support linked into the firmware | the firmware |
 | [Raspberry Pi Pico SDK](https://github.com/raspberrypi/pico-sdk) | fetched by `hosts/pico` | BSD-3-Clause | the Pico host | Pico images |
-| [BTstack](https://github.com/bluekitchen/btstack), [cyw43-driver](https://github.com/georgerobotics/cyw43-driver), [lwIP](https://savannah.nongnu.org/projects/lwip/) | in the Pico SDK (`lib/`) | BTstack and cyw43-driver: as Raspberry Pi licenses them for its Pico W boards (the SDK's `LICENSE.RP` files); lwIP: BSD-3-Clause | the Pico W's Bluetooth and Wi-Fi (`keyboard`, `mouse`, `wifi`) | those Pico images |
-| picosdl's Bluetooth HID host, stick and Gamepad QT drivers (the same author's) | `hosts/pico/bt`, `hosts/pico/input` | BSD-2-Clause; `hosts/pico/bt` carries BSD-3-Clause material (its README) | a keyboard, a mouse, the stick and the game controller on the Pico | Pico images |
+| [BTstack](https://github.com/bluekitchen/btstack), [cyw43-driver](https://github.com/georgerobotics/cyw43-driver), [lwIP](https://savannah.nongnu.org/projects/lwip/) | in the Pico SDK (`lib/`) | BTstack and cyw43-driver: as Raspberry Pi licenses them for its Pico W boards (the SDK's `LICENSE.RP` files); lwIP: BSD-3-Clause | the Pico W's Bluetooth and Wi-Fi (`keyboard`, `mouse`, `wifi`; the demos' Bluetooth game controller) | those Pico images |
+| picosdl's Bluetooth HID host, stick and Gamepad QT drivers (the same author's) | `hosts/pico/bt`, `hosts/pico/input` | BSD-2-Clause; `hosts/pico/bt` carries BSD-3-Clause material (its README) | a keyboard, a mouse, the stick and the game controllers on the Pico | Pico images |
 | QR Code generator (Project Nayuki, as LVGL carries it) | `hosts/pico/wifi/qrcodegen.c` | MIT | `wifi`'s QR codes | the `wifi` image |
 | [ESP-IDF](https://github.com/espressif/esp-idf) 5.5 | installed separately | Apache-2.0 | the ESP32-P4 host | P4 images |
 | [libusb](https://libusb.info) 1.0 | the system's | LGPL-2.1-or-later | the PC host's USB (linked dynamically) | — |

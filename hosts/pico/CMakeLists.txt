@@ -34,6 +34,23 @@ set(PGPU_PAD_SOURCES ${CMAKE_CURRENT_LIST_DIR}/input/pad_pico.c ${CMAKE_CURRENT_
 	${CMAKE_CURRENT_LIST_DIR}/input/seesaw_gamepad.c)
 set(PGPU_PAD_INCLUDES ${CMAKE_CURRENT_LIST_DIR}/input)
 set(PGPU_PAD_LIBS hardware_adc hardware_i2c)
+# and a Bluetooth game controller (bt/: the HID host the keyboard and mouse demos use, looking for
+# a controller; it remembers the one paired, in the flash's last two sectors, as they do)
+option(PGPU_PAD_BLUETOOTH "a Bluetooth game controller for the demos' pad" ON)
+if(PGPU_PAD_BLUETOOTH)
+	list(APPEND PGPU_PAD_SOURCES ${CMAKE_CURRENT_LIST_DIR}/psdl_pico_log.c ${CMAKE_CURRENT_LIST_DIR}/bt/bt_app.c
+		${CMAKE_CURRENT_LIST_DIR}/bt/bt_le.c ${CMAKE_CURRENT_LIST_DIR}/bt/bt_classic.c ${CMAKE_CURRENT_LIST_DIR}/bt/hid_report.c
+		${CMAKE_CURRENT_LIST_DIR}/bt/kbd_decode.c ${CMAKE_CURRENT_LIST_DIR}/bt/mouse_decode.c
+		${CMAKE_CURRENT_LIST_DIR}/bt/gamepad_decode.c ${CMAKE_CURRENT_LIST_DIR}/bt/debug.c)
+	list(APPEND PGPU_PAD_INCLUDES ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_CURRENT_LIST_DIR}/bt)
+	list(APPEND PGPU_PAD_LIBS pico_btstack_ble pico_btstack_classic pico_btstack_cyw43
+		pico_cyw43_arch_threadsafe_background pico_rand)
+	# (demos.cmake's pad () calls this for each demo with a pad: what BTstack wants of a target)
+	function(pgpu_pad_setup target)
+		target_compile_definitions(${target} PRIVATE PGPU_PAD_BLUETOOTH=1 CYW43_LWIP=0 PICO_FLASH_ASSUME_CORE1_SAFE=1)
+		pico_btstack_make_gatt_header(${target} PRIVATE ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/bt/kbd_host.gatt)
+	endfunction()
+endif()
 
 include(${ROOT}/demos/demos.cmake)
 
@@ -95,7 +112,7 @@ target_compile_definitions(wifi PRIVATE PICO_FLASH_ASSUME_CORE1_SAFE=1)
 # it).
 function(pico_bt_hid_executable name)
 	pico_host_executable(${name} ${ARGN} psdl_pico_log.c bt/bt_app.c bt/bt_le.c bt/bt_classic.c bt/hid_report.c
-		bt/kbd_decode.c bt/mouse_decode.c bt/debug.c)
+		bt/kbd_decode.c bt/mouse_decode.c bt/gamepad_decode.c bt/debug.c)
 	target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_LIST_DIR} ${CMAKE_CURRENT_LIST_DIR}/bt)
 	pico_btstack_make_gatt_header(${name} PRIVATE ${CMAKE_CURRENT_LIST_DIR}/bt/kbd_host.gatt)
 	target_link_libraries(${name} pico_btstack_ble pico_btstack_classic pico_btstack_cyw43

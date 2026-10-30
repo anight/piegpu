@@ -26,6 +26,7 @@
 #include "hid_report.h"
 #include "kbd_decode.h"
 #include "mouse_decode.h"
+#include "gamepad_decode.h"
 
 // Report map fetched over SDP.
 static uint8_t hid_descriptor_storage[512];
@@ -53,6 +54,7 @@ static void classic_packet_handler(uint8_t packet_type, uint16_t channel, uint8_
 static bool cod_is_keyboard(uint32_t cod) {
     uint8_t major = (uint8_t) ((cod >> 8) & 0x1f);
     if (major != 0x05) return false;
+    if (bt_app_looking_for() == BT_DEVICE_GAMEPAD) return true;   // (any peripheral: see bt_app.h)
 
     uint8_t peripheral_kind = (uint8_t) ((cod >> 6) & 0x03);
     uint8_t wanted_kind = bt_app_looking_for() == BT_DEVICE_MOUSE ? 0x02 : 0x01;
@@ -140,6 +142,19 @@ void bt_classic_disconnect(void) {
 static void classic_handle_report(const uint8_t *report, uint16_t report_len) {
     dbg("[classic] report");
     dbg_bytes("", report, report_len);
+    if (bt_app_looking_for() == BT_DEVICE_GAMEPAD) {
+        static uint8_t last[24];
+        static uint16_t last_len;
+        static int shown;
+        if (shown < 40 && (report_len != last_len || memcmp(report, last, report_len < sizeof(last) ? report_len : sizeof(last)) != 0)) {
+            shown++;
+            psdl_log("[classic] report %u:", (unsigned) report_len);       // (the first 40 changes: a new controller's)
+            for (uint16_t i = 0; i < report_len && i < 20; i++) psdl_log(" %02x", report[i]);
+            psdl_log(" (%lu ms)\n", (unsigned long) btstack_run_loop_get_time_ms());
+            last_len = report_len;
+            memcpy(last, report, report_len < sizeof(last) ? report_len : sizeof(last));
+        }
+    }
 
     // Reports arrive with the HID transaction header still attached; 0xa1 is
     // HANDSHAKE/DATA with an Input report payload behind it.
@@ -177,6 +192,15 @@ static void classic_handle_report(const uint8_t *report, uint16_t report_len) {
     if (hid_report_to_mouse(descriptor, descriptor_len, report, report_len, &mouse)) {
         mouse_decode_report(&mouse);
     }
+
+    // a game controller's fields, and (a controller in its keyboard mode) its keys
+    if (bt_app_looking_for() == BT_DEVICE_GAMEPAD) {
+        gamepad_report_t pad;
+        if (hid_report_to_gamepad(descriptor, descriptor_len, report, report_len, &pad)) {
+            gamepad_decode_report(&pad);
+        }
+        if (media.describes_keyboard) gamepad_decode_keys(&kbd);
+    }
 }
 
 // Announce the link once we can actually interpret what the keyboard sends.
@@ -194,7 +218,15 @@ static void classic_ready(void) {
             hid_descriptor_storage_get_descriptor_len(hid_cid));
     }
 
-    psdl_log("[classic] HID ready (%s protocol mode)\n", boot_mode ? "boot" : "report");
+    psdl_log("[classic] HID ready (%s protocol mode) (%lu ms)\n", boot_mode ? "boot" : "report",
+             (unsigned long) btstack_run_loop_get_time_ms());
+    if (bt_app_looking_for() == BT_DEVICE_GAMEPAD && !boot_mode) {
+        const uint8_t *d = hid_descriptor_storage_get_descriptor_data(hid_cid);
+        uint16_t n = hid_descriptor_storage_get_descriptor_len(hid_cid);
+        psdl_log("[classic] its descriptor, %u bytes:", (unsigned) n);         // (what its reports hold)
+        for (uint16_t i = 0; i < n; i++) psdl_log("%s%02x", i % 32 ? " " : "\n  ", d[i]);
+        psdl_log("\n");
+    }
     bt_app_link_up(BT_LINK_CLASSIC);
 }
 
@@ -206,6 +238,7 @@ static void handle_hid_event(uint8_t *packet) {
     switch (hci_event_hid_meta_get_subevent_code(packet)) {
         case HID_SUBEVENT_INCOMING_CONNECTION:
             // A bonded keyboard reconnecting to us after waking up.
+            psdl_log("[classic] it connects to us\n");
             hid_host_accept_connection(hid_subevent_incoming_connection_get_hid_cid(packet),
                                        HID_PROTOCOL_MODE_REPORT_WITH_FALLBACK_TO_BOOT);
             break;
@@ -281,9 +314,13 @@ static void classic_packet_handler(uint8_t packet_type, uint16_t channel, uint8_
     switch (hci_event_packet_get_type(packet)) {
         case GAP_EVENT_INQUIRY_RESULT: {
             uint32_t cod = gap_event_inquiry_result_get_class_of_device(packet);
-            if (!cod_is_keyboard(cod)) break;
-
             gap_event_inquiry_result_get_bd_addr(packet, addr);
+            if (bt_app_looking_for() == BT_DEVICE_GAMEPAD) {
+                // (what's about, while a controller's looked for: what a new one calls itself)
+                psdl_log("[classic] seen %s, class %06" PRIx32 "%s\n", bd_addr_to_str(addr), cod,
+                         cod_is_keyboard(cod) ? ": a peripheral, taken" : "");
+            }
+            if (!cod_is_keyboard(cod)) break;
 
             char name[32];
             name[0] = 0;
@@ -332,6 +369,11 @@ static void classic_packet_handler(uint8_t packet_type, uint16_t channel, uint8_
 
         case HCI_EVENT_HID_META:
             handle_hid_event(packet);
+            break;
+
+        case HCI_EVENT_DISCONNECTION_COMPLETE:
+            psdl_log("[classic] disconnected, reason 0x%02x (%lu ms)\n",
+                     hci_event_disconnection_complete_get_reason(packet), (unsigned long) btstack_run_loop_get_time_ms());
             break;
 
         default:

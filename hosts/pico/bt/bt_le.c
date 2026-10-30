@@ -22,6 +22,7 @@
 #include "hid_report.h"
 #include "kbd_decode.h"
 #include "mouse_decode.h"
+#include "gamepad_decode.h"
 
 // Report map storage. Plain keyboards sit well under 200 bytes, but anything
 // with media keys, a vendor page or several HID service instances runs much
@@ -114,9 +115,26 @@ static void ad_extract_name(const uint8_t *ad_data, uint8_t ad_len, char *out, s
 // (In piegpu: or like a mouse, when that is what the search takes. Keyboards and
 // mice both list the HID service, so an advertisement that says by its appearance
 // that it is the other kind is left alone; one that does not say is taken.)
+#define APPEARANCE_JOYSTICK    0x03c3
+#define APPEARANCE_GAMEPAD     0x03c4
+
 static bool ad_looks_like_keyboard(const uint8_t *ad_data, uint8_t ad_len) {
     uint16_t wanted_appearance = bt_app_looking_for() == BT_DEVICE_MOUSE ? APPEARANCE_MOUSE : APPEARANCE_KEYBOARD;
     uint16_t other_appearance  = bt_app_looking_for() == BT_DEVICE_MOUSE ? APPEARANCE_KEYBOARD : APPEARANCE_MOUSE;
+    if (bt_app_looking_for() == BT_DEVICE_GAMEPAD) {
+        // (a controller: a gamepad's or a joystick's appearance, or any HID device but a mouse;
+        // cheap ones call themselves keyboards in their keyboard mode)
+        wanted_appearance = APPEARANCE_GAMEPAD;
+        other_appearance = APPEARANCE_MOUSE;
+        ad_context_t context;
+        for (ad_iterator_init(&context, ad_len, ad_data); ad_iterator_has_more(&context); ad_iterator_next(&context)) {
+            if (ad_iterator_get_data_type(&context) != BLUETOOTH_DATA_TYPE_APPEARANCE) continue;
+            if (ad_iterator_get_data_len(&context) < 2) continue;
+            uint16_t appearance = little_endian_read_16(ad_iterator_get_data(&context), 0);
+            if (appearance == APPEARANCE_JOYSTICK || appearance == APPEARANCE_GAMEPAD || appearance == APPEARANCE_KEYBOARD)
+                return true;
+        }
+    }
 
     ad_context_t context;
     for (ad_iterator_init(&context, ad_len, ad_data);
@@ -284,6 +302,31 @@ static void le_packet_handler(uint8_t packet_type, uint16_t channel, uint8_t *pa
 
             const uint8_t *ad_data = gap_event_advertising_report_get_data(packet);
             uint8_t ad_len = gap_event_advertising_report_get_data_length(packet);
+            if (bt_app_looking_for() == BT_DEVICE_GAMEPAD) {
+                // (what's about, while a controller's looked for: each advertiser once, its name,
+                // its appearance, whether it lists the HID service, whether it's discoverable)
+                static bd_addr_t seen[24];
+                static int n_seen;
+                bd_addr_t a;
+                gap_event_advertising_report_get_address(packet, a);
+                bool known = false;
+                for (int i = 0; i < n_seen && !known; i++) known = memcmp(seen[i], a, sizeof(bd_addr_t)) == 0;
+                if (!known && n_seen < 24) {
+                    memcpy(seen[n_seen++], a, sizeof(bd_addr_t));
+                    char n[32];
+                    ad_extract_name(ad_data, ad_len, n, sizeof(n));
+                    int appearance = -1;
+                    ad_context_t c;
+                    for (ad_iterator_init(&c, ad_len, ad_data); ad_iterator_has_more(&c); ad_iterator_next(&c)) {
+                        if (ad_iterator_get_data_type(&c) == BLUETOOTH_DATA_TYPE_APPEARANCE && ad_iterator_get_data_len(&c) >= 2)
+                            appearance = little_endian_read_16(ad_iterator_get_data(&c), 0);
+                    }
+                    psdl_log("[le] seen %s \"%s\" appearance %04x%s%s%s\n", bd_addr_to_str(a), n, appearance & 0xffff,
+                             ad_data_contains_uuid16(ad_len, ad_data, ORG_BLUETOOTH_SERVICE_HUMAN_INTERFACE_DEVICE) ? ", HID" : "",
+                             ad_is_discoverable(ad_data, ad_len) ? ", discoverable" : "",
+                             ad_looks_like_keyboard(ad_data, ad_len) ? ": taken" : "");
+                }
+            }
             if (!ad_looks_like_keyboard(ad_data, ad_len)) break;
 
             bd_addr_t addr;
@@ -479,6 +522,15 @@ static void le_handle_report(uint8_t service_index, const uint8_t *report, uint1
     mouse_report_t mouse;
     if (hid_report_to_mouse(descriptor, descriptor_len, report, report_len, &mouse)) {
         mouse_decode_report(&mouse);
+    }
+
+    // a game controller's fields, and (a controller in its keyboard mode) its keys
+    if (bt_app_looking_for() == BT_DEVICE_GAMEPAD) {
+        gamepad_report_t pad;
+        if (hid_report_to_gamepad(descriptor, descriptor_len, report, report_len, &pad)) {
+            gamepad_decode_report(&pad);
+        }
+        if (media.describes_keyboard) gamepad_decode_keys(&kbd);
     }
 }
 

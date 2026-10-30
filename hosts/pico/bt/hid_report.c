@@ -143,6 +143,76 @@ bool hid_report_to_mouse(const uint8_t *descriptor, uint16_t descriptor_len,
     return moves;
 }
 
+#define USAGE_DESKTOP_Z     0x32
+#define USAGE_DESKTOP_RZ    0x35
+#define USAGE_DESKTOP_HAT   0x39
+
+// A field's value scaled to -1 .. 1 by its logical minimum and maximum
+static float axis_value(int32_t value, int32_t lo, int32_t hi) {
+    if (hi <= lo) return 0.0f;
+    float v = ((float) value - (float) lo) / ((float) hi - (float) lo) * 2.0f - 1.0f;
+    return v < -1.0f ? -1.0f : v > 1.0f ? 1.0f : v;
+}
+
+bool hid_report_to_gamepad(const uint8_t *descriptor, uint16_t descriptor_len,
+                           const uint8_t *report, uint16_t report_len,
+                           gamepad_report_t *out) {
+    memset(out, 0, sizeof(*out));
+    out->hat = -1;
+    if (descriptor == NULL || descriptor_len == 0) return false;
+
+    btstack_hid_parser_t parser;
+    btstack_hid_parser_init(&parser, descriptor, descriptor_len,
+                            HID_REPORT_TYPE_INPUT, report, report_len);
+
+    bool buttons = false, xy = false;
+    float zx = 0.0f, zy = 0.0f;
+    bool has_z = false;
+    while (btstack_hid_parser_has_more(&parser)) {
+        uint16_t usage_page;
+        uint16_t usage;
+        int32_t  value;
+        btstack_hid_parser_get_field(&parser, &usage_page, &usage, &value);
+        // (the iterator is still at this field's main item: its globals are this field's)
+        int32_t minimum = parser.usage_iterator.global_logical_minimum;
+        int32_t maximum = parser.usage_iterator.global_logical_maximum;
+
+        if (usage_page == USAGE_PAGE_DESKTOP) {
+            switch (usage) {
+                case USAGE_DESKTOP_X:  out->x = axis_value(value, minimum, maximum); xy = true; break;
+                case USAGE_DESKTOP_Y:  out->y = axis_value(value, minimum, maximum); xy = true; break;
+                case USAGE_DESKTOP_Z:  zx = axis_value(value, minimum, maximum); has_z = true; break;
+                case USAGE_DESKTOP_RZ: zy = axis_value(value, minimum, maximum); has_z = true; break;
+                case USAGE_DESKTOP_HAT: {
+                    // 8 positions from the logical minimum (0 or 1); outside them: centred
+                    int32_t h = value - (minimum > 0 ? minimum : 0);
+                    out->hat = (h >= 0 && h < 8) ? (int8_t) h : -1;
+                    out->has_hat = true;
+                    break;
+                }
+                default: break;
+            }
+        } else if (usage_page == USAGE_PAGE_BUTTON) {
+            buttons = true;
+            if (value != 0 && usage >= 1 && usage <= 32) {
+                out->buttons |= 1u << (usage - 1);
+            }
+        }
+    }
+    if (!xy && has_z) {
+        out->x = zx;
+        out->y = zy;
+        xy = true;
+    }
+    out->has_stick = xy;
+    if (!xy && !out->has_hat && !buttons) {
+        memset(out, 0, sizeof(*out));
+        out->hat = -1;
+        return false;
+    }
+    return true;
+}
+
 void hid_led_layout_find(hid_led_layout_t *layout,
                          const uint8_t *descriptor, uint16_t descriptor_len) {
     memset(layout, 0, sizeof(*layout));
