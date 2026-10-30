@@ -39,6 +39,14 @@ static bool     boot_mode;              // set if we fell back to Boot protocol
 static bool     link_reported;          // whether bt_app has been told we are up
 static hid_led_layout_t led_layout;
 
+// A report map asked for again (ask_for_report_map): the attribute, and the map within it.
+static uint8_t  late_attribute[512];
+static uint16_t late_attribute_len;
+static const uint8_t *late_map;
+static uint16_t late_map_len;
+static bd_addr_t remote_addr;
+static btstack_context_callback_registration_t late_query;
+
 // Inquiry runs in units of 1.28s. Four units is long enough for a keyboard in
 // pairing mode to answer, short enough to alternate with an LE scan.
 #define INQUIRY_DURATION_UNITS 4
@@ -166,7 +174,10 @@ static void classic_handle_report(const uint8_t *report, uint16_t report_len) {
     const uint8_t *descriptor;
     uint16_t descriptor_len;
 
-    if (boot_mode) {
+    if (late_map_len) {
+        descriptor = late_map;
+        descriptor_len = late_map_len;
+    } else if (boot_mode) {
         descriptor = btstack_hid_get_boot_descriptor_data();
         descriptor_len = btstack_hid_get_boot_descriptor_len();
     } else {
@@ -232,6 +243,65 @@ static void classic_ready(void) {
 
 // ---------------------------------------------------------------- events --
 
+// A remembered controller reached just after our reset can fail hid_host's query
+// for its report map (status 0x11, the link fine): hid_host falls back to boot
+// mode, and the controller goes on sending reports only its map can read. So a
+// controller's map is asked for once more, over the link that's up.
+static void late_query_handler(uint8_t packet_type, uint16_t channel, uint8_t *packet, uint16_t size) {
+    UNUSED(packet_type);
+    UNUSED(channel);
+    UNUSED(size);
+
+    switch (hci_event_packet_get_type(packet)) {
+        case SDP_EVENT_QUERY_ATTRIBUTE_VALUE: {
+            if (sdp_event_query_attribute_byte_get_attribute_id(packet) != BLUETOOTH_ATTRIBUTE_HID_DESCRIPTOR_LIST) break;
+            uint16_t at = sdp_event_query_attribute_byte_get_data_offset(packet);
+            if (at < sizeof(late_attribute)) {
+                late_attribute[at] = sdp_event_query_attribute_byte_get_data(packet);
+                late_attribute_len = at + 1;
+            }
+            break;
+        }
+        case SDP_EVENT_QUERY_COMPLETE: {
+            uint8_t status = sdp_event_query_complete_get_status(packet);
+            des_iterator_t list, item;
+            if (status == ERROR_CODE_SUCCESS && hid_cid && late_attribute_len) {
+                // a list of (a type, the map)
+                for (des_iterator_init(&list, late_attribute); des_iterator_has_more(&list); des_iterator_next(&list)) {
+                    if (des_iterator_get_type(&list) != DE_DES) continue;
+                    for (des_iterator_init(&item, des_iterator_get_element(&list)); des_iterator_has_more(&item);
+                         des_iterator_next(&item)) {
+                        if (des_iterator_get_type(&item) != DE_STRING || late_map_len) continue;
+                        uint8_t *string = des_iterator_get_element(&item);
+                        late_map = string + de_get_header_size(string);
+                        late_map_len = (uint16_t) de_get_data_size(string);
+                    }
+                }
+            }
+            psdl_log("[classic] its report map asked for again: status 0x%02x, %u bytes (%lu ms)\n", status,
+                     (unsigned) late_map_len, (unsigned long) btstack_run_loop_get_time_ms());
+            if (late_map_len) {
+                boot_mode = false;
+                hid_host_send_set_protocol_mode(hid_cid, HID_PROTOCOL_MODE_REPORT);
+            }
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+static void start_late_query(void *context) {
+    UNUSED(context);
+    if (hid_cid == 0) return;
+    sdp_client_query_uuid16(&late_query_handler, remote_addr, BLUETOOTH_SERVICE_CLASS_HUMAN_INTERFACE_DEVICE_SERVICE);
+}
+
+static void ask_for_report_map(void) {
+    late_query.callback = &start_late_query;
+    sdp_client_register_query_callback(&late_query);
+}
+
 static void handle_hid_event(uint8_t *packet) {
     uint8_t status;
 
@@ -252,8 +322,11 @@ static void handle_hid_event(uint8_t *packet) {
                 break;
             }
             hid_cid = hid_subevent_connection_opened_get_hid_cid(packet);
+            hid_subevent_connection_opened_get_bd_addr(packet, remote_addr);
             descriptor_available = false;
             link_reported = false;
+            late_attribute_len = 0;
+            late_map_len = 0;
             psdl_log("[classic] connected\n");
             break;
 
@@ -269,6 +342,7 @@ static void handle_hid_event(uint8_t *packet) {
                 boot_mode = true;
                 descriptor_available = true;
                 classic_ready();
+                if (bt_app_looking_for() == BT_DEVICE_GAMEPAD) ask_for_report_map();
             }
             break;
 
@@ -294,6 +368,7 @@ static void handle_hid_event(uint8_t *packet) {
 
         case HID_SUBEVENT_CONNECTION_CLOSED:
             hid_cid = 0;
+            late_map_len = 0;
             descriptor_available = false;
             link_reported = false;
             bt_app_link_down(BT_LINK_CLASSIC, "device disconnected");
