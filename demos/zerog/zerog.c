@@ -839,6 +839,8 @@ static void map_init (void)
 
 /* the race on the left, the speed and the weapon at the bottom, what's to be
    told in the middle, the numbers at the top right, the map under them */
+static bool hud_numbers = true;		/* the perf panel (not in a film) */
+
 static void hud_build (const GLint vp[4], float t, float in_phase, const perf_t *perf)
 {
 	const craft_t *me = &race.craft[race.player];
@@ -959,7 +961,10 @@ static void hud_build (const GLint vp[4], float t, float in_phase, const perf_t 
 			hud_text_scaled (x0, floorf (y0 + (i + 1.5f) * lh), s, team[order[i]].hud, hs);
 		}
 	}
-	hud_perf (vp[2] - hud_perf_width (hud_perf_scale (vp[3])) - 2, 2, hud_perf_scale (vp[3]), perf);
+	if (hud_numbers)
+	{
+		hud_perf (vp[2] - hud_perf_width (hud_perf_scale (vp[3])) - 2, 2, hud_perf_scale (vp[3]), perf);
+	}
 	hud_end ();
 }
 
@@ -1041,13 +1046,16 @@ static int draw_track (void)
 /* ZEROG_SHOT=WIDTHxHEIGHT:PREFIX:SECONDS[,SECONDS...] (a PC): the race flown by
    the craft themselves in steps of 1/60 s, drawn off screen; the picture at
    each of those moments is written to PREFIX-SECONDS.ppm, and after the last
-   it ends. For looking at what it draws without the screen */
+   it ends. For looking at what it draws without the screen.
+   ZEROG_SHOT=WIDTHxHEIGHT:FILE.mp4:FROM-TO@FPS: a film of it instead, the
+   frames FPS a second from FROM to TO (seconds), through ffmpeg (no sound) */
 static struct
 {
-	bool on, blast;
-	int w, h, n, next, blasts;
+	bool on, blast, film;
+	int w, h, n, next, blasts, frames;
 	char prefix[200];
-	float at[32];
+	float at[32], from, to, fps;
+	FILE *ffmpeg;
 } shot;
 
 static void shot_init (void)
@@ -1063,11 +1071,52 @@ static void shot_init (void)
 		printf ("zerog: ZEROG_SHOT=WIDTHxHEIGHT:PREFIX:SECONDS[,SECONDS...]\n");
 		exit (2);
 	}
-	for (const char *p = what + used; *p && shot.n < 32; p += strcspn (p, ","), p += *p == ',')
+	if (sscanf (what + used, "%f-%f@%f", &shot.from, &shot.to, &shot.fps) == 3 && shot.fps > 0.0f)
+	{
+		char command[400];
+		snprintf (command, sizeof command, "ffmpeg -loglevel error -y -f rawvideo -pix_fmt rgb24 -s %dx%d -r %g -i - "
+			  "-c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p -movflags +faststart '%s'", shot.w, shot.h, shot.fps, shot.prefix);
+		shot.ffmpeg = popen (command, "w");
+		if (!shot.ffmpeg)
+		{
+			printf ("zerog: no ffmpeg\n");
+			exit (2);
+		}
+		shot.film = true;
+		shot.at[0] = shot.from;
+		shot.n = 1;
+	}
+	for (const char *p = what + used; !shot.film && *p && shot.n < 32; p += strcspn (p, ","), p += *p == ',')
 	{
 		shot.at[shot.n++] = (float) atof (p);
 	}
 	shot.on = true;
+}
+
+/* the frame just drawn, into the film (pgl reads RGBA only) */
+static void film_write (void)
+{
+	static uint8_t *pixels, *row;
+	pixels = pixels ? pixels : malloc ((size_t) shot.w * shot.h * 4);
+	row = row ? row : malloc ((size_t) shot.w * 3);
+	glPixelStorei (GL_PACK_ALIGNMENT, 1);
+	glFinish ();
+	for (int y = 0; y < shot.h; y += 16)
+	{
+		glReadPixels (0, y, shot.w, shot.h - y < 16 ? shot.h - y : 16, GL_RGBA, GL_UNSIGNED_BYTE, &pixels[(size_t) y * shot.w * 4]);
+	}
+	for (int y = shot.h - 1; y >= 0; y--)
+	{
+		for (int x = 0; x < shot.w; x++)
+		{
+			memcpy (&row[x * 3], &pixels[((size_t) y * shot.w + x) * 4], 3);
+		}
+		fwrite (row, 1, (size_t) shot.w * 3, shot.ffmpeg);
+	}
+	if (++shot.frames % 60 == 0)
+	{
+		printf ("zerog: film: %d frames (%.1f s of it; GL error 0x%x)\n", shot.frames, shot.frames / shot.fps, (unsigned) glGetError ());
+	}
 }
 
 /* the frame just drawn, into a file */
@@ -1115,6 +1164,7 @@ int main (void)
 	int tries = 0;
 #if ZEROG_SHOT
 	shot_init ();
+	hud_numbers = !shot.film;
 	if (shot.on && !pglInitSurface (shot.w, shot.h))
 	{
 		printf ("zerog: no surface of %dx%d\n", shot.w, shot.h);
@@ -1258,7 +1308,7 @@ int main (void)
 				shot.blast = shot.blast || (race.blast[i].age > 0.08f && race.blast[i].age < 0.40f && v_len (d) < 70.0f
 							   && v_dot (d, me->fwd) > 8.0f);
 			}
-			if (t < shot.at[shot.next] - 0.05f && !shot.blast)
+			if (t < shot.at[shot.next] - (shot.film ? 0.5f / 60 : 0.05f) && !shot.blast)
 			{
 				camera (me, dt, ui.view, eye, centre);
 				continue;
@@ -1516,12 +1566,23 @@ int main (void)
 #if ZEROG_SHOT
 		if (shot.on)
 		{
-			if (shot.blast && shot.blasts < 12)
+			if (shot.film)
+			{
+				film_write ();
+				shot.at[0] = shot.from + shot.frames / shot.fps;
+				if (shot.at[0] > shot.to + 0.001f)
+				{
+					pclose (shot.ffmpeg);
+					printf ("zerog: %s: %d frames\n", shot.prefix, shot.frames);
+					return 0;
+				}
+			}
+			else if (shot.blast && shot.blasts < 12)
 			{
 				shot.blasts++;
 				shot_write (floorf (t * 100.0f) / 100.0f);
 			}
-			if (t >= shot.at[shot.next])
+			if (!shot.film && t >= shot.at[shot.next])
 			{
 				shot_write (shot.at[shot.next]);
 				if (++shot.next == shot.n)
