@@ -1,0 +1,17 @@
+// Lanternfall's six scenes (demos/lanternfall/levels/*.bsp, made by tools/build.sh),
+// linked in; BSP files are read in place: aligned
+	.section .rodata
+	.macro	scene n, file
+	.balign	16
+	.global	lf_level_\n
+lf_level_\n:
+	.incbin	"@LF_LEVELS_DIR@/\file\().bsp"
+	.global	lf_level_\n\()_end
+lf_level_\n\()_end:
+	.endm
+	scene	0, docks
+	scene	1, library
+	scene	2, forest
+	scene	3, market
+	scene	4, stair
+	scene	5, peak

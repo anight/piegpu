@@ -14,6 +14,10 @@
 #                       jump and a fork, weapons picked up on the way (its own
 #                       sounds: zerog/sounds.c, made by tools/make_zerog_sounds.py;
 #                       and antigrav's)
+#   lanternfall         a third-person adventure on the BSP engine (lanternfall/):
+#                       Wren, her lantern and Ody the golem through six drowned
+#                       scenes to the peak; its own levels (lanternfall/levels,
+#                       made by lanternfall/tools), shaders, sounds and music
 #   tumble              2D physics: balls and boxes in a box the stick tilts,
 #                       each meeting heard (tumble_sounds.c, made by
 #                       tools/make_tumble_sounds.py)
@@ -50,7 +54,7 @@ set(PGPU_DEMO_SHADERS ${PGPU_DEMOS}/shaders)
 set(PGPU_LEVEL_walk base)			# the BSP engine's demos' levels (engine/levels)
 set(PGPU_LEVEL_keep keep)
 set(PGPU_LEVEL_isles isles)
-set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav zerog tumble aquarium walk keep isles touch
+set(PGPU_DEMO_APPS selftest linktest gears breakout flight antigrav zerog tumble aquarium walk keep isles lanternfall touch
 	toy-tunnel toy-spheres toy-clouds toy-voronoi toy-pong toy-snake toy-asteroids media)
 
 if(NOT COMMAND pgpu_demo)
@@ -161,6 +165,33 @@ function(pgpu_demo target app)
 			program(gem -a a_pos:float:3 -a a_normal:float:3 -v triangles)
 			program(halo -a a_corner:float:2 -v triangles)
 		endif()
+
+	elseif(app STREQUAL "lanternfall")	# an adventure on the BSP engine: its own levels and shaders
+		set(engine ${PGPU_DEMOS}/../engine)
+		set(lf ${PGPU_DEMOS}/lanternfall)
+		set(LF_LEVELS_DIR ${lf}/levels)
+		configure_file(${lf}/levels.S.in ${CMAKE_CURRENT_BINARY_DIR}/lanternfall_levels.S @ONLY)
+		set(scenes "")
+		foreach(scene docks library forest market stair peak)
+			list(APPEND scenes ${LF_LEVELS_DIR}/${scene}.bsp)
+		endforeach()
+		set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/lanternfall_levels.S PROPERTIES OBJECT_DEPENDS "${scenes}")
+		target_sources(${target} PRIVATE ${lf}/lanternfall.c ${lf}/lf.c ${lf}/bot.c ${lf}/text.c ${lf}/figures.c
+			${lf}/sounds.c ${lf}/palette.c ${engine}/bsp.c ${engine}/render.c ${engine}/collide.c ${engine}/game.c
+			${engine}/keys.c ${engine}/sound.c ${engine}/sounds/sound_data.c
+			${CMAKE_CURRENT_BINARY_DIR}/lanternfall_levels.S)
+		target_include_directories(${target} PRIVATE ${lf})
+		target_compile_definitions(${target} PRIVATE RENDER_OWN_PROGRAMS=1)	# (the engine draws with these:)
+		pad()
+		pgpu_glsl_program(TARGET ${target} NAME lf_world VS ${lf}/shaders/world.vert FS ${lf}/shaders/world.frag
+			ARGS -a a_pos:float:3 -a a_uv:float:2 -a a_luv:float:2 -v triangles)
+		pgpu_glsl_program(TARGET ${target} NAME lf_liquid VS ${lf}/shaders/liquid.vert FS ${lf}/shaders/liquid.frag
+			ARGS -a a_pos:float:3 -a a_uv:float:2 -v triangles)
+		pgpu_glsl_program(TARGET ${target} NAME lf_skydome VS ${lf}/shaders/skydome.vert FS ${lf}/shaders/skydome.frag
+			ARGS -a a_pos:float:3 -v triangles)
+		pgpu_glsl_program(TARGET ${target} NAME lf_figure VS ${lf}/shaders/figure.vert FS ${lf}/shaders/figure.frag
+			ARGS -a a_pos:float:3 -a a_normal:float:3 -a a_color:ubyte_norm:4 -v triangles)
+		program(flare -a a_pos:float:3 -a a_uv:float:2 -a a_color:ubyte_norm:4 -v triangles --ms)
 
 	elseif(app STREQUAL "touch")		# the touch screen: a drawing board
 		target_sources(${target} PRIVATE ${PGPU_DEMOS}/touch.c)

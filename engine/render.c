@@ -6,9 +6,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef RENDER_OWN_PROGRAMS		/* a game's shaders in place of the engine's: its render_programs.h names them */
+#include "render_programs.h"
+#else
 #include "world_program.h"
 #include "liquid_program.h"
 #include "skydome_program.h"
+#define RENDER_WORLD	world_info
+#define RENDER_LIQUID	liquid_info
+#define RENDER_SKY	skydome_info
+#endif
 
 enum { KIND_LIT, KIND_BRIGHT, KIND_WARP, KIND_SKY };	/* lightmapped; its own colour; a liquid; the sky */
 static const int program_of[] = {0, 0, 1, 2};
@@ -406,7 +413,7 @@ bool render_init (render_t *r, const bsp_t *b)
 	/* the programs */
 	const struct { const void *info; size_t size; } binaries[3] =
 	{
-		{&world_info, sizeof world_info}, {&liquid_info, sizeof liquid_info}, {&skydome_info, sizeof skydome_info},
+		{&RENDER_WORLD, sizeof RENDER_WORLD}, {&RENDER_LIQUID, sizeof RENDER_LIQUID}, {&RENDER_SKY, sizeof RENDER_SKY},
 	};
 	for (int k = 0; k < 3; k++)
 	{
@@ -429,6 +436,41 @@ bool render_init (render_t *r, const bsp_t *b)
 	printf ("render: %d faces in %d batches, %d vertices, %d textures, %d lightmap pages\n", n, r->n_batches,
 		vertices, b->n_miptex, r->n_pages);
 	return true;
+}
+
+void render_free (render_t *r)
+{
+	const bsp_t *b = r->bsp;
+	for (int i = 0; b && i < b->n_miptex; i++)
+	{
+		if (r->textures && r->textures[i])
+			glDeleteTextures (1, &r->textures[i]);
+		if (r->fronts && r->fronts[i])
+			glDeleteTextures (1, &r->fronts[i]);
+	}
+	if (r->n_pages)
+	{
+		glDeleteTextures (r->n_pages, r->pages);
+	}
+	if (r->buffer)
+	{
+		glDeleteBuffers (1, &r->buffer);
+	}
+	for (int k = 0; k < 3; k++)
+	{
+		if (r->programs[k].id)
+			glDeleteProgram (r->programs[k].id);
+	}
+	free (r->textures);
+	free (r->fronts);
+	free (r->hazes);
+	free (r->first);
+	free (r->shown);
+	free (r->order);
+	free (r->batches);
+	free (r->model_batches);
+	free (r->pvs);
+	memset (r, 0, sizeof *r);
 }
 
 /* ---- a frame --------------------------------------------------------------------------------------- */
@@ -481,6 +523,14 @@ static void bind (render_t *r, const render_batch_t *bt)
 	}
 }
 
+/* A draw costs more than the triangles in it (the host's time to send it, the
+   RPi's to take it: Lanternfall's docks at 126 draws a frame made 37 frames
+   a second, at 60 draws 60). A batch's faces are one after another in the
+   buffer, so two that are shown with a few between that aren't (facing away,
+   or out of sight) go in one draw, those between with them: they're hidden
+   behind what faces the eye, or off the screen. */
+#define RUN_GAP		96		/* vertices not shown that a run goes on over */
+
 /* the batches [first, last): their faces marked in this frame (or all), in runs */
 static void draw_batches (render_t *r, int first, int last, bool all, const float vp[16], const float offset[3])
 {
@@ -496,9 +546,14 @@ static void draw_batches (render_t *r, int first, int last, bool all, const floa
 			int i = j < bt->first_face + bt->faces ? r->order[j] : -1;
 			bool show = i >= 0 && (all || (r->shown[i >> 3] & (1 << (i & 7))));
 			int first = show ? r->first[i] : -1, count = show ? (b->faces[i].edges - 2) * 3 : 0;
-			if (show && run_count && first == run_first + run_count)
+			r->stats.faces += show;
+			if (!show && i >= 0)
 			{
-				run_count += count;		/* (the run goes on) */
+				continue;			/* (not shown: the run may go on over it) */
+			}
+			if (show && run_count && first - (run_first + run_count) <= RUN_GAP)
+			{
+				run_count = first + count - run_first;	/* (the run goes on, over the gap) */
 				continue;
 			}
 			if (run_count)
@@ -518,7 +573,6 @@ static void draw_batches (render_t *r, int first, int last, bool all, const floa
 			}
 			run_first = first;
 			run_count = count;
-			r->stats.faces += show;
 		}
 	}
 }

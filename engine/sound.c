@@ -43,6 +43,19 @@ void sound_init (sound_t *s, const bsp_t *bsp, int air)
 	{
 		pgpu_sound_data (id, sound_data[id].rate, PGPU_SOUND_U8, sound_data[id].samples, sound_data[id].frames);
 	}
+	sound_level (s, bsp, air);
+}
+
+void sound_level (sound_t *s, const bsp_t *bsp, int air)
+{
+	for (int k = 0; k < SOUND_LOOPS; k++)
+	{
+		if (s->loop[k] != SND_NONE)
+		{
+			pgpu_sound_stop (SOUND_DYNAMIC + k);
+		}
+	}
+	memset (s, 0, sizeof *s);
 	for (int k = 0; k < SOUND_DYNAMIC; k++)
 	{
 		s->owner[k] = SOUND_ANY;
@@ -89,13 +102,13 @@ void sound_init (sound_t *s, const bsp_t *bsp, int air)
 	s->liquid = !s->n_liquids ? SND_NONE : lava ? SND_AMB_LAVA : SND_AMB_WATER;
 }
 
-void sound_play (sound_t *s, int id, const float *origin, int owner, float volume, float attenuation)
+int sound_play_other (sound_t *s, int id, float seconds, const float *origin, int owner, float volume, float attenuation)
 {
 	int left, right;
 	spatialize (s, origin, volume, attenuation, &left, &right);
-	if (id <= SND_NONE || id >= SND_COUNT || (left == 0 && right == 0))
+	if (id <= SND_NONE || (left == 0 && right == 0))
 	{
-		return;
+		return -1;
 	}
 	/* its owner's channel; else a free one; else the one nearest its end */
 	int channel = 0;
@@ -112,8 +125,17 @@ void sound_play (sound_t *s, int id, const float *origin, int owner, float volum
 		}
 	}
 	s->owner[channel] = owner;
-	s->left_s[channel] = (float) sound_data[id].frames / sound_data[id].rate;
+	s->left_s[channel] = seconds;
 	pgpu_sound_play (channel, id, left, right, 0);
+	return channel;
+}
+
+void sound_play (sound_t *s, int id, const float *origin, int owner, float volume, float attenuation)
+{
+	if (id > SND_NONE && id < SND_COUNT)
+	{
+		sound_play_other (s, id, (float) sound_data[id].frames / sound_data[id].rate, origin, owner, volume, attenuation);
+	}
 }
 
 /* a loop's channel: what loops there, how loud (sent when it changed) */

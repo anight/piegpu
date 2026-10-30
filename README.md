@@ -359,8 +359,8 @@ are in a third file, `speakers.txt` (below).
   (how fast it plays: an engine's note); the RPi mixes them into what it
   plays, the stream's sound or silence, so an effect is heard as soon as the
   output allows (HDMI: the 85 ms the VideoCore holds; a Bluetooth speaker:
-  its own buffer, not measured). The engine's demos, `antigrav`, `zerog`,
-  `tumble` and `aquarium` use them (below).
+  its own buffer, not measured). The engine's demos, `lanternfall`, `antigrav`,
+  `zerog`, `tumble` and `aquarium` use them (below).
 - **The output:** a Bluetooth speaker while one is connected, else HDMI (a
   monitor with speakers). The volume and mute (Settings, `volume=`, `mute=`)
   apply to all of it.
@@ -493,6 +493,7 @@ Every host builds them (`demos/demos.cmake`):
 | `walk` | the BSP engine (`engine/`): a Quake-format level walked through, doors that open, a lift |
 | `keep` | the engine outdoors: a castle at dusk, a moat of lava, a lift, nine gems to find |
 | `isles` | the engine in the sky: floating islands, a moving platform, a jump pad, a portal, coins |
+| `lanternfall` | a third-person adventure on the engine (`demos/lanternfall`): Wren, a ferry pilot with the last ember of the old light in her lantern, and Ody, a stone golem she wakes, cross six drowned scenes (the ferry docks, a library, a forest of silent bells, a glass market in a storm, a stair of colossal statues, the peak) to the great lantern that went out. The lantern raised shows hidden ways, kindles each island's beacon and burns the Hollow (shapes of black water), and spends its ember; Ody breaks walls, lifts her to ledges, holds plates down and strikes. A scene to go through softly, a fight, the Tide King, a choice and two endings; the story in lines on the screen; a cello and bells. The stick walks and turns (gently: softly); B jumps, A raises the lantern, X a flare, Y Ody, SELECT the camera, START a pause. Its own levels (made by `demos/lanternfall/tools`), textures, shaders in place of the engine's (teal dark, gold light, fog), figures, sounds and music; 4x MSAA. Left alone at its title it plays itself, all six scenes in about four minutes; `lanternfall_sim` (`hosts/pc`) does so without a GPU. On a Pico 2 W with a Zero 2 W, the panel: 60 fps |
 | `touch` | the panel's touch screen: a drawing board with a calibration |
 | `toy-NAME` | Shadertoy-style shaders (`tunnel`, `spheres`, `clouds`, `voronoi`) and games in a shader (`pong`, `snake`, `asteroids`) |
 | `media` | an MP4, an MP3 or an Ogg Vorbis file played by the RPi: the video into a texture, the sound with it |

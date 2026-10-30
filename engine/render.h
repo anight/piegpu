@@ -11,9 +11,11 @@
  * vertices), and what's kept is small (16-bit indices, a bit a face). A frame
  * is then the host's work only: the leaves the eye's leaf can see (the PVS),
  * those in the view (their boxes against the frustum), their faces facing the
- * eye; each batch's such faces as few draws as their runs in the buffer.
+ * eye; each batch's such faces as few draws as their runs in the buffer (a
+ * run going on over a few faces not shown: a draw costs more than they do).
  *
- * The shaders (engine/shaders): world, the texture times the lightmap, twice
+ * The shaders (engine/shaders; a game may bring its own in their place,
+ * with the same attributes and uniforms: RENDER_OWN_PROGRAMS, render.c): world, the texture times the lightmap, twice
  * (as Quake's overbright: 128 is the texture's own colour); textures named
  * light* at their own colour (their faces' lightmaps ignored). Liquids (*NAME)
  * warp, as Quake's, unlit. The sky (sky*: Quake's 256 x 128, the front layer
@@ -76,6 +78,8 @@ typedef struct
 /* everything to the RPi (the GL context is up); false if something doesn't fit */
 bool render_init (render_t *r, const bsp_t *bsp);
 
+/* what render_init made (the RPi's textures, buffer and programs; the memory) given back: for another level */
+void render_free (render_t *r);
 /* the world as seen from eye (vp: projection times view, column major) */
 void render_world (render_t *r, const float eye[3], const float vp[16]);
 

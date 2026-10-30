@@ -61,10 +61,16 @@ typedef struct
    ambient loop (SND_AMB_WIND, SND_AMB_HUM, or SND_NONE) */
 void sound_init (sound_t *s, const bsp_t *bsp, int air);
 
+/* another level (the sounds are with the RPi already): its loops, its liquid */
+void sound_level (sound_t *s, const bsp_t *bsp, int air);
 /* a sound at a place (NULL: in the player's head): volume 0 .. 1,
    attenuation 1 normal (0: heard everywhere) */
 void sound_play (sound_t *s, int id, const float *origin, int owner, float volume, float attenuation);
 
+/* a sound of the caller's own (not one of sound_data's: sent to the RPi by
+   the caller, its id from SND_COUNT on), `seconds` long, placed as sound_play
+   places; the channel it plays on (for pgpu_sound_pitch), or -1: not heard */
+int sound_play_other (sound_t *s, int id, float seconds, const float *origin, int owner, float volume, float attenuation);
 /* the game's sounds for the step just made (after game_update) */
 void sound_game (sound_t *s, const game_t *g, float dt);
 
