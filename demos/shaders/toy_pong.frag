@@ -1,7 +1,8 @@
 // toy pong: neon Pong drawn by distance functions - two glowing paddles, a
 // ball with a fading trail and a flash when hit, 7-segment scores, a dashed
 // net and a faint grid, under scanlines and a vignette. The game is played on
-// the Pico (pong.c), which passes its state in pixels (origin bottom left).
+// the Pico (pong.c), which passes its state in pixels (origin bottom left),
+// and the words as a texture it writes.
 precision mediump float;
 
 uniform float iTime;
@@ -13,6 +14,10 @@ uniform vec2 uPaddles;		// the left and right paddle's centre y
 uniform vec2 uScore;		// left, right (0 .. 9)
 uniform float uFlash;		// seconds since the ball was last hit
 uniform vec2 uTrail[6];		// the ball's earlier places, newest first
+uniform sampler2D uText;	// 256 x 16: the message in its top 8 rows; below, a side's label
+				// in each of the first two 32 columns
+uniform float uChars;		// the message's characters (0: none now)
+uniform vec3 uMessageColor;
 
 const float MARGIN = 14.0;	// paddle centre from the side
 const vec2 PADDLE = vec2 (4.0, 24.0);	// half size
@@ -102,6 +107,23 @@ void main ()
 	}
 	float flash = 1.0 + 2.5 * exp (-uFlash * 8.0);
 	col += neon (length (p - uBall) - BALL, vec3 (1.0, 0.9, 0.55)) * flash;
+
+	// the words (only where they are): each side's label under its score, the message
+	vec2 label = p - vec2 (0.5 * iResolution.x, iResolution.y - 50.0);
+	label.x += label.x < 0.0 ? 34.0 : -34.0;
+	if (abs (label.x) < 16.0 && abs (label.y) < 4.0)
+	{
+		float right = step (0.5 * iResolution.x, p.x);
+		float a = texture2D (uText, vec2 (label.x + 16.0 + 32.0 * right, 12.0 - label.y) / vec2 (256.0, 16.0)).r;
+		col += mix (vec3 (0.2, 0.8, 1.0), vec3 (1.0, 0.3, 0.7), right) * smoothstep (0.3, 0.7, a);
+	}
+	vec2 message = p - vec2 (0.5 * iResolution.x, 0.3 * iResolution.y);
+	float half_w = uChars * 8.0;
+	if (abs (message.x) < half_w && abs (message.y) < 8.0)
+	{
+		float a = texture2D (uText, vec2 (message.x + half_w, 8.0 - message.y) / vec2 (512.0, 32.0)).r;
+		col = col * 0.35 + uMessageColor * 1.5 * smoothstep (0.3, 0.7, a);
+	}
 
 	// the tube: scanlines, vignette, gentle tone map
 	col *= 0.8 + 0.2 * step (0.5, fract (p.y * 0.5));

@@ -91,7 +91,8 @@ static float further (float a, float b)
 	return (a < 0 ? -a : a) >= (b < 0 ? -b : b) ? a : b;
 }
 
-bool pad_read (pad_t *p)
+/* the board's: the stick and the controller as one */
+static void read_board (pad_t *p)
 {
 	uint64_t now = time_us_64 ();
 	*p = last;
@@ -126,53 +127,69 @@ bool pad_read (pad_t *p)
 		last.y = y;
 		last.buttons = buttons;
 	}
+}
+
+#ifdef PGPU_PAD_BLUETOOTH
+/* the Bluetooth controller's; false till one's connected */
+static bool read_bluetooth (pad_t *p)
+{
+	static gamepad_state_t shown;
+	gamepad_state_t s;
+	gamepad_decode_get (&s);
+	pad_t b = {0};
+	if (s.connected)
+	{
+		if (s.pad.has_stick)
+		{
+			b.x = axis ((unsigned) ((s.pad.x + 1.0f) * 512.0f), false);
+			b.y = axis ((unsigned) ((s.pad.y + 1.0f) * 512.0f), true);	/* (its y grows down) */
+		}
+		if (s.pad.hat >= 0)
+		{
+			static const int8_t hx[8] = {0, 1, 1, 1, 0, -1, -1, -1}, hy[8] = {1, 1, 0, -1, -1, -1, 0, 1};
+			b.x = further (b.x, hx[s.pad.hat]);
+			b.y = further (b.y, hy[s.pad.hat]);
+		}
+		for (unsigned i = 0; i < sizeof bt_buttons / sizeof bt_buttons[0]; i++)
+		{
+			b.buttons |= (s.pad.buttons & bt_buttons[i].bit) ? bt_buttons[i].pad : 0;
+		}
+		for (int k = 0; k < KBD_MAX_KEYS; k++)
+		{
+			uint8_t key = s.keys[k];
+			b.x = further (b.x, key == 0x4F || key == 0x07 ? 1.0f : key == 0x50 || key == 0x04 ? -1.0f : 0.0f);
+			b.y = further (b.y, key == 0x52 || key == 0x1A ? 1.0f : key == 0x51 || key == 0x16 ? -1.0f : 0.0f);
+			for (unsigned i = 0; key && i < sizeof bt_keys / sizeof bt_keys[0]; i++)
+			{
+				b.buttons |= key == bt_keys[i].key ? bt_keys[i].pad : 0;
+			}
+		}
+		/* what it sends, as it changes (the first 40): to see a new controller's numbers */
+		static int changes;
+		if (changes < 40 && (s.pad.buttons != shown.pad.buttons || s.pad.hat != shown.pad.hat || memcmp (s.keys, shown.keys, sizeof s.keys)
+		    || (s.pad.x > 0.5f) != (shown.pad.x > 0.5f) || (s.pad.x < -0.5f) != (shown.pad.x < -0.5f)
+		    || (s.pad.y > 0.5f) != (shown.pad.y > 0.5f) || (s.pad.y < -0.5f) != (shown.pad.y < -0.5f)))
+		{
+			changes++;
+			printf ("pad: bluetooth: buttons %08lx hat %d stick %+.2f %+.2f keys %02x %02x %02x (%lu reports)\n",
+				(unsigned long) s.pad.buttons, s.pad.hat, (double) s.pad.x, (double) s.pad.y, s.keys[0], s.keys[1],
+				s.keys[2], (unsigned long) s.reports);
+			shown = s;
+		}
+	}
+	*p = b;
+	return s.connected || bt_app_keyboard_connected ();
+}
+#endif
+
+bool pad_read (pad_t *p)
+{
+	read_board (p);
 #ifdef PGPU_PAD_BLUETOOTH
 	if (have_bt)
 	{
-		static gamepad_state_t shown;
-		gamepad_state_t s;
-		gamepad_decode_get (&s);
-		pad_t b = {0};
-		if (s.connected)
-		{
-			if (s.pad.has_stick)
-			{
-				b.x = axis ((unsigned) ((s.pad.x + 1.0f) * 512.0f), false);
-				b.y = axis ((unsigned) ((s.pad.y + 1.0f) * 512.0f), true);	/* (its y grows down) */
-			}
-			if (s.pad.hat >= 0)
-			{
-				static const int8_t hx[8] = {0, 1, 1, 1, 0, -1, -1, -1}, hy[8] = {1, 1, 0, -1, -1, -1, 0, 1};
-				b.x = further (b.x, hx[s.pad.hat]);
-				b.y = further (b.y, hy[s.pad.hat]);
-			}
-			for (unsigned i = 0; i < sizeof bt_buttons / sizeof bt_buttons[0]; i++)
-			{
-				b.buttons |= (s.pad.buttons & bt_buttons[i].bit) ? bt_buttons[i].pad : 0;
-			}
-			for (int k = 0; k < KBD_MAX_KEYS; k++)
-			{
-				uint8_t key = s.keys[k];
-				b.x = further (b.x, key == 0x4F || key == 0x07 ? 1.0f : key == 0x50 || key == 0x04 ? -1.0f : 0.0f);
-				b.y = further (b.y, key == 0x52 || key == 0x1A ? 1.0f : key == 0x51 || key == 0x16 ? -1.0f : 0.0f);
-				for (unsigned i = 0; key && i < sizeof bt_keys / sizeof bt_keys[0]; i++)
-				{
-					b.buttons |= key == bt_keys[i].key ? bt_keys[i].pad : 0;
-				}
-			}
-			/* what it sends, as it changes (the first 40): to see a new controller's numbers */
-			static int changes;
-			if (changes < 40 && (s.pad.buttons != shown.pad.buttons || s.pad.hat != shown.pad.hat || memcmp (s.keys, shown.keys, sizeof s.keys)
-			    || (s.pad.x > 0.5f) != (shown.pad.x > 0.5f) || (s.pad.x < -0.5f) != (shown.pad.x < -0.5f)
-			    || (s.pad.y > 0.5f) != (shown.pad.y > 0.5f) || (s.pad.y < -0.5f) != (shown.pad.y < -0.5f)))
-			{
-				changes++;
-				printf ("pad: bluetooth: buttons %08lx hat %d stick %+.2f %+.2f keys %02x %02x %02x (%lu reports)\n",
-					(unsigned long) s.pad.buttons, s.pad.hat, (double) s.pad.x, (double) s.pad.y, s.keys[0], s.keys[1],
-					s.keys[2], (unsigned long) s.reports);
-				shown = s;
-			}
-		}
+		pad_t b;
+		read_bluetooth (&b);
 		p->x = further (p->x, b.x);
 		p->y = further (p->y, b.y);
 		p->buttons |= b.buttons;
@@ -180,4 +197,21 @@ bool pad_read (pad_t *p)
 	}
 #endif
 	return have_stick || have_controller;
+}
+
+bool pad_read_player (int player, pad_t *p)
+{
+	if (player == 0)
+	{
+		read_board (p);
+		return have_stick || have_controller;
+	}
+#ifdef PGPU_PAD_BLUETOOTH
+	if (have_bt)
+	{
+		return read_bluetooth (p);
+	}
+#endif
+	memset (p, 0, sizeof *p);
+	return false;
 }

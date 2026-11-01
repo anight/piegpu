@@ -16,5 +16,7 @@ void game_resize (float width, float height);
 /* every frame, before the draw (the program in use): advance by dt seconds,
    set the uniforms */
 void game_frame (float t, float dt);
+/* the game's to set: no HUD (toy.c's frame rate and caption) */
+extern bool game_hide_hud;
 
 #endif

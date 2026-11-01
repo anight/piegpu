@@ -54,7 +54,9 @@
 #                       platform, a jump pad, a portal, coins (engine/levels/isles.bsp)
 #   touch               the panel's touch screen: a drawing board
 #   toy-NAME            Shadertoy-style: shaders/toy_NAME.frag; a game has
-#                       NAME.c (pong, snake, asteroids)
+#                       NAME.c (pong: played by two, or one and the computer,
+#                       with a pad each, sounds by tools/make_pong_sounds.py;
+#                       snake, asteroids)
 #   media               an MP4 or an MP3 played by the RPi: the video decoded
 #                       into a texture, the sound (AAC, MP3) on HDMI;
 #                       PGPU_MEDIA_EMBED (default: a 720p test pattern made
@@ -259,6 +261,10 @@ function(pgpu_demo target app)
 		if(EXISTS ${PGPU_DEMOS}/${name}.c)	# a game: its state and play (toy_game.h)
 			target_sources(${target} PRIVATE ${PGPU_DEMOS}/${name}.c)
 			target_compile_definitions(${target} PRIVATE TOY_GAME=1)
+		endif()
+		if(name STREQUAL "pong")		# played: two pads, its words' font, its sounds
+			target_sources(${target} PRIVATE ${PGPU_DEMOS}/arcade_font.c ${PGPU_DEMOS}/pong_sounds.c)
+			pad()
 		endif()
 		target_compile_definitions(${target} PRIVATE TOY_HEADER="toy_${name}_program.h"
 			TOY_INFO=toy_${name}_info TOY_CAPTION="${caption}")

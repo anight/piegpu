@@ -25,5 +25,9 @@ bool pad_init (void);
 /* how they are now (the stick and the controller's as one: the further of
    the two each way); false, and all at rest, without them */
 bool pad_read (pad_t *p);
+/* for two players, each their own: 0 the board's stick and game controller (as
+   one), 1 a Bluetooth game controller; false, and all at rest, when that player's
+   isn't there (the Bluetooth one: till it's connected) */
+bool pad_read_player (int player, pad_t *p);
 
 #endif

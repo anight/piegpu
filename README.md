@@ -500,7 +500,7 @@ Every host builds them (`demos/demos.cmake`):
 | `isles` | the engine in the sky: floating islands, a moving platform, a jump pad, a portal, coins |
 | `lanternfall` | a third-person adventure on the engine (`demos/lanternfall`): Wren, a ferry pilot with the last ember of the old light in her lantern, and Ody, a stone golem she wakes, cross six drowned scenes (the ferry docks, a library, a forest of silent bells, a glass market in a storm, a stair of colossal statues, the peak) to the great lantern that went out. The lantern raised shows hidden ways, kindles each island's beacon and burns the Hollow (shapes of black water), and spends its ember; Ody breaks walls, lifts her to ledges, holds plates down and strikes. A scene to go through softly, a fight, the Tide King, a choice and two endings; the story in lines on the screen; a cello and bells. The stick walks and turns (gently: softly); B jumps, A raises the lantern, X a flare, Y Ody, SELECT the camera, START a pause. Its own levels (made by `demos/lanternfall/tools`), textures, shaders in place of the engine's (teal dark, gold light, fog), figures, sounds and music; 4x MSAA. Left alone at its title it plays itself, all six scenes in about four minutes; `lanternfall_sim` (`hosts/pc`) does so without a GPU. On a Pico 2 W with a Zero 2 W, the panel: 60 fps |
 | `touch` | the panel's touch screen: a drawing board with a calibration |
-| `toy-NAME` | Shadertoy-style shaders (`tunnel`, `spheres`, `clouds`, `voronoi`) and games in a shader (`pong`, `snake`, `asteroids`) |
+| `toy-NAME` | Shadertoy-style shaders (`tunnel`, `spheres`, `clouds`, `voronoi`) and games in a shader (`pong`, for two players or one and the computer, below; `snake`, `asteroids`, which play themselves) |
 | `media` | an MP4, an MP3 or an Ogg Vorbis file played by the RPi: the video into a texture, the sound with it |
 | `jet-NAME` | the Jet scenes (`demos/jet`): CubeCoders' sixteen JetExamples, from a cube to a two-minute film, and a model viewer, written again for OpenGL ES and antialiased (4x MSAA) |
 | `selftest`, `linktest` | the link, the protocol and pgl tested; the link at full speed both ways |
@@ -529,8 +529,24 @@ is, and reconnected at the next start. The buttons are read as Android lays
 them out: A and B, X and Y as the Gamepad QT's, SELECT and START, the stick
 pressed; its stick and its hat steer. A cheap controller with a GAME/KEY
 switch wants GAME (in KEY it sends media keys); in a keyboard mode its
-arrows, WASD, Enter, Space, z, x, y and Esc are taken. Tried with one such
+arrows, WASD, Enter, Space, z, x, y and Esc are taken. The one tried came back
+from its pairing mode sending keyboard keys (numbers and punctuation, which
+do nothing here) even on GAME: powered off and on, it was a controller again,
+and connected to the Pico by itself. Tried with one such
 controller over Classic (stacker at 59.8 fps); not yet with an LE one.
+
+`toy-pong` is played by two, or by one against the computer. The left paddle
+is the board's stick and Gamepad QT's, the right the Bluetooth controller's;
+the label under each score says who has it (P1, P2, CPU). With nobody playing
+the computer plays both sides, silently, and "PRESS START" blinks. Any button
+but SELECT starts a game with that side yours; the other side's button or
+stick takes that paddle over from the computer at any moment, the score as it
+stands, and if a controller goes the computer takes its paddle back. The
+stick moves a paddle, the further the faster, and a paddle moving as it hits
+sends the ball off that way. The ball quickens with each hit; first to 9
+wins. START pauses, SELECT shows the numbers. The console's keys: w s the left
+paddle, i k or the arrows the right, enter or space start and pause, h the
+numbers. The sounds are made by `demos/tools/make_pong_sounds.py`.
 
 `wifi` gives the Pico W its Wi-Fi network without a keyboard. With none kept
 it's an access point with a name and a password made up at the start, shown

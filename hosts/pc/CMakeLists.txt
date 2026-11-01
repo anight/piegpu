@@ -107,6 +107,7 @@ add_executable(rockfall_sim ${ROOT}/demos/rockfall/sim.c ${ROOT}/demos/rockfall/
 	${ROOT}/demos/rockfall/bot.c)
 # stacker_host likewise; stacker_sim: the bot plays whole games without a GPU (demos/stacker/sim.c)
 target_compile_definitions(stacker_host PRIVATE STACKER_RAW_TERMINAL=1)
+target_compile_definitions(toy-pong_host PRIVATE PONG_RAW_TERMINAL=1)
 add_executable(stacker_sim ${ROOT}/demos/stacker/sim.c ${ROOT}/demos/stacker/game.c ${ROOT}/demos/stacker/bot.c
 	${ROOT}/demos/arcade_font.c)
 target_include_directories(stacker_sim PRIVATE ${ROOT}/demos)

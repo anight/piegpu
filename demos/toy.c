@@ -27,6 +27,10 @@
 #include "toy_game.h"
 #endif
 
+#ifdef TOY_GAME
+bool game_hide_hud;
+#endif
+
 #define NOISE_SIZE	64
 #define NOISE_UNIT	1		/* the HUD binds its font to unit 0 each frame */
 
@@ -151,6 +155,9 @@ int main (void)
 		glEnableVertexAttribArray (a_pos);
 		glVertexAttribPointer (a_pos, 2, GL_FLOAT, GL_FALSE, 0, (void *) 0);
 		glDrawArrays (GL_TRIANGLES, 0, 6);
+#ifdef TOY_GAME
+		if (!game_hide_hud)
+#endif
 		hud_draw ();
 		pglSwapBuffers ();
 
